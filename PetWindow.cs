@@ -76,7 +76,7 @@ namespace DeskMadeline
         readonly List<WaveRing> waveRings = new List<WaveRing>();
         readonly Random effectRng = new Random();
         PType dust, dashBlue, dashRed;
-        bool ParticlesEnabled = false;   // 粒子特效开关（默认关，托盘菜单可开）
+        bool ParticlesEnabled = true;    // 粒子特效开关（默认开，托盘菜单可关闭）
         float runDustTimer;        // 跑步扬尘间隔
         int observedLaunchCount;
         int observedWallJumpEffectCount;
@@ -689,6 +689,13 @@ namespace DeskMadeline
                     DrawTintedSafe(g, blob, Color.Black, x - outlineSize / 2f + 1, y - outlineSize / 2f, outlineSize, outlineSize);
                     DrawTintedSafe(g, blob, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f - 1, outlineSize, outlineSize);
                     DrawTintedSafe(g, blob, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f + 1, outlineSize, outlineSize);
+                }
+                // Color is a second pass so adjacent nodes do not repaint one
+                // another with outline black and turn the tail into a dark chain.
+                for (int i = 0; i < trail.CatTailNodes.Length; i++)
+                {
+                    float x = SnapPx(trail.CatTailNodes[i].X - trail.X + center);
+                    float y = SnapPx(trail.CatTailNodes[i].Y - trail.Y + center);
                     DrawTintedSafe(g, blob, trail.HairColor, x - 1.5f, y - 1.5f, 3f, 3f);
                 }
             }
@@ -1279,12 +1286,25 @@ namespace DeskMadeline
             if (!hitboxesEnabled) return;
             using var solidBrush = new SolidBrush(Color.Red);
             foreach (var solid in player.Solids)
-                DrawHollowRect(g, solid.L - camX, solid.T - camY,
+                DrawSolidHitbox(g, solid.L - camX, solid.T - camY,
                     solid.R - solid.L, solid.B - solid.T, solidBrush);
             float playerHeight = player.Ducking ? 6f : 11f;
             using var playerBrush = new SolidBrush(Color.Lime);
             DrawHollowRect(g, player.Pos.X - 4f - camX, player.Pos.Y - playerHeight - camY,
                 8f, playerHeight, playerBrush);
+        }
+
+        static void DrawSolidHitbox(Graphics g, float x, float y, float width, float height, Brush brush)
+        {
+            int left = (int)Math.Round(x), top = (int)Math.Round(y);
+            int w = Math.Max(1, (int)Math.Round(width));
+            int h = Math.Max(1, (int)Math.Round(height));
+            // A physical 8px window border is often only two game pixels thick.
+            // Drawing both sides then looks like a solid 2px band instead of the
+            // player's single-pixel debug stroke.
+            if (h <= 2 && w > h) { g.FillRectangle(brush, left, top, w, 1); return; }
+            if (w <= 2 && h > w) { g.FillRectangle(brush, left, top, 1, h); return; }
+            DrawHollowRect(g, x, y, width, height, brush);
         }
 
         static void DrawHollowRect(Graphics g, float x, float y, float width, float height, Brush brush)
@@ -1312,6 +1332,11 @@ namespace DeskMadeline
                 DrawTintedSafe(g, texture, Color.Black, x - outlineSize / 2f + 1, y - outlineSize / 2f, outlineSize, outlineSize);
                 DrawTintedSafe(g, texture, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f - 1, outlineSize, outlineSize);
                 DrawTintedSafe(g, texture, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f + 1, outlineSize, outlineSize);
+            }
+            for (int i = 0; i < CatTailCount; i++)
+            {
+                float x = SnapPx(catTailNodes[i].X - camX);
+                float y = SnapPx(catTailNodes[i].Y - camY);
                 DrawTintedSafe(g, texture, player.HairColor, x - 1.5f, y - 1.5f, 3f, 3f);
             }
         }
@@ -1519,13 +1544,33 @@ namespace DeskMadeline
                 choice.Click += (_, __) =>
                 {
                     pendingSkinId = id;
-                    foreach (ToolStripMenuItem item in skinItem.DropDownItems)
-                        if (item.Tag is string) item.Checked = ((string)item.Tag).Equals(id, StringComparison.OrdinalIgnoreCase);
+                    foreach (ToolStripItem raw in skinItem.DropDownItems)
+                        if (raw is ToolStripMenuItem item && item.Tag is string)
+                            item.Checked = ((string)item.Tag).Equals(id, StringComparison.OrdinalIgnoreCase);
                 };
                 skinItem.DropDownItems.Add(choice);
             }
             AddSkinChoice(SkinManager.DefaultId, T("Default Madeline", "默认玛德琳"));
             foreach (var skin in skinManager.Skins) AddSkinChoice(skin.Id, skin.DisplayName);
+            skinItem.DropDownItems.Add(new ToolStripSeparator());
+            skinItem.DropDownItems.Add(new ToolStripMenuItem(T("Open skins folder", "打开皮肤文件夹"), null, (_, __) =>
+            {
+                string skinsDirectory = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "skins");
+                try
+                {
+                    System.IO.Directory.CreateDirectory(skinsDirectory);
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = skinsDirectory,
+                        UseShellExecute = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(ex.Message, T("Could not open skins folder", "无法打开皮肤文件夹"),
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }));
             menu.Items.Add(skinItem);
 
             var cosmeticsItem = new ToolStripMenuItem(T("Cosmetics", "装饰"));
@@ -1653,7 +1698,7 @@ namespace DeskMadeline
             { Checked = player.FreezeFramesEnabled };
             menu.Items.Add(freezeItem);
 
-            var overlaysItem = new ToolStripMenuItem(T("Debug overlays", "调试叠加层"));
+            var overlaysItem = new ToolStripMenuItem(T("Extra overlays", "额外叠加层"));
             var speedometerItem = new ToolStripMenuItem(T("Speedometer", "速度计"));
             foreach (var option in new[]
             {

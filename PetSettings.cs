@@ -11,7 +11,7 @@ namespace DeskMadeline
         public int Scale = 6;
         public bool InputEnabled = true;
         public bool AlwaysOnTop = true;
-        public bool ParticlesEnabled;
+        public bool ParticlesEnabled = true;
         public bool FreezeFramesEnabled = true;
         public bool InfiniteStamina;
         public int DashMode = 1;
