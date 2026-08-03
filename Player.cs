@@ -113,7 +113,7 @@ namespace DeskMadeline
         public bool IsLowStamina => !InfiniteStamina && Stamina <= 20f;
         public int DashCapacity => DashMode < 0 ? 2 : DashMode;
         public bool InfiniteDash => DashMode < 0;
-        public bool IsFrozen => freezeTimer > 0f;
+        public bool IsFrozen => freezeTimer > 0f || dashAimPending;
 
         public void SetDashMode(int mode)
         {
@@ -144,6 +144,8 @@ namespace DeskMadeline
         float crouchDashBufferTimer;
         bool dashStartedOnGround;
         PointF beforeDashSpeed;
+        PointF pendingDashDir;
+        bool dashAimPending;
         bool autoJump;          // 冲刺结束后的自动跳保持（原作 AutoJump：半重力/可变跳高视为按住跳）
         int lastClimbMove;
         bool fastJump;
@@ -407,6 +409,8 @@ namespace DeskMadeline
             wallBoostDir = 0;
             wallBoostTimer = 0;
             freezeTimer = 0;
+            dashAimPending = false;
+            pendingDashDir = new PointF(0, 0);
             hairFlashTimer = 0;
             wallSpeedRetained = 0;
             wallSpeedRetentionTimer = 0;
@@ -430,6 +434,22 @@ namespace DeskMadeline
         {
             if (InfiniteStamina) Stamina = ClimbMaxStamina;
 
+            // Celeste.Freeze halts Player.Update. Only advance the raw freeze here;
+            // gameplay timers and the dash aim remain locked until it ends.
+            if (freezeTimer > 0)
+            {
+                freezeTimer -= dt;
+                return;
+            }
+
+            // DashBegin clears movement during the freeze; DashCoroutine applies the
+            // direction that was sampled on the press frame once gameplay resumes.
+            if (dashAimPending)
+            {
+                dashAimPending = false;
+                ApplyDashAim();
+            }
+
             // 计时器
             if (jumpBufferTimer > 0) jumpBufferTimer -= dt;
             if (dashBufferTimer > 0) dashBufferTimer -= dt;
@@ -444,16 +464,6 @@ namespace DeskMadeline
             // wallSlideTimer 只在正在滑墙时递减（原作行为）——挪到 NormalUpdate 滑墙段
             if (forceMoveXTimer > 0) forceMoveXTimer -= dt;
             if (varJumpTimer > 0) varJumpTimer -= dt;
-
-            if (freezeTimer > 0)
-            {
-                // Celeste samples GetAimVector after the 0.05s dash freeze. Keep updating
-                // all eight aim directions during that window; crouch dash changes the
-                // posture, never the aim vector itself.
-                if (State == StDash) ApplyDashAim(input);
-                freezeTimer -= dt;
-                return;
-            }
 
             bool wasOnGround = onGround;
             impactSpeed = 0;
@@ -892,28 +902,29 @@ namespace DeskMadeline
             freezeTimer = 0.05f; // 原作 Freeze(0.05)
             beforeDashSpeed = Speed;
 
-            // Crouch dash only selects the crouched posture. Direction comes from the
-            // same independent eight-way aim vector as a normal dash.
-            ApplyDashAim(input);
-
             if (!onGround && Ducking && CanUnDuck) Ducking = false;
             else if (!Ducking && (crouchDash || input.MoveY == 1)) Ducking = true;
+
+            // Lock lastAim on the dash-press frame. Releasing or changing a direction
+            // during the 0.05s freeze must not curve a normal dash into another vector.
+            float ax = input.MoveX, ay = input.MoveY;
+            if (ax == 0 && ay == 0) pendingDashDir = new PointF(Facing, 0);
+            else
+            {
+                float len = (float)Math.Sqrt(ax * ax + ay * ay);
+                pendingDashDir = new PointF(ax / len, ay / len);
+            }
+            Speed = new PointF(0, 0);
+            DashDir = new PointF(0, 0);
+            dashAimPending = true;
 
             dashTime = DashTime;
             return StDash;
         }
 
-        void ApplyDashAim(PetInput input)
+        void ApplyDashAim()
         {
-            // 8 向瞄准，无输入默认朝前
-            float ax = input.MoveX, ay = input.MoveY;
-            PointF dir;
-            if (ax == 0 && ay == 0) dir = new PointF(Facing, 0);
-            else
-            {
-                float len = (float)Math.Sqrt(ax * ax + ay * ay);
-                dir = new PointF(ax / len, ay / len);
-            }
+            PointF dir = pendingDashDir;
 
             PointF speed = new PointF(dir.X * DashSpeed, dir.Y * DashSpeed);
             if (Sign(beforeDashSpeed.X) == Sign(speed.X) && Math.Abs(beforeDashSpeed.X) > Math.Abs(speed.X))

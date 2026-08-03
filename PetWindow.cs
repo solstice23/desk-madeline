@@ -26,8 +26,10 @@ namespace DeskMadeline
         // Keep a fixed, wide 1x render footprint. At 768 game pixels the complete
         // one-second trail remains available even through fast ultras; GPU scaling
         // makes this much cheaper than the old full-size GDI canvas.
-        const int CanvasW = 1024, CanvasH = 160;
-        const float AnchorX = 512, AnchorY = 80; // 脚底锚点（画布内）
+        // Trail snapshots live for one second, so vertical dashes need substantially
+        // more history than the old +/-80px footprint allowed.
+        const int CanvasW = 1024, CanvasH = 512;
+        const float AnchorX = 512, AnchorY = 256; // 脚底锚点（画布内）
         const double FixedDt = 1.0 / 60.0;
         static readonly IntPtr FloorId = new IntPtr(-991);
         const int WindowBorderPx = 8;           // 窗口空心边框厚度（物理像素）
@@ -542,24 +544,26 @@ namespace DeskMadeline
                 for (int i = 0; i < trail.HairCount; i++)
                 {
                     float scale = HairSegmentScale(i, trail.HairCount);
-                    float pieceSize = SnapEven(10f * scale);
+                    float pieceW = SnapEven(10f * scale * Math.Abs(trail.ScaleX));
+                    float pieceH = SnapEven(10f * scale);
                     var tex = i == 0 ? bangs : blob;
-                    float x = SnapPx(trail.HairNodes[i].X - trail.X + center) - pieceSize / 2f;
-                    float y = SnapPx(trail.HairNodes[i].Y - trail.Y + center) - pieceSize / 2f;
-                    DrawTintedSafe(g, tex, Color.Black, x - 1, y, pieceSize, pieceSize);
-                    DrawTintedSafe(g, tex, Color.Black, x + 1, y, pieceSize, pieceSize);
-                    DrawTintedSafe(g, tex, Color.Black, x, y - 1, pieceSize, pieceSize);
-                    DrawTintedSafe(g, tex, Color.Black, x, y + 1, pieceSize, pieceSize);
+                    float x = SnapPx(trail.HairNodes[i].X - trail.X + center) - pieceW / 2f;
+                    float y = SnapPx(trail.HairNodes[i].Y - trail.Y + center) - pieceH / 2f;
+                    DrawTintedSafe(g, tex, Color.Black, x - 1, y, pieceW, pieceH);
+                    DrawTintedSafe(g, tex, Color.Black, x + 1, y, pieceW, pieceH);
+                    DrawTintedSafe(g, tex, Color.Black, x, y - 1, pieceW, pieceH);
+                    DrawTintedSafe(g, tex, Color.Black, x, y + 1, pieceW, pieceH);
                 }
                 for (int i = trail.HairCount - 1; i >= 0; i--)
                 {
                     float scale = HairSegmentScale(i, trail.HairCount);
-                    float pieceSize = SnapEven(10f * scale);
+                    float pieceW = SnapEven(10f * scale * Math.Abs(trail.ScaleX));
+                    float pieceH = SnapEven(10f * scale);
                     var tex = i == 0 ? bangs : blob;
                     DrawTintedSafe(g, tex, trail.HairColor,
-                        SnapPx(trail.HairNodes[i].X - trail.X + center) - pieceSize / 2f,
-                        SnapPx(trail.HairNodes[i].Y - trail.Y + center) - pieceSize / 2f,
-                        pieceSize, pieceSize);
+                        SnapPx(trail.HairNodes[i].X - trail.X + center) - pieceW / 2f,
+                        SnapPx(trail.HairNodes[i].Y - trail.Y + center) - pieceH / 2f,
+                        pieceW, pieceH);
                 }
             }
 
@@ -1052,19 +1056,21 @@ namespace DeskMadeline
             {
                 float sc = HairSegmentScale(i, hairCount);
                 var tex = i == 0 ? bangs : blob;
-                float w = SnapEven(10 * sc);
-                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2 - 1, pt[i].Y - w / 2, w, w);
-                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2 + 1, pt[i].Y - w / 2, w, w);
-                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2, pt[i].Y - w / 2 - 1, w, w);
-                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2, pt[i].Y - w / 2 + 1, w, w);
+                float w = SnapEven(10 * sc * Math.Abs(player.SpriteScaleX));
+                float h = SnapEven(10 * sc);
+                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2 - 1, pt[i].Y - h / 2, w, h);
+                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2 + 1, pt[i].Y - h / 2, w, h);
+                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2, pt[i].Y - h / 2 - 1, w, h);
+                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2, pt[i].Y - h / 2 + 1, w, h);
             }
             // 本体（后画前面，刘海最后）
             for (int i = hairCount - 1; i >= 0; i--)
             {
                 float sc = HairSegmentScale(i, hairCount);
                 var tex = i == 0 ? bangs : blob;
-                float w = SnapEven(10 * sc);
-                DrawTintedSafe(g, tex, color, pt[i].X - w / 2, pt[i].Y - w / 2, w, w);
+                float w = SnapEven(10 * sc * Math.Abs(player.SpriteScaleX));
+                float h = SnapEven(10 * sc);
+                DrawTintedSafe(g, tex, color, pt[i].X - w / 2, pt[i].Y - h / 2, w, h);
             }
         }
 
