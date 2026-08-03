@@ -378,6 +378,9 @@ namespace DeskMadeline
                     SpriteScaleY = 1f - 0.6f * amount;
                     if (Speed.Y >= 80f) LandingEffectCount++;
                 }
+                // Vanilla's vertical collision callback clears DashAttacking after
+                // processing the landing (unless corner correction returned early).
+                dashAttackTimer = 0f;
                 Speed.Y = 0;
                 return false;
             }

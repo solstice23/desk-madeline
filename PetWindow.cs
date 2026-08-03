@@ -79,6 +79,7 @@ namespace DeskMadeline
         bool ParticlesEnabled = true;    // 粒子特效开关（默认开，托盘菜单可关闭）
         float runDustTimer;        // 跑步扬尘间隔
         int observedLaunchCount;
+        int observedRingDashSequenceCount;
         int observedWallJumpEffectCount;
         int observedJumpEffectCount;
         int observedLandingEffectCount;
@@ -684,11 +685,11 @@ namespace DeskMadeline
                 {
                     float x = SnapPx(trail.CatTailNodes[i].X - trail.X + center);
                     float y = SnapPx(trail.CatTailNodes[i].Y - trail.Y + center);
-                    float outlineSize = 4f;
-                    DrawTintedSafe(g, blob, Color.Black, x - outlineSize / 2f - 1, y - outlineSize / 2f, outlineSize, outlineSize);
-                    DrawTintedSafe(g, blob, Color.Black, x - outlineSize / 2f + 1, y - outlineSize / 2f, outlineSize, outlineSize);
-                    DrawTintedSafe(g, blob, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f - 1, outlineSize, outlineSize);
-                    DrawTintedSafe(g, blob, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f + 1, outlineSize, outlineSize);
+                    const float tailSize = 3f;
+                    DrawTintedSafe(g, blob, Color.Black, x - tailSize / 2f - 1, y - tailSize / 2f, tailSize, tailSize);
+                    DrawTintedSafe(g, blob, Color.Black, x - tailSize / 2f + 1, y - tailSize / 2f, tailSize, tailSize);
+                    DrawTintedSafe(g, blob, Color.Black, x - tailSize / 2f, y - tailSize / 2f - 1, tailSize, tailSize);
+                    DrawTintedSafe(g, blob, Color.Black, x - tailSize / 2f, y - tailSize / 2f + 1, tailSize, tailSize);
                 }
                 // Color is a second pass so adjacent nodes do not repaint one
                 // another with outline black and turn the tail into a dark chain.
@@ -757,15 +758,35 @@ namespace DeskMadeline
         // 140+ 的前 0.5 秒内每 0.15 秒生成一个环；每个环以 3/s 展开并以 10px/s 前移。
         void UpdateWavedashWaves(float dt)
         {
-            if (player.LaunchCount != observedLaunchCount)
+            // DashBegin explicitly sets vanilla's `launched` flag false. This is
+            // particularly important for multi-ultras: each new diagonal dash ends
+            // the preceding jump's speed-ring sequence.
+            if (player.DashSequenceCount != observedRingDashSequenceCount)
             {
-                observedLaunchCount = player.LaunchCount;
-                speedRingLaunchActive = true;
+                observedRingDashSequenceCount = player.DashSequenceCount;
+                speedRingLaunchActive = false;
                 speedRingLaunchTimer = 0f;
                 nextSpeedRingTime = 0.15f;
             }
+            bool launchStartedThisFrame = false;
+            if (player.LaunchCount != observedLaunchCount)
+            {
+                observedLaunchCount = player.LaunchCount;
+                // SuperJump only sets vanilla's `launched` flag. If a launch is
+                // already active it does not reset launchedTimer, which prevents
+                // chained hypers/ultras from restarting and overproducing rings.
+                if (!speedRingLaunchActive)
+                {
+                    speedRingLaunchActive = true;
+                    speedRingLaunchTimer = 0f;
+                    nextSpeedRingTime = 0.15f;
+                    launchStartedThisFrame = true;
+                }
+            }
 
-            if (speedRingLaunchActive)
+            // Player checks `launched` before its StateMachine update. A SuperJump
+            // created during that update therefore starts aging on the next frame.
+            if (speedRingLaunchActive && !launchStartedThisFrame)
             {
                 float speedSq = player.Speed.X * player.Speed.X + player.Speed.Y * player.Speed.Y;
                 if (speedSq < 19600f)
@@ -1327,11 +1348,13 @@ namespace DeskMadeline
             {
                 float x = SnapPx(catTailNodes[i].X - camX);
                 float y = SnapPx(catTailNodes[i].Y - camY);
-                const float outlineSize = 4f;
-                DrawTintedSafe(g, texture, Color.Black, x - outlineSize / 2f - 1, y - outlineSize / 2f, outlineSize, outlineSize);
-                DrawTintedSafe(g, texture, Color.Black, x - outlineSize / 2f + 1, y - outlineSize / 2f, outlineSize, outlineSize);
-                DrawTintedSafe(g, texture, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f - 1, outlineSize, outlineSize);
-                DrawTintedSafe(g, texture, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f + 1, outlineSize, outlineSize);
+                // Use the colored node's exact geometry for the four-direction
+                // outline, just like PlayerHair.Render; only the ±1px offsets differ.
+                const float tailSize = 3f;
+                DrawTintedSafe(g, texture, Color.Black, x - tailSize / 2f - 1, y - tailSize / 2f, tailSize, tailSize);
+                DrawTintedSafe(g, texture, Color.Black, x - tailSize / 2f + 1, y - tailSize / 2f, tailSize, tailSize);
+                DrawTintedSafe(g, texture, Color.Black, x - tailSize / 2f, y - tailSize / 2f - 1, tailSize, tailSize);
+                DrawTintedSafe(g, texture, Color.Black, x - tailSize / 2f, y - tailSize / 2f + 1, tailSize, tailSize);
             }
             for (int i = 0; i < CatTailCount; i++)
             {
