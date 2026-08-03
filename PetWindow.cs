@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Globalization;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -96,8 +97,12 @@ namespace DeskMadeline
         const int CatTailCount = 8;
         readonly PointF[] catTailNodes = new PointF[CatTailCount];
         readonly Color[] customHairColors = new Color[3];
+        readonly Queue<int> speedometerSamples = new Queue<int>(10);
         bool catTailStarted;
         bool catTailEnabled, catBangsEnabled, customHairColorsEnabled;
+        int speedometerMode;
+        bool hitboxesEnabled;
+        readonly Bitmap[] picoDigits = new Bitmap[10];
 
         struct WaveRing
         {
@@ -137,6 +142,8 @@ namespace DeskMadeline
             customHairColors[0] = Rgb(settings.HairColor0);
             customHairColors[1] = Rgb(settings.HairColor1);
             customHairColors[2] = Rgb(settings.HairColor2);
+            speedometerMode = settings.SpeedometerMode;
+            hitboxesEnabled = settings.HitboxesEnabled;
             player.SetFreezeFramesEnabled(settings.FreezeFramesEnabled);
             player.InfiniteStamina = settings.InfiniteStamina;
             player.SetDashMode(settings.DashMode);
@@ -172,6 +179,19 @@ namespace DeskMadeline
             skinManager.Activate(initialSkin);
             Sprites.LoadAll(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "player"),
                 initialSkin?.PlayerDirectory);
+            try
+            {
+                using var fontSource = new Bitmap(System.IO.Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory, "assets", "pico8font.png"));
+                for (int digit = 0; digit < picoDigits.Length; digit++)
+                {
+                    int sourceX = digit < 4 ? 104 + digit * 4 : (digit - 4) * 4;
+                    int sourceY = digit < 4 ? 0 : 6;
+                    picoDigits[digit] = fontSource.Clone(
+                        new Rectangle(sourceX, sourceY, 3, 5), PixelFormat.Format32bppPArgb);
+                }
+            }
+            catch { }
             HairMeta.LoadOverrides(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hair_tweaks.txt"));
             dust = new PType
             {
@@ -1070,6 +1090,8 @@ namespace DeskMadeline
                 if (ParticlesEnabled) particles.Draw(g, camX, camY);
                 // SlashFx 与 TrailManager 是核心冲刺表现，不受粒子开关控制。
                 DrawSlash(g, camX, camY);
+                DrawSpeedometer(g, camX, camY);
+                DrawHitboxes(g, camX, camY);
             }
 
             int left = (int)Math.Round(camX * s);
@@ -1224,6 +1246,58 @@ namespace DeskMadeline
             }
         }
 
+        void DrawSpeedometer(Graphics g, float camX, float camY)
+        {
+            if (speedometerMode == 0 || picoDigits[0] == null || introWakeUp) return;
+            double speed = speedometerMode switch
+            {
+                1 => Math.Abs(Math.Round(player.Speed.X)),
+                2 => Math.Abs(Math.Round(player.Speed.Y)),
+                _ => Math.Round(Math.Sqrt(player.Speed.X * player.Speed.X + player.Speed.Y * player.Speed.Y))
+            };
+            speedometerSamples.Enqueue((int)speed);
+            while (speedometerSamples.Count > 10) speedometerSamples.Dequeue();
+            string text = speedometerSamples.Max().ToString(CultureInfo.InvariantCulture);
+            int totalWidth = text.Length * 4 - 1;
+            int startX = (int)Math.Round(player.Pos.X - camX) - totalWidth / 2;
+            int top = (int)Math.Round(player.Pos.Y - camY - 24f);
+            for (int i = 0; i < text.Length; i++)
+                DrawPicoDigit(g, text[i] - '0', startX + i * 4, top);
+        }
+
+        void DrawPicoDigit(Graphics g, int digit, int x, int y)
+        {
+            for (int oy = -1; oy <= 1; oy++)
+            for (int ox = -1; ox <= 1; ox++)
+                if (ox != 0 || oy != 0)
+                    Sprites.DrawTinted(g, picoDigits[digit], Color.Black, x + ox, y + oy, 3, 5);
+            g.DrawImage(picoDigits[digit], x, y, 3, 5);
+        }
+
+        void DrawHitboxes(Graphics g, float camX, float camY)
+        {
+            if (!hitboxesEnabled) return;
+            using var solidBrush = new SolidBrush(Color.Red);
+            foreach (var solid in player.Solids)
+                DrawHollowRect(g, solid.L - camX, solid.T - camY,
+                    solid.R - solid.L, solid.B - solid.T, solidBrush);
+            float playerHeight = player.Ducking ? 6f : 11f;
+            using var playerBrush = new SolidBrush(Color.Lime);
+            DrawHollowRect(g, player.Pos.X - 4f - camX, player.Pos.Y - playerHeight - camY,
+                8f, playerHeight, playerBrush);
+        }
+
+        static void DrawHollowRect(Graphics g, float x, float y, float width, float height, Brush brush)
+        {
+            int left = (int)Math.Round(x), top = (int)Math.Round(y);
+            int w = Math.Max(1, (int)Math.Round(width));
+            int h = Math.Max(1, (int)Math.Round(height));
+            g.FillRectangle(brush, left, top, w, 1);
+            g.FillRectangle(brush, left, top + h - 1, w, 1);
+            g.FillRectangle(brush, left, top, 1, h);
+            g.FillRectangle(brush, left + w - 1, top, 1, h);
+        }
+
         void DrawCatTail(Graphics g, float camX, float camY)
         {
             if (!catTailEnabled || !catTailStarted) return;
@@ -1328,6 +1402,8 @@ namespace DeskMadeline
             settings.HairColor0 = RgbValue(customHairColors[0]);
             settings.HairColor1 = RgbValue(customHairColors[1]);
             settings.HairColor2 = RgbValue(customHairColors[2]);
+            settings.SpeedometerMode = speedometerMode;
+            settings.HitboxesEnabled = hitboxesEnabled;
             settings.Save();
         }
 
@@ -1577,6 +1653,42 @@ namespace DeskMadeline
             { Checked = player.FreezeFramesEnabled };
             menu.Items.Add(freezeItem);
 
+            var overlaysItem = new ToolStripMenuItem(T("Debug overlays", "调试叠加层"));
+            var speedometerItem = new ToolStripMenuItem(T("Speedometer", "速度计"));
+            foreach (var option in new[]
+            {
+                new KeyValuePair<int, string>(0, T("Off", "关闭")),
+                new KeyValuePair<int, string>(1, T("Horizontal", "水平")),
+                new KeyValuePair<int, string>(2, T("Vertical", "垂直")),
+                new KeyValuePair<int, string>(3, T("Both", "合速度"))
+            })
+            {
+                int mode = option.Key;
+                var choice = new ToolStripMenuItem(option.Value)
+                {
+                    Checked = speedometerMode == mode,
+                    Tag = mode
+                };
+                choice.Click += (_, __) =>
+                {
+                    speedometerMode = mode;
+                    SaveSettings();
+                    foreach (ToolStripMenuItem item in speedometerItem.DropDownItems)
+                        item.Checked = (int)item.Tag == mode;
+                };
+                speedometerItem.DropDownItems.Add(choice);
+            }
+            overlaysItem.DropDownItems.Add(speedometerItem);
+            var hitboxesItem = new ToolStripMenuItem(T("Hitboxes", "碰撞箱")) { Checked = hitboxesEnabled };
+            hitboxesItem.Click += (_, __) =>
+            {
+                hitboxesEnabled = !hitboxesEnabled;
+                hitboxesItem.Checked = hitboxesEnabled;
+                SaveSettings();
+            };
+            overlaysItem.DropDownItems.Add(hitboxesItem);
+            menu.Items.Add(overlaysItem);
+
             var staminaItem = new ToolStripMenuItem(T("Infinite stamina", "无限体力"), null, (sender, __) =>
             {
                 player.InfiniteStamina = !player.InfiniteStamina;
@@ -1712,6 +1824,7 @@ namespace DeskMadeline
             presenter?.Dispose();
             foreach (var trail in dashTrails) trail.Mask?.Dispose();
             dashTrails.Clear();
+            foreach (var digit in picoDigits) digit?.Dispose();
             compositionHost?.Close();
             compositionHost?.Dispose();
             base.OnFormClosing(e);

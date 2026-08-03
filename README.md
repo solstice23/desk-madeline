@@ -70,6 +70,10 @@ Code-only cosmetics are separate from selectable skins. The **Cosmetics** submen
 
 仅由代码实现的装饰与可选择皮肤相互独立。「装饰」子菜单提供 Cateline 风格的「猫尾」和「猫耳刘海」开关，两项均可与任意精灵皮肤组合使用。「头发颜色」可全局覆盖并保存无冲刺／一次冲刺／两次冲刺的颜色。Mikuline 会通过 `everest.yaml` 中的包名自动识别并使用其青绿色；原包把颜色交给 LiquidMod，因此自身没有 HairConfig。桌宠不会执行 Foxeline 等 Everest DLL。
 
+The **Debug overlays** submenu includes an Extended Variant Mode-style speedometer with Horizontal, Vertical, and Both (vector magnitude) modes. It uses the original PICO-8 digits and displays the peak value from the latest 10 rendered frames. The **Hitboxes** toggle outlines Madeline's current standing/ducking collider in lime and every active window or screen-edge solid in red. Both settings are remembered.
+
+「调试叠加层」子菜单包含 Extended Variant Mode 风格的速度计，可选择水平、垂直或合速度（速度向量长度）。它使用原版 PICO-8 数字，并显示最近 10 个渲染帧中的峰值。「碰撞箱」会用亮绿色描出玛德琳当前站立／下蹲碰撞箱，并用红色描出所有有效窗口与屏幕边缘实体。两项设置都会保存。
+
 ## 实现要点
 
 - **GPU 合成**：1x 游戏像素缓冲上传至 Direct2D/Direct3D 11，并按绝对物理桌面坐标画进固定的虚拟桌面交换链；宿主 HWND 和 DirectComposition visual 都不随角色移动。

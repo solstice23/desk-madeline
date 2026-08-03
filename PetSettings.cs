@@ -23,6 +23,8 @@ namespace DeskMadeline
         public int HairColor0 = 0x44B7FF;
         public int HairColor1 = 0xAC3232;
         public int HairColor2 = 0xFF6DEF;
+        public int SpeedometerMode;
+        public bool HitboxesEnabled;
 
         readonly string path;
 
@@ -60,6 +62,10 @@ namespace DeskMadeline
                 ReadColor(values, "HairColor0", ref result.HairColor0);
                 ReadColor(values, "HairColor1", ref result.HairColor1);
                 ReadColor(values, "HairColor2", ref result.HairColor2);
+                if (values.TryGetValue("SpeedometerMode", out string speedometer) &&
+                    int.TryParse(speedometer, out int speedometerValue))
+                    result.SpeedometerMode = Math.Max(0, Math.Min(3, speedometerValue));
+                ReadBool(values, "HitboxesEnabled", ref result.HitboxesEnabled);
             }
             catch { }
             return result;
@@ -99,7 +105,9 @@ namespace DeskMadeline
                     "CustomHairColorsEnabled=" + CustomHairColorsEnabled,
                     "HairColor0=#" + HairColor0.ToString("X6", CultureInfo.InvariantCulture),
                     "HairColor1=#" + HairColor1.ToString("X6", CultureInfo.InvariantCulture),
-                    "HairColor2=#" + HairColor2.ToString("X6", CultureInfo.InvariantCulture)
+                    "HairColor2=#" + HairColor2.ToString("X6", CultureInfo.InvariantCulture),
+                    "SpeedometerMode=" + SpeedometerMode,
+                    "HitboxesEnabled=" + HitboxesEnabled
                 });
             }
             catch { }
