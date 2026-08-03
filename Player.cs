@@ -715,7 +715,7 @@ namespace DeskMadeline
             if (Ducking && CanUnDuck) Ducking = false;
         }
 
-        void SuperJump(PetInput input = default)
+        void SuperJump()
         {
             ConsumeJump();
             autoJump = false;
@@ -723,10 +723,9 @@ namespace DeskMadeline
             varJumpTimer = VarJumpTime;
             wallSlideTimer = WallSlideTime;
             dashAttackTimer = 0f;  // 原作：super 跳清除冲刺攻击窗口
-            // 反向技巧：冲刺中按住反方向 + 跳 → super 朝反方向飞出去
+            // Vanilla SuperJump always launches in Facing. Dash start already updates
+            // Facing from DashDir; holding the opposite direction does not reverse it.
             int dir = Facing;
-            if (input.MoveX != 0)
-                dir = input.MoveX;
             Speed.X = SuperJumpH * dir;
             Speed.Y = JumpSpeed;
             if (Ducking)
@@ -943,7 +942,7 @@ namespace DeskMadeline
                 // 地面/水平冲刺中跳 → 超级跳：super=260；蹲冲=hyper=325；落地瞬间=ultra
                 if (Math.Abs(DashDir.Y) < 0.1f && jumpGraceTimer > 0 && CanUnDuck)
                 {
-                    SuperJump(input);
+                    SuperJump();
                     State = StNormal;
                     return;
                 }

@@ -267,10 +267,13 @@ namespace DeskMadeline
             Add("idleC", Sprites.Seq("idleC", 0, 30), 0.09f, false);
             Add("runSlow", Sprites.Seq("runSlow", 0, 11), 0.08f, true);
             Add("runFast", Sprites.Seq("runFast", 0, 11), 0.06f, true);
-            Add("jumpSlow", Sprites.Seq("jumpSlow", 0, 3), 0.08f, false);
-            Add("jumpFast", Sprites.Seq("jumpFast", 0, 3), 0.08f, false);
-            Add("fallSlow", Sprites.Seq("fall", 0, 3), 0.10f, true);
-            Add("fallFast", Sprites.Seq("fall", 4, 7), 0.08f, true);
+            // Vanilla Sprites.xml splits each jump sheet in half: 00/01 loop while
+            // rising, then 02/03 play once and hold while falling.  The separate
+            // fall00-07 sheet belongs to the scripted "fall" state, not fast-fall.
+            Add("jumpSlow", Sprites.Seq("jumpSlow", 0, 1), 0.10f, true);
+            Add("jumpFast", Sprites.Seq("jumpFast", 0, 1), 0.10f, true);
+            Add("fallSlow", Sprites.Seq("jumpSlow", 2, 3), 0.10f, false);
+            Add("fallFast", Sprites.Seq("jumpFast", 2, 3), 0.10f, false);
             Add("dash", Sprites.Seq("dash", 0, 3), 0.05f, true);
             Add("climb", ClimbFrames(), 0.1f, true, manual: true);
             Add("wallslide", new[] { "climb02" }, 1f, true);
@@ -757,23 +760,40 @@ namespace DeskMadeline
                 }
                 occluders.Add(r);   // 本窗口整体遮挡它后面的窗口
             }
-            // 同时保留每台显示器的底边。旧逻辑只在脚底所在显示器生成一块地板，
-            // 跨屏瞬间会把原地板删掉；两台显示器高度/纵向偏移不同时尤其明显。
-            // 不向左右额外延伸，否则相邻显示器的不同底边会互相覆盖。
+            // Treat the exposed perimeter of the monitor union as solid.  Each edge
+            // extends outward, then other monitor rectangles are subtracted from it:
+            // a shared seam stays open while offset/non-overlapping portions are walls.
             int virtualLeft = int.MaxValue, virtualRight = int.MinValue;
+            var screenRects = new List<Win32.RECT>();
             foreach (var screen in Screen.AllScreens)
             {
                 var bounds = screen.Bounds;
-                solids.Add(new Solid
+                screenRects.Add(new Win32.RECT
                 {
-                    Id = FloorId,
-                    L = bounds.Left / s,
-                    T = bounds.Bottom / s,
-                    R = bounds.Right / s,
-                    B = bounds.Bottom / s + 400
+                    Left = bounds.Left, Top = bounds.Top,
+                    Right = bounds.Right, Bottom = bounds.Bottom
                 });
                 virtualLeft = Math.Min(virtualLeft, bounds.Left);
                 virtualRight = Math.Max(virtualRight, bounds.Right);
+            }
+            int edgeDepth = Math.Max(64, (int)Math.Ceiling(400f * s));
+            foreach (var r in screenRects)
+            {
+                var outsideEdges = new[]
+                {
+                    new Win32.RECT { Left = r.Left, Top = r.Top - edgeDepth, Right = r.Right, Bottom = r.Top },
+                    new Win32.RECT { Left = r.Left, Top = r.Bottom, Right = r.Right, Bottom = r.Bottom + edgeDepth },
+                    new Win32.RECT { Left = r.Left - edgeDepth, Top = r.Top, Right = r.Left, Bottom = r.Bottom },
+                    new Win32.RECT { Left = r.Right, Top = r.Top, Right = r.Right + edgeDepth, Bottom = r.Bottom }
+                };
+                foreach (var edge in outsideEdges)
+                    foreach (var p in SubtractRects(edge, screenRects))
+                        solids.Add(new Solid
+                        {
+                            Id = FloorId,
+                            L = p.Left / s, T = p.Top / s,
+                            R = p.Right / s, B = p.Bottom / s
+                        });
             }
 
             // Screen 返回的边界在 PerMonitorV2 下与 DWM 一样都是物理像素。
