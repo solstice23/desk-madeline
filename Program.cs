@@ -8,9 +8,9 @@ namespace DeskMadeline
         [STAThread]
         static void Main()
         {
-            // Per-Monitor V2：所有坐标（Screen/Cursor/GetWindowRect/UpdateLayeredWindow）统一为物理像素。
-            // 之前用 DpiUnaware，系统把屏幕/光标坐标虚拟化(逻辑像素)，但 UpdateLayeredWindow 用物理像素，
-            // 两者不一致导致缩放≠100% 时窗口定位偏移。
+            // DWM 窗口矩形、鼠标、显示器边界和 UpdateLayeredWindow 必须使用同一套
+            // 物理像素坐标。DpiUnaware 会让其中一部分 API 被 Windows 虚拟化，跨越
+            // 不同缩放比例的显示器时便会产生位置和碰撞偏移。
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);

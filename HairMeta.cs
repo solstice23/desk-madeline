@@ -201,12 +201,6 @@ namespace DeskMadeline
             meta = default; return false;
         }
 
-        /// <summary>运行时临时设置某帧头发元数据（调试器实时预览用，不写文件）。</summary>
-        public static void SetOverride(string frameId, float x, float y, int bangs)
-        {
-            Overrides[frameId] = new Meta(new System.Drawing.PointF(x, y), bangs);
-        }
-
         public static void SaveOverride(string path, string frameId, float x, float y, int bangs)
         {
             Overrides[frameId] = new Meta(new System.Drawing.PointF(x, y), bangs);

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -12,8 +13,7 @@ namespace DeskMadeline
 {
     /// <summary>
     /// 桌宠主窗口：分层透明窗口 + 60FPS 游戏循环 + 窗口平台轮询 + 托盘菜单。
-    /// 进程 Per-Monitor V2 DPI aware：所有坐标均为物理像素（Screen/Cursor/GetWindowRect/ULW 统一）；
-    /// 物理模拟在游戏像素空间进行（1 游戏像素 = S 物理像素）。
+    /// 所有桌面坐标为物理像素（进程 PerMonitorV2）；物理模拟在游戏像素空间进行（1 游戏像素 = S 物理像素）。
     /// </summary>
     public class PetWindow : Form
     {
@@ -23,44 +23,34 @@ namespace DeskMadeline
         public bool AlwaysOnTop = true;
         public static PetWindow Instance;
 
-        const int CanvasW = 32, CanvasH = 48;   // 画布（游戏像素）
-        const float AnchorX = 16, AnchorY = 44; // 脚底锚点（画布内）
+        // Keep a fixed, wide 1x render footprint. At 768 game pixels the complete
+        // one-second trail remains available even through fast ultras; GPU scaling
+        // makes this much cheaper than the old full-size GDI canvas.
+        const int CanvasW = 1024, CanvasH = 160;
+        const float AnchorX = 512, AnchorY = 80; // 脚底锚点（画布内）
         const double FixedDt = 1.0 / 60.0;
         static readonly IntPtr FloorId = new IntPtr(-991);
         const int WindowBorderPx = 8;           // 窗口空心边框厚度（物理像素）
 
         readonly Player player = new Player();
+        readonly KeyBindings bindings;
+        readonly PetSettings settings;
         readonly Animator animator;
         readonly Dictionary<string, Anim> anims;
-        readonly Animator sweatAnimator;
-        readonly Dictionary<string, Anim> sweatAnims;
         readonly NotifyIcon tray;
-        readonly ContextMenuStrip trayMenu;
+        ContextMenuStrip trayMenu;
 
         Thread loopThread;
         volatile bool running;
         int pendingScale = -1;
-        string pendingSkin;          // 待应用皮肤名（null=无；""=默认）。菜单线程设置，游戏循环线程应用，避免渲染竞争
-        string activeSkin = "";      // 当前皮肤名
         bool introWakeUp = true;   // 启动时先播"醒来"动画（wakeUp 00-14），播完切 idle
 
-        // 头发调试器（托盘菜单开关 → 启用后按 F1 进入编辑）
-        public bool HairDebug;
-        public bool HairEdit;
-        List<(string Anim, int Idx, string Frame)> editFrames;
-        int editIdx;
-        string editFrameId;
-        float editHx, editHy;
-        int editBangs;
-        float editStepTimer;
-        bool editPrevEsc, editPrevBangs, editPrevSave, editPrevF1;
-        readonly string hairTweaksPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hair_tweaks.txt");
-        readonly string keysPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "keys.txt");
-
         // 渲染
-        Bitmap canvas;          // 物理像素画布（CanvasW*s × CanvasH*s）
         Bitmap small;           // 1x 游戏像素缓冲（CanvasW × CanvasH），整数坐标绘制后整数倍放大
-        LayeredPresenter presenter;
+        Bitmap trailSmall;      // world-locked trails, composited with an independent physical offset
+        D3DPresenter presenter;
+        CompositionHost compositionHost;
+        readonly Rectangle virtualDesktop;
         int renderFrameCount;
 
         // 平台
@@ -68,9 +58,7 @@ namespace DeskMadeline
         int pollCounter;
 
         // 输入状态
-        bool prevJump, prevDash;
-        int lastMoveX, lastMoveY;        // TakeNewer：同轴两键同按时保持后按方向
-        bool turnedMoveX, turnedMoveY;
+        bool prevJump, prevDash, prevCrouchDash;
 
         // 拖拽
         volatile bool dragging;
@@ -81,26 +69,60 @@ namespace DeskMadeline
 
         // 粒子 / 特效
         readonly ParticleSystem particles = new ParticleSystem();
-        PType dust, sparky;
+        readonly List<WaveRing> waveRings = new List<WaveRing>();
+        readonly Random effectRng = new Random();
+        PType dust, dashBlue, dashRed;
         bool ParticlesEnabled = false;   // 粒子特效开关（默认关，托盘菜单可开）
-        float slashTimer;          // 冲刺斩击剩余时长（>0 显示）
-        int slashDir = 1;          // 斩击朝向
         float runDustTimer;        // 跑步扬尘间隔
+        int observedLaunchCount;
+        bool speedRingLaunchActive;
+        float speedRingLaunchTimer;
+        float nextSpeedRingTime;
+        float dashParticleTimer;
+        readonly List<DashTrail> dashTrails = new List<DashTrail>();
+        SlashVisual slash;
+        int observedDashSequenceCount;
+        bool dashVisualPending;
+        float dashVisualTimer = -1f;
+        int dashTrailStage;
+        bool english = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "zh";
 
-        // 速度计 / 速度日志（托盘菜单开关）
-        bool SpeedMeter;                   // 速度计 HUD 显示
-        bool SpeedLog;                     // 速度日志写盘
-        float speedLogTimer;               // 日志采样计时（每 0.05s 采样一次）
-        float lastLogH, lastLogT;          // 上次写入的水平/总速度（变化才写，避免挂机刷屏）
-        int lastLogState = -1;
-        bool lastLogDuck;
-        float peakHSpeed, peakTSpeed;      // 峰值：水平 / 总速度
-        readonly string speedLogPath =
-            System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "speed_log.txt");
+        struct WaveRing
+        {
+            public float X, Y, Angle, Progress;
+        }
+
+        sealed class DashTrail
+        {
+            public float X, Y, ScaleX, ScaleY, Age;
+            public int Facing, HairCount;
+            public string FrameId, BangsId;
+            public Color Tint, HairColor;
+            public PointF[] HairNodes;
+        }
+
+        struct SlashVisual
+        {
+            public bool Active;
+            public float X, Y, Angle, Age;
+        }
 
         public PetWindow()
         {
             Instance = this;
+            settings = PetSettings.Load(System.IO.Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory, "settings.txt"));
+            virtualDesktop = GetVirtualDesktopBounds();
+            GameScale = settings.Scale;
+            InputEnabled = settings.InputEnabled;
+            AlwaysOnTop = settings.AlwaysOnTop;
+            ParticlesEnabled = settings.ParticlesEnabled;
+            player.InfiniteStamina = settings.InfiniteStamina;
+            player.SetDashMode(settings.DashMode);
+            if (settings.Language == "en") english = true;
+            else if (settings.Language == "zh") english = false;
+            bindings = new KeyBindings(System.IO.Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory, "keybindings.txt"));
             // 日志防无限增长：超过 5MB 时清空重写（保留最近一次运行记录）
             try
             {
@@ -109,20 +131,23 @@ namespace DeskMadeline
                     System.IO.File.WriteAllText(logPath, "");
             }
             catch { }
-            // ---- 窗口样式：无边框、不在任务栏、分层透明 ----
+            // ---- 窗口样式：无边框、不在任务栏、DirectComposition 透明 ----
             FormBorderStyle = FormBorderStyle.None;
+            Text = "Desk Madeline";
+            // 分层画布的尺寸由 GameScale 明确控制，不允许 WinForms 在 WM_DPICHANGED
+            // 时再按字体 DPI 缩放一次。
+            AutoScaleMode = AutoScaleMode.None;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.Manual;
-            // PMv2 下禁止 WinForms 按 DPI 自动缩放窗体（尺寸由 ULW 全权控制，防止跨 DPI 显示器时被改大小）
-            AutoScaleMode = AutoScaleMode.None;
             // 注意：不要设置 BackColor/TransparencyKey（色键分层与 ULW 冲突）
-            Size = new Size(CanvasW * GameScale, CanvasH * GameScale);
+            Size = new Size(24 * GameScale, 33 * GameScale);
             Location = new Point(-10000, -10000);
+            BackColor = Color.Black;
+            Opacity = 0.01; // nonzero alpha keeps the small body hit target interactive
 
             // ---- 贴图与动画 ----
             Sprites.LoadAll(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "player"));
-            HairMeta.LoadOverrides(hairTweaksPath);
-            KeyBinds.Load(keysPath);
+            HairMeta.LoadOverrides(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hair_tweaks.txt"));
             dust = new PType
             {
                 Tex = new[] { "smoke0", "smoke1", "smoke2", "smoke3" },
@@ -133,42 +158,33 @@ namespace DeskMadeline
                 SpeedMin = 6f, SpeedMax = 16f,
                 ScaleOut = true
             };
-            sparky = new PType
+            dashBlue = new PType
             {
-                Tex = new[] { "zappysmoke00", "zappysmoke01", "zappysmoke02", "zappysmoke03" },
-                Color = Color.FromArgb(150, 215, 255),
+                Tex = new[] { "dashParticle" },
+                Color = Color.FromArgb(0x44, 0xB7, 0xFF),
+                Color2 = Color.FromArgb(0x75, 0xC9, 0xFF),
+                BlinkColor = true,
                 GravY = 8f,
-                LifeMin = 0.2f, LifeMax = 0.35f,
-                Size = 5f, SizeRange = 1f,
-                SpeedMin = 20f, SpeedMax = 45f,
-                ScaleOut = true
+                LifeMin = 1f, LifeMax = 1.8f,
+                Size = 1f,
+                SpeedMin = 10f, SpeedMax = 20f,
+                LateFade = true
+            };
+            dashRed = new PType
+            {
+                Tex = new[] { "dashParticle" },
+                Color = Color.FromArgb(0xAC, 0x32, 0x32),
+                Color2 = Color.FromArgb(0xE0, 0x59, 0x59),
+                BlinkColor = true,
+                GravY = 8f,
+                LifeMin = 1f, LifeMax = 1.8f,
+                Size = 1f,
+                SpeedMin = 10f, SpeedMax = 20f,
+                LateFade = true
             };
             anims = BuildAnims();
             animator = new Animator(anims);
             animator.Play("wakeUp");   // 启动先播醒来动画
-            sweatAnims = BuildSweatAnims();
-            sweatAnimator = new Animator(sweatAnims);
-            sweatAnimator.Play("idle");
-
-            // 皮肤：启动时恢复上次选择（游戏循环尚未启动，直接加载无竞争）。动画集按 mod Sprites.xml 切换。
-            string savedSkin = Skins.LoadActive();
-            if (savedSkin != "" && Skins.TryGetSkinSource(savedSkin, out var szip, out var sdir))
-            {
-                if (szip != null)
-                {
-                    Sprites.LoadSkinZip(szip, savedSkin);
-                    var sa = Skins.BuildSkinAnims(szip, anims);
-                    animator.SetAnims(sa.Count > 0 ? sa : anims);
-                }
-                else
-                {
-                    Sprites.LoadSkin(sdir);
-                    animator.SetAnims(anims);
-                }
-                activeSkin = savedSkin;
-                Skins.LoadOptions(savedSkin);
-            }
-            BuildEditFrames();
 
             // ---- 出生点：主屏工作区底部中央 ----
             var wa = Screen.PrimaryScreen.WorkingArea;
@@ -178,7 +194,7 @@ namespace DeskMadeline
             trayMenu = BuildMenu();
             tray = new NotifyIcon
             {
-                Text = "玛德琳",
+                Text = T("Madeline", "玛德琳"),
                 Icon = BuildTrayIcon(),
                 ContextMenuStrip = trayMenu,
                 Visible = true
@@ -191,16 +207,38 @@ namespace DeskMadeline
             {
                 const int WS_EX_TOPMOST = 0x00000008;
                 var cp = base.CreateParams;
-                cp.ExStyle |= Win32.WS_EX_LAYERED | Win32.WS_EX_TOOLWINDOW |
-                              Win32.WS_EX_NOACTIVATE | WS_EX_TOPMOST;
+                // 保持工具窗口（不出现在 Alt+Tab/任务栏），但必须允许激活：点击玛德琳后
+                // 她取得键盘焦点，移动键便不会同时输入到其他程序。
+                cp.ExStyle |= Win32.WS_EX_LAYERED | Win32.WS_EX_TOOLWINDOW;
+                if (AlwaysOnTop) cp.ExStyle |= WS_EX_TOPMOST;
                 return cp;
             }
+        }
+
+        static Rectangle GetVirtualDesktopBounds()
+        {
+            int left = int.MaxValue, top = int.MaxValue;
+            int right = int.MinValue, bottom = int.MinValue;
+            foreach (var screen in Screen.AllScreens)
+            {
+                left = Math.Min(left, screen.Bounds.Left);
+                top = Math.Min(top, screen.Bounds.Top);
+                right = Math.Max(right, screen.Bounds.Right);
+                bottom = Math.Max(bottom, screen.Bounds.Bottom);
+            }
+            return left == int.MaxValue
+                ? new Rectangle(0, 0, 1920, 1080)
+                : Rectangle.FromLTRB(left, top, right, bottom);
         }
 
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
-            presenter = new LayeredPresenter(Handle, CanvasW * GameScale, CanvasH * GameScale);
+            compositionHost = new CompositionHost(virtualDesktop, AlwaysOnTop);
+            compositionHost.Show();
+            presenter = new D3DPresenter(compositionHost.Handle, CanvasW, CanvasH, GameScale, virtualDesktop);
+            Win32.SetWindowPos(Handle, AlwaysOnTop ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST,
+                0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
             PollSolids();
             player.Hair.Reset(new PointF(player.Pos.X, player.Pos.Y - 9), player.Facing);
         }
@@ -208,7 +246,7 @@ namespace DeskMadeline
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            // 窗口真正显示后再启动游戏循环（ULW 要求窗口已就绪）
+            // 窗口真正显示后再启动游戏循环（DirectComposition target 要求 HWND 已就绪）
             running = true;
             loopThread = new Thread(GameLoop) { IsBackground = true, Name = "PetLoop" };
             loopThread.Start();
@@ -234,42 +272,27 @@ namespace DeskMadeline
             Add("fallFast", Sprites.Seq("fall", 4, 7), 0.08f, true);
             Add("dash", Sprites.Seq("dash", 0, 3), 0.05f, true);
             Add("climb", ClimbFrames(), 0.1f, true, manual: true);
-            Add("climbTurn", new[] { "climb07", "climb08" }, 0.12f, false);
             Add("wallslide", new[] { "climb02" }, 1f, true);
             Add("dangling", Sprites.Seq("dangling", 0, 9), 0.1f, true);
             Add("duck", new[] { "duck" }, 1f, true);
             Add("lookUp", Sprites.Seq("lookUp", 0, 7), 0.1f, false);
+            Add("tired", Sprites.Seq("tired", 0, 3), 0.16f, true);
             Add("edge", Sprites.Seq("edge", 0, 13), 0.08f, true);
             Add("flip", Sprites.Seq("flip", 0, 8), 0.06f, false);
             return d;
         }
 
-        /// <summary>攀爬循环帧：只含 climb00-06；climb07/08 为扭头帧（走 climbTurn），climb09-14 为废案屏蔽。</summary>
+        /// <summary>攀爬循环帧：跳过 climb07/08（扭头帧，不参与正常攀爬）。</summary>
         static string[] ClimbFrames()
         {
             var list = new List<string>();
-            for (int i = 0; i <= 6; i++)
+            for (int i = 0; i <= 14; i++)
             {
+                if (i == 7 || i == 8) continue;
                 var id = "climb" + i.ToString("00");
                 if (Sprites.Has(id)) list.Add(id);
             }
             return list.ToArray();
-        }
-
-        /// <summary>汗水动画（原作 player_sweat SpriteBank）：跳/爬/危险/静止/空闲。
-        /// 素材已加 sweat_ 前缀放进 assets/player，避免与身体帧（idle00/climb00 等）重名冲突。</summary>
-        static Dictionary<string, Anim> BuildSweatAnims()
-        {
-            var d = new Dictionary<string, Anim>(StringComparer.OrdinalIgnoreCase);
-            void Add(string id, string[] frames, float delay, bool loop)
-            { if (frames.Length > 0) d[id] = new Anim { Frames = frames, Delay = delay, Loop = loop }; }
-
-            Add("jump", Sprites.Seq("sweat_jump", 0, 3), 0.05f, false);   // 攀爬跳喷雾（一次性，播完停在末帧近乎透明）
-            Add("climb", Sprites.Seq("sweat_climb", 0, 7), 0.07f, true);
-            Add("danger", Sprites.Seq("sweat_danger", 0, 5), 0.08f, true);
-            Add("still", Sprites.Seq("sweat_still", 0, 5), 0.08f, true);
-            Add("idle", new[] { "sweat_idle00" }, 0.1f, true);            // 空白帧，不出汗
-            return d;
         }
 
         // ================= 游戏循环 =================
@@ -334,17 +357,8 @@ namespace DeskMadeline
             {
                 GameScale = pendingScale;
                 pendingScale = -1;
-                canvas?.Dispose();
-                canvas = null;
-                presenter.Resize(CanvasW * GameScale, CanvasH * GameScale);
+                presenter.Resize(GameScale);
                 pollCounter = 999; // 立即重取平台（单位变了）
-            }
-
-            // 应用待定的皮肤切换（游戏循环线程内加载，避免与渲染竞争）
-            if (pendingSkin != null)
-            {
-                ApplySkin(pendingSkin);
-                pendingSkin = null;
             }
 
             // 平台轮询（每 0.25s）
@@ -353,18 +367,6 @@ namespace DeskMadeline
                 pollCounter = 0;
                 PollSolids();
             }
-
-            // 头发调试器：冻结物理，逐帧预览头发
-            if (HairEdit) { TickHairEdit(dt); return; }
-
-            // 已启用调试时，F1 进入编辑
-            bool f1 = Win32.KeyDown(0x70);
-            if (f1 && !editPrevF1)
-            {
-                editPrevF1 = true;
-                if (HairDebug) { EnterHairEdit(); return; }
-            }
-            else if (!f1) editPrevF1 = false;
 
             if (introWakeUp)
             {
@@ -392,44 +394,20 @@ namespace DeskMadeline
             bool wasOnGround = player.onGround;
             int wasState = player.State;
             player.Update(dt, input);
+            UpdateWavedashWaves(dt);
 
             // 离开屏幕很远自动重置（防"无限下落"/被甩出虚拟屏幕）
             if (!introWakeUp) CheckAutoReset();
-
-            // 速度计/日志：更新峰值 + 按 0.05s 采样写日志（h=水平带方向，t=总速度）
-            float tv = (float)Math.Sqrt(player.Speed.X * player.Speed.X + player.Speed.Y * player.Speed.Y);
-            if (Math.Abs(player.Speed.X) > peakHSpeed) peakHSpeed = Math.Abs(player.Speed.X);
-            if (tv > peakTSpeed) peakTSpeed = tv;
-            if (SpeedLog)
-            {
-                speedLogTimer += dt;
-                if (speedLogTimer >= 0.05f)
-                {
-                    speedLogTimer -= 0.05f;
-                    // 只在速度/状态/下蹲任一变化时落盘，挂机不刷屏
-                    bool stChg = player.State != lastLogState || player.Ducking != lastLogDuck;
-                    if (stChg || player.Speed.X != lastLogH || Math.Abs(tv - lastLogT) > 0.5f)
-                    {
-                        lastLogH = player.Speed.X;
-                        lastLogT = tv;
-                        lastLogState = player.State;
-                        lastLogDuck = player.Ducking;
-                        WriteSpeedLog(player.Speed.X, tv);
-                    }
-                }
-            }
 
             // 粒子（走路/落地/跳跃/冲刺）+ 冲刺斩击计时
             if (ParticlesEnabled)
             {
                 EmitPlayerParticles(dt, wasOnGround, wasState);
                 particles.Update(dt);
-                if (slashTimer > 0) slashTimer -= dt;
             }
             else
             {
                 particles.Clear();
-                slashTimer = 0;
             }
 
             // 动画
@@ -439,135 +417,148 @@ namespace DeskMadeline
             player.AnimFinished = animator.Finished;
             player.AnimLoopCount = animator.LoopCount;
             player.CurrentFrameId = animator.CurrentFrameId; // 下一帧起头发锚点跟随当前帧
-
-            // 汗水动画（原作 sweatSprite）：跳跃喷雾需强制重播，其余随 SweatId 切换
-            if (player.SweatRestart) { sweatAnimator.Play(player.SweatId, true); player.SweatRestart = false; }
-            else sweatAnimator.Play(player.SweatId);
-            sweatAnimator.Update(dt);
-            // 攀爬跳喷雾一次性播完 → 自动回 idle（原作 jump 末帧仍残留小汗滴，放大后明显，避免卡帧不消失）
-            if (player.SweatId == "jump" && sweatAnimator.Finished) player.SweatId = "idle";
+            UpdateDashCoreVisuals(dt);
         }
 
-        // ================= 头发调试器 =================
-        void EnterHairEdit()
+        void UpdateDashCoreVisuals(float dt)
         {
-            if (editFrames == null || editFrames.Count == 0) return;
-            string f = animator.CurrentFrameId;
-            int idx = f == null ? -1 : editFrames.FindIndex(e => string.Equals(e.Frame, f, StringComparison.OrdinalIgnoreCase));
-            if (idx < 0) idx = 0;
-            editIdx = idx;
-            var e = editFrames[editIdx];
-            animator.Play(e.Anim, true);
-            animator.Frame = e.Idx;
-            editFrameId = e.Frame;
-            LoadEditValues();
-            HairEdit = true;
-            try
+            if (player.DashSequenceCount != observedDashSequenceCount)
             {
-                BeginInvoke(new Action(() => MessageBox.Show(
-                    "头发调试器（当前帧 " + editFrameId + "）\n" +
-                    "[ / ]  切换帧\n" +
-                    "← / →  头发锚点左右（0.1）\n" +
-                    "↑ / ↓  头发锚点上下（0.1）\n" +
-                    "C      刘海朝向 0/1/2\n" +
-                    "F5     保存当前帧到 hair_tweaks.txt\n" +
-                    "F1 / Esc  退出（自动保存）",
-                    "玛德琳", MessageBoxButtons.OK, MessageBoxIcon.Information)));
+                observedDashSequenceCount = player.DashSequenceCount;
+                dashVisualPending = true;
+                dashVisualTimer = -1f;
+                dashTrailStage = 0;
             }
-            catch { }
-        }
 
-        void ExitHairEdit()
-        {
-            if (!HairEdit) return;
-            SaveEditFrame();
-            HairEdit = false;
-        }
-
-        void BuildEditFrames()
-        {
-            editFrames = new List<(string Anim, int Idx, string Frame)>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var kv in anims)
-                for (int i = 0; i < kv.Value.Frames.Length; i++)
+            // Celeste.Freeze(0.05) occurs before DashCoroutine creates SlashFx and the first trail.
+            if (dashVisualPending && !player.IsFrozen)
+            {
+                dashVisualPending = false;
+                dashVisualTimer = 0f;
+                slash = new SlashVisual
                 {
-                    var f = kv.Value.Frames[i];
-                    if (seen.Add(f)) editFrames.Add((kv.Key, i, f));
+                    Active = true,
+                    X = player.Pos.X,
+                    Y = player.Pos.Y - 5.5f,
+                    Angle = (float)Math.Atan2(player.DashDir.Y, player.DashDir.X)
+                };
+                CaptureDashTrail();
+                dashTrailStage = 1;
+            }
+
+            if (dashVisualTimer >= 0f)
+            {
+                float previous = dashVisualTimer;
+                dashVisualTimer += dt;
+                // Normal DashCoroutine: immediate snapshot, DashUpdate snapshot at 0.08,
+                // and final coroutine snapshot at 0.15 seconds.
+                if (dashTrailStage == 1 && previous < 0.08f && dashVisualTimer >= 0.08f)
+                {
+                    CaptureDashTrail();
+                    dashTrailStage = 2;
                 }
-        }
-
-        void StepEditFrame(int dir)
-        {
-            if (editFrames == null || editFrames.Count == 0) return;
-            editIdx = (editIdx + dir + editFrames.Count) % editFrames.Count;
-            var e = editFrames[editIdx];
-            animator.Play(e.Anim, true);
-            animator.Frame = e.Idx;
-            editFrameId = e.Frame;
-            LoadEditValues();
-            PetWindow.Log("hair edit frame " + editFrameId + " x=" + editHx.ToString("0.###") + " y=" + editHy.ToString("0.###") + " b=" + editBangs);
-        }
-
-        void LoadEditValues()
-        {
-            if (HairMeta.TryGet(editFrameId, out var m))
-            { editHx = m.Offset.X; editHy = m.Offset.Y; editBangs = m.Bangs; }
-            else { editHx = 0f; editHy = 0f; editBangs = 1; }
-        }
-
-        void SaveEditFrame()
-        {
-            if (string.IsNullOrEmpty(editFrameId)) return;
-            HairMeta.SaveOverride(hairTweaksPath, editFrameId, editHx, editHy, editBangs);
-            PetWindow.Log("hair saved " + editFrameId + " " + editHx.ToString("0.###") + " " + editHy.ToString("0.###") + " " + editBangs);
-        }
-
-        void TickHairEdit(float dt)
-        {
-            bool f1 = Win32.KeyDown(0x70);
-            if (f1 && !editPrevF1) { editPrevF1 = true; ExitHairEdit(); return; }
-            editPrevF1 = f1;
-
-            if (Win32.KeyDown(0x1B))
-            {
-                if (!editPrevEsc) { editPrevEsc = true; ExitHairEdit(); }
-                return;
+                if (dashTrailStage == 2 && previous < 0.15f && dashVisualTimer >= 0.15f)
+                {
+                    CaptureDashTrail();
+                    dashTrailStage = 3;
+                    dashVisualTimer = -1f;
+                }
             }
-            editPrevEsc = Win32.KeyDown(0x1B);
 
-            // 帧步进（按住每 0.15s 一步）
-            editStepTimer -= dt;
-            int dir = 0;
-            if (Win32.KeyDown(0xDB)) dir -= 1;   // [
-            if (Win32.KeyDown(0xDD)) dir += 1;   // ]
-            if (dir != 0)
+            if (slash.Active)
             {
-                if (editStepTimer <= 0) { editStepTimer = 0.15f; StepEditFrame(dir); }
+                slash.Age += dt;
+                slash.X += (float)Math.Cos(slash.Angle) * 8f * dt;
+                slash.Y += (float)Math.Sin(slash.Angle) * 8f * dt;
+                if (slash.Age >= 0.4f) slash.Active = false;
             }
-            else editStepTimer = 0;
 
-            // 锚点偏移（0.1/帧）
-            const float step = 0.1f;
-            if (Win32.KeyDown(0x25)) editHx -= step;   // ←
-            if (Win32.KeyDown(0x27)) editHx += step;   // →
-            if (Win32.KeyDown(0x26)) editHy -= step;   // ↑
-            if (Win32.KeyDown(0x28)) editHy += step;   // ↓
-
-            bool cDown = Win32.KeyDown(0x43);          // C 刘海朝向
-            if (cDown && !editPrevBangs) { editPrevBangs = true; editBangs = (editBangs + 1) % 3; }
-            if (!cDown) editPrevBangs = false;
-
-            bool f5Down = Win32.KeyDown(0x74);         // F5 保存
-            if (f5Down && !editPrevSave) { editPrevSave = true; SaveEditFrame(); }
-            if (!f5Down) editPrevSave = false;
-
-            // 实时写入覆盖表：头发锚点与刘海渲染都立即生效
-            if (editFrameId != null)
+            for (int i = dashTrails.Count - 1; i >= 0; i--)
             {
-                HairMeta.SetOverride(editFrameId, editHx, editHy, editBangs);
-                player.CurrentFrameId = editFrameId;
+                dashTrails[i].Age += dt;
+                if (dashTrails[i].Age >= 1f) dashTrails.RemoveAt(i);
             }
-            player.UpdateHairOnly(dt, editHx, editHy);
+        }
+
+        void CaptureDashTrail()
+        {
+            int count = player.Hair.ActiveCount;
+            var nodes = new PointF[count];
+            for (int i = 0; i < count; i++) nodes[i] = player.Hair.Nodes[i];
+            string frameId = animator.CurrentFrameId ?? (player.Ducking ? "duck" : "dash00");
+            string bangsId = "bangs00";
+            if (HairMeta.TryGet(frameId, out var hm) && hm.Bangs >= 0 && hm.Bangs < HairMeta.BangsFrames.Length)
+                bangsId = HairMeta.BangsFrames[hm.Bangs];
+            dashTrails.Add(new DashTrail
+            {
+                X = player.Pos.X,
+                Y = player.Pos.Y,
+                ScaleX = player.SpriteScaleX,
+                ScaleY = player.SpriteScaleY,
+                Facing = player.Facing,
+                FrameId = frameId,
+                BangsId = bangsId,
+                HairCount = count,
+                HairNodes = nodes,
+                HairColor = player.HairColor,
+                // Player.GetTrailColor(wasDashB): second-charge dash -> red; otherwise blue.
+                Tint = player.LastDashWasTwo ? Player.NormalHairColor : Player.UsedHairColor
+            });
+        }
+
+        // Celeste Player.Update + SpeedRing：Super/Hyper/Wavedash 起跳后，在速度保持
+        // 140+ 的前 0.5 秒内每 0.15 秒生成一个环；每个环以 3/s 展开并以 10px/s 前移。
+        void UpdateWavedashWaves(float dt)
+        {
+            if (player.LaunchCount != observedLaunchCount)
+            {
+                observedLaunchCount = player.LaunchCount;
+                speedRingLaunchActive = true;
+                speedRingLaunchTimer = 0f;
+                nextSpeedRingTime = 0.15f;
+            }
+
+            if (speedRingLaunchActive)
+            {
+                float speedSq = player.Speed.X * player.Speed.X + player.Speed.Y * player.Speed.Y;
+                if (speedSq < 19600f)
+                {
+                    speedRingLaunchActive = false;
+                    speedRingLaunchTimer = 0f;
+                }
+                else
+                {
+                    speedRingLaunchTimer += dt;
+                    if (speedRingLaunchTimer >= 0.5f)
+                    {
+                        speedRingLaunchActive = false;
+                        speedRingLaunchTimer = 0f;
+                    }
+                    else
+                    {
+                        while (speedRingLaunchTimer >= nextSpeedRingTime)
+                        {
+                            waveRings.Add(new WaveRing
+                            {
+                                X = player.Pos.X,
+                                Y = player.Pos.Y - 5.5f,
+                                Angle = (float)Math.Atan2(player.Speed.Y, player.Speed.X)
+                            });
+                            nextSpeedRingTime += 0.15f;
+                        }
+                    }
+                }
+            }
+
+            for (int i = waveRings.Count - 1; i >= 0; i--)
+            {
+                var ring = waveRings[i];
+                ring.Progress += 3f * dt;
+                ring.X += (float)Math.Cos(ring.Angle) * 10f * dt;
+                ring.Y += (float)Math.Sin(ring.Angle) * 10f * dt;
+                if (ring.Progress >= 1f) waveRings.RemoveAt(i);
+                else waveRings[i] = ring;
+            }
         }
 
         // 粒子发射（参数移植自 Celeste Player.cs 的 Dust.Burst 调用）
@@ -598,64 +589,63 @@ namespace DeskMadeline
             // 冲刺
             if (player.State == Player.StDash)
             {
-                float dashAngle = (float)Math.Atan2(-player.DashDir.Y, -player.DashDir.X);
+                float dashAngle = (float)Math.Atan2(player.DashDir.Y, player.DashDir.X);
                 if (wasState != Player.StDash)
                 {
-                    // 冲刺开始：爆发 + 斩击特效
-                    particles.Emit(sparky, player.Pos.X, player.Pos.Y, dashAngle, 0.6f, 8);
-                    slashTimer = 0.15f;
-                    slashDir = player.DashDir.X < 0 ? -1 : 1;
+                    dashParticleTimer = 0f;
                 }
-                else
+                dashParticleTimer += dt;
+                // 原作 DashUpdate：运动中每 0.02 秒发射一个 P_DashA/P_DashB。
+                while (dashParticleTimer >= 0.02f &&
+                       (player.Speed.X != 0f || player.Speed.Y != 0f))
                 {
-                    // 冲刺中：持续拖尾
-                    particles.Emit(sparky, player.Pos.X, player.Pos.Y, dashAngle, 0.8f, 1);
+                    dashParticleTimer -= 0.02f;
+                    float px = player.Pos.X + (float)(effectRng.NextDouble() * 4.0 - 2.0);
+                    float py = player.Pos.Y - 5.5f + (float)(effectRng.NextDouble() * 4.0 - 2.0);
+                    particles.Emit(player.LastDashWasTwo ? dashRed : dashBlue,
+                        px, py, dashAngle, (float)Math.PI / 3f, 1);
                 }
             }
+            else dashParticleTimer = 0f;
         }
 
         PetInput SampleInput()
         {
             var input = new PetInput();
-            if (!InputEnabled || dragging || KeyBinds.DialogOpen) { prevJump = prevDash = false; return input; }
+            // GetAsyncKeyState 本身是全局的，因此必须显式按前台窗口门控。
+            // 失焦时仅忽略输入，不安装全局 hook，也不吞掉其他程序的按键。
+            if (!InputEnabled || dragging || Win32.GetForegroundWindow() != Handle)
+            {
+                prevJump = prevDash = prevCrouchDash = false;
+                return input;
+            }
 
-            bool left = KeyBinds.Pressed("Left");
-            bool right = KeyBinds.Pressed("Right");
-            bool up = KeyBinds.Pressed("Up");
-            bool down = KeyBinds.Pressed("Down");
-            bool jump = KeyBinds.Pressed("Jump");
-            bool dash = KeyBinds.Pressed("Dash");
-            bool grab = KeyBinds.Pressed("Grab");
+            bool left = bindings.IsDown(PetAction.Left);
+            bool right = bindings.IsDown(PetAction.Right);
+            bool up = bindings.IsDown(PetAction.Up);
+            bool down = bindings.IsDown(PetAction.Down);
+            bool jump = bindings.IsDown(PetAction.Jump);
+            bool dash = bindings.IsDown(PetAction.Dash);
+            bool grab = bindings.IsDown(PetAction.Grab);
+            bool crouchDash = bindings.IsDown(PetAction.CrouchDash);
 
-            // 原作 OverlapBehaviors.TakeNewer：左/右同按 → 保持后按方向（先按住左再按右 → 向右走），不取消
-            input.MoveX = NewerAxis(right, left, ref lastMoveX, ref turnedMoveX);
-            input.MoveY = NewerAxis(down, up, ref lastMoveY, ref turnedMoveY);
+            input.MoveX = (right ? 1 : 0) - (left ? 1 : 0);
+            input.MoveY = (down ? 1 : 0) - (up ? 1 : 0);
             input.JumpHeld = jump;
             input.GrabHeld = grab;
 
             if (jump && !prevJump) player.BufferJump();
-            if (dash && !prevDash) player.BufferDash();
+            // Crouch Dash wins if both actions are pressed on the same frame, as it explicitly
+            // requests the crouched dash path used for demos/hypers in Celeste.
+            if (crouchDash && !prevCrouchDash) player.BufferDash(crouchDash: true);
+            else if (dash && !prevDash) player.BufferDash();
             prevJump = jump;
             prevDash = dash;
+            prevCrouchDash = crouchDash;
 
             input.JumpPressed = player.HasJumpBuffer;
             input.DashPressed = player.HasDashBuffer;
             return input;
-        }
-
-        // 原作 VirtualIntegerAxis / VirtualJoystick 的 OverlapBehaviors.TakeNewer：
-        // 正/负两键同按时，第一帧把方向翻转一次（保持"后按"的方向），之后不再翻转；单键时复位标记。
-        static int NewerAxis(bool pos, bool neg, ref int last, ref bool turned)
-        {
-            if (pos && neg)
-            {
-                if (!turned) { last = -last; turned = true; }
-                return last;
-            }
-            if (pos) { turned = false; return last = 1; }
-            if (neg) { turned = false; return last = -1; }
-            turned = false;
-            return last = 0;
         }
 
         // ================= 平台（窗口即平台，空心边框）=================
@@ -702,15 +692,32 @@ namespace DeskMadeline
                 }
                 occluders.Add(r);   // 本窗口整体遮挡它后面的窗口
             }
-            // 宠物所在屏幕的底部作为地板
-            var screen = Screen.FromPoint(new Point((int)(player.Pos.X * s), (int)(player.Pos.Y * s)));
-            var vb = screen.Bounds;
-            solids.Add(new Solid { Id = FloorId, L = vb.Left / s - 400, T = vb.Bottom / s, R = vb.Right / s + 400, B = vb.Bottom / s + 400 });
+            // 同时保留每台显示器的底边。旧逻辑只在脚底所在显示器生成一块地板，
+            // 跨屏瞬间会把原地板删掉；两台显示器高度/纵向偏移不同时尤其明显。
+            // 不向左右额外延伸，否则相邻显示器的不同底边会互相覆盖。
+            int virtualLeft = int.MaxValue, virtualRight = int.MinValue;
+            foreach (var screen in Screen.AllScreens)
+            {
+                var bounds = screen.Bounds;
+                solids.Add(new Solid
+                {
+                    Id = FloorId,
+                    L = bounds.Left / s,
+                    T = bounds.Bottom / s,
+                    R = bounds.Right / s,
+                    B = bounds.Bottom / s + 400
+                });
+                virtualLeft = Math.Min(virtualLeft, bounds.Left);
+                virtualRight = Math.Max(virtualRight, bounds.Right);
+            }
 
-            // 虚拟屏幕左右边界
-            var vs = SystemInformation.VirtualScreen;
-            player.MinX = vs.Left / s;
-            player.MaxX = vs.Right / s;
+            // Screen 返回的边界在 PerMonitorV2 下与 DWM 一样都是物理像素。
+            // 从实际显示器并集计算左右极值，避免 SystemInformation 的 DPI 虚拟化。
+            if (virtualLeft != int.MaxValue)
+            {
+                player.MinX = virtualLeft / s;
+                player.MaxX = virtualRight / s;
+            }
 
             // 搭乘：所站窗口移动时跟随
             if (player.GroundId != IntPtr.Zero && player.GroundId != FloorId &&
@@ -770,13 +777,31 @@ namespace DeskMadeline
         void Render()
         {
             int s = GameScale;
-            if (canvas == null)
-            {
-                canvas = new Bitmap(CanvasW * s, CanvasH * s, PixelFormat.Format32bppPArgb);
-                Log("canvas created " + canvas.Width + "x" + canvas.Height);
-            }
             if (small == null)
                 small = new Bitmap(CanvasW, CanvasH, PixelFormat.Format32bppPArgb);
+            if (trailSmall == null)
+                trailSmall = new Bitmap(CanvasW, CanvasH, PixelFormat.Format32bppPArgb);
+
+            // Calculate and quantize the camera once. Previously drawing and window
+            // presentation recomputed it independently, then rounded in different
+            // coordinate spaces; moving snapshots visibly oscillated by a pixel.
+            float camX = ComputeCameraX();
+            float camY = player.Pos.Y - AnchorY;
+            float trailCamX = (float)Math.Floor(camX);
+            float trailCamY = (float)Math.Floor(camY);
+
+            // World-fixed afterimages use their own snapped camera. The GPU shifts this
+            // layer by the exact physical remainder, preventing sawtooth jumps while
+            // the player visual moves smoothly in physical pixels.
+            using (var gt = Graphics.FromImage(trailSmall))
+            {
+                gt.Clear(Color.Transparent);
+                gt.InterpolationMode = InterpolationMode.NearestNeighbor;
+                gt.PixelOffsetMode = PixelOffsetMode.Half;
+                gt.SmoothingMode = SmoothingMode.None;
+                gt.CompositingQuality = CompositingQuality.HighSpeed;
+                DrawDashTrails(gt, trailCamX, trailCamY);
+            }
 
             // 1x 游戏像素缓冲：整数坐标直接落像素，杜绝亚像素偏移；之后整数倍最近邻放大
             using (var g = Graphics.FromImage(small))
@@ -787,41 +812,35 @@ namespace DeskMadeline
                 g.SmoothingMode = SmoothingMode.None;
                 g.CompositingQuality = CompositingQuality.HighSpeed;
 
-                float camX = player.Pos.X - AnchorX;   // 世界→画布
-                float camY = player.Pos.Y - AnchorY;
+                float bodyAnchorX = player.Pos.X - camX;
+                float bodyAnchorY = player.Pos.Y - camY;
+
+                DrawWavedashWaves(g, camX, camY);
 
                 // 头发画在身体后面（先画头发，再画身体覆盖）。
                 // wakeUp 帧自带完整头发（蜷着睡觉），不再叠加模拟头发
                 if (animator.CurrentId != "wakeUp")
                     DrawHair(g, camX, camY);
-                DrawBody(g);
-                DrawSweat(g);
+                DrawBody(g, bodyAnchorX, bodyAnchorY);
+                DrawLowStaminaSweat(g, bodyAnchorX, bodyAnchorY);
 
-                // 粒子 + 冲刺斩击（画在最上层，开关控制）
-                if (ParticlesEnabled)
-                {
-                    particles.Draw(g, camX, camY);
-                    DrawSlash(g, camX, camY);
-                }
+                if (ParticlesEnabled) particles.Draw(g, camX, camY);
+                // SlashFx 与 TrailManager 是核心冲刺表现，不受粒子开关控制。
+                DrawSlash(g, camX, camY);
             }
 
-            // 整数倍放大：NearestNeighbor + Half（实测产生干净 s×s 方块）
-            using (var gc = Graphics.FromImage(canvas))
-            {
-                gc.Clear(Color.Transparent);
-                gc.InterpolationMode = InterpolationMode.NearestNeighbor;
-                gc.PixelOffsetMode = PixelOffsetMode.Half;
-                gc.DrawImage(small, 0, 0, CanvasW * s, CanvasH * s);
-                // 速度计（物理像素绘制在窗口顶部，开关控制）
-                if (SpeedMeter) DrawSpeedMeter(gc);
-            }
+            int left = (int)Math.Round(camX * s);
+            int top = (int)Math.Round(camY * s);
+            int trailOffsetX = (int)Math.Round(trailCamX * s) - left;
+            int trailOffsetY = (int)Math.Round(trailCamY * s) - top;
+            presenter.Present(trailSmall, small, left, top, trailOffsetX, trailOffsetY);
 
-            int left = (int)Math.Round((player.Pos.X - AnchorX) * s);
-            int top = (int)Math.Round((player.Pos.Y - AnchorY) * s);
-            presenter.Present(canvas, left, top);
-            // 每帧置顶到 topmost 链最前（应对其他 topmost 窗口的子窗口覆盖）
-            Win32.SetWindowPos(Handle, Win32.HWND_TOPMOST, 0, 0, 0, 0,
-                Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+            // Only this tiny invisible input HWND moves. Rendering belongs to the fixed
+            // click-through composition host, so window movement cannot shake pixels.
+            int inputLeft = (int)Math.Round(player.Pos.X * s) - 12 * s;
+            int inputTop = (int)Math.Round(player.Pos.Y * s) - 30 * s;
+            Win32.SetWindowPos(Handle, IntPtr.Zero, inputLeft, inputTop,
+                24 * s, 33 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
             // 每 5 秒记录一次位置 + 速度 + 状态
             if ((++renderFrameCount % 300) == 0)
                 PetWindow.Log("frame " + renderFrameCount + " pos=" + player.Pos.X.ToString("F1") + "," + player.Pos.Y.ToString("F1") +
@@ -829,84 +848,66 @@ namespace DeskMadeline
                     " st=" + player.State + " duck=" + (player.Ducking ? 1 : 0) + " anim=" + player.AnimId);
         }
 
-        // 冲刺斩击特效（slash00-03，4 帧，随冲刺朝向翻转）
+        float ComputeCameraX()
+        {
+            // The camera never chases effects. The fixed wide footprint contains them,
+            // so afterimages cannot make the player/window oscillate at high speed.
+            return player.Pos.X - AnchorX;
+        }
+
+        // 原作 SlashFx：4 帧 × 0.1s，出生于玩家 Center，以冲刺方向 8px/s 移动。
         void DrawSlash(Graphics g, float camX, float camY)
         {
-            if (slashTimer <= 0) return;
-            int frame = (int)((1f - slashTimer / 0.15f) * 4f);
-            if (frame > 3) frame = 3;
-            var tex = Sprites.Get("slash0" + frame, slashDir < 0);
+            if (!slash.Active) return;
+            int frame = Math.Min(3, (int)(slash.Age / 0.1f));
+            var tex = Sprites.Get("slash0" + frame, false);
             if (tex == null) return;
-            int w = 24, h = 8;
-            float cx = player.Pos.X + player.DashDir.X * 6 - camX;
-            float cy = player.Pos.Y - 9 - camY;
-            float alpha = Math.Min(1f, slashTimer / 0.15f * 2f);
-            Sprites.DrawTinted(g, tex, Color.White,
-                (int)Math.Round(cx - w / 2f), (int)Math.Round(cy - h / 2f), w, h, alpha);
+            var state = g.Save();
+            g.TranslateTransform(SnapPx(slash.X - camX), SnapPx(slash.Y - camY));
+            // SlashFx deliberately leaves the source orientation unchanged for exactly PI.
+            if (Math.Abs(slash.Angle - (float)Math.PI) > 0.01f)
+                g.RotateTransform(slash.Angle * 180f / (float)Math.PI);
+            g.DrawImage(tex, -12, -4, 24, 8);
+            g.Restore(state);
         }
 
-        // ================= 速度计 / 速度日志 =================
-        void SetSpeedLog(bool on)
+        void DrawDashTrails(Graphics g, float camX, float camY)
         {
-            speedLogTimer = 0f;
-            try
+            foreach (var trail in dashTrails)
             {
-                if (on)
-                    System.IO.File.AppendAllText(speedLogPath,
-                        "\n=== " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " 速度日志开始 ===\n");
-                else
-                    System.IO.File.AppendAllText(speedLogPath,
-                        "=== 结束 峰值 h=" + peakHSpeed.ToString("F0") + " v=" + peakTSpeed.ToString("F0") + " ===\n");
+                float remain = 1f - trail.Age;
+                float alpha = 0.75f * remain * remain * remain; // 0.75 * (1 - Ease.CubeOut(percent))
+                bool flip = trail.Facing < 0;
+                var blob = Sprites.Get("hair00", false);
+                var bangs = Sprites.Get(trail.BangsId, flip);
+
+                if (blob != null && bangs != null)
+                {
+                    for (int i = trail.HairCount - 1; i >= 0; i--)
+                    {
+                        float scale = HairSegmentScale(i, trail.HairCount);
+                        float size = SnapEven(10f * scale);
+                        var tex = i == 0 ? bangs : blob;
+                        Sprites.DrawSilhouette(g, tex, trail.Tint,
+                            SnapPx(trail.HairNodes[i].X - camX) - size / 2f,
+                            SnapPx(trail.HairNodes[i].Y - camY) - size / 2f,
+                            size, size, alpha);
+                    }
+                }
+
+                var body = Sprites.Get(trail.FrameId, flip);
+                if (body != null)
+                {
+                    float anchorX = trail.X - camX, anchorY = trail.Y - camY;
+                    Sprites.DrawSilhouette(g, body, trail.Tint,
+                        SnapPx(anchorX - 16f * trail.ScaleX),
+                        SnapPx(anchorY - 32f * trail.ScaleY),
+                        SnapPx(32f * trail.ScaleX), SnapPx(32f * trail.ScaleY), alpha);
+                }
             }
-            catch { }
-            Log(on ? "speed log start" : "speed log stop");
         }
 
-        void WriteSpeedLog(float h, float tv)
-        {
-            try
-            {
-                System.IO.File.AppendAllText(speedLogPath, string.Format(
-                    "{0:HH:mm:ss.fff} h={1,6:F1} t={2,6:F1} st={3} duck={4} {5}\n",
-                    DateTime.Now, h, tv, player.State, player.Ducking ? 1 : 0, player.AnimId));
-            }
-            catch { }
-        }
-
-        // 速度计：画在窗口顶部小面板。H=水平速度（带方向）、V=总速度，第二行峰值。
-        // 颜色按速度档位变化：灰<奔跑<冲刺<超跳/ultra（红），ultra 加速时一眼可见。
-        void DrawSpeedMeter(Graphics gc)
-        {
-            float h = player.Speed.X;
-            float tv = (float)Math.Sqrt(h * h + player.Speed.Y * player.Speed.Y);
-            int fs = Math.Max(10, GameScale * 2);
-            using var font = new Font("Consolas", fs, FontStyle.Bold, GraphicsUnit.Pixel);
-            var flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
-            Size m1 = TextRenderer.MeasureText("H 000  V 000", font, new Size(9999, 9999), flags);
-            Size m2 = TextRenderer.MeasureText("pk 000 / 000", font, new Size(9999, 9999), flags);
-            int lineH = m1.Height;
-            int w = Math.Max(m1.Width, m2.Width) + 12;
-            int hh = lineH * 2 + 8;
-            int x = 4, y = 4;
-            using (var bg = new SolidBrush(Color.FromArgb(160, 0, 0, 0)))
-                gc.FillRectangle(bg, x, y, w, hh);
-            using (var pen = new Pen(Color.FromArgb(120, 255, 255, 255), 1f))
-                gc.DrawRectangle(pen, x, y, w - 1, hh - 1);
-            TextRenderer.DrawText(gc, string.Format("H {0:F0}  V {1:F0}", h, tv), font,
-                new Point(x + 6, y + 3), SpeedColor(Math.Abs(h)), flags);
-            TextRenderer.DrawText(gc, string.Format("pk {0:F0} / {1:F0}", peakHSpeed, peakTSpeed), font,
-                new Point(x + 6, y + 3 + lineH), Color.FromArgb(175, 255, 255, 255), flags);
-        }
-
-        static Color SpeedColor(float v)
-        {
-            if (v > 325f) return Color.FromArgb(255, 85, 85);     // 红：超跳 / ultra 以上
-            if (v > 240f) return Color.FromArgb(255, 205, 60);    // 黄：冲刺速度
-            if (v > 90f) return Color.White;                      // 白：奔跑
-            return Color.FromArgb(170, 170, 170);                 // 灰：闲逛
-        }
-
-        void DrawBody(Graphics g)
+        void DrawBody(Graphics g, float anchorX, float anchorY)
         {
             // 身体（挤压拉伸锚定脚底中心），矩形吸附到整数游戏像素
             bool flip = player.Facing < 0;
@@ -914,40 +915,53 @@ namespace DeskMadeline
             if (frame != null)
             {
                 float sx = player.SpriteScaleX, sy = player.SpriteScaleY;
-                float x = SnapPx(AnchorX - 16 * sx), y = SnapPx(AnchorY - 32 * sy);
+                float x = SnapPx(anchorX - 16 * sx), y = SnapPx(anchorY - 32 * sy);
                 float w = SnapPx(32 * sx), h = SnapPx(32 * sy);
-                // 原作 Render：IsTired && flash → Sprite.Color = Color.Red（乘法染色成红色剪影），攀爬动画不变
-                if (player.IsTired && player.TiredFlash)
+                // 原作低体力表现：每 0.05 秒红/白闪烁身体。
+                if (player.IsLowStamina && ((renderFrameCount / 3) & 1) == 0)
                     Sprites.DrawTinted(g, frame, Color.Red, x, y, w, h);
                 else
                     g.DrawImage(frame, x, y, w, h);
             }
         }
 
-        /// <summary>
-        /// 汗水（原作 sweatSprite，白色水滴贴图直接绘制，与身体同锚定/缩放）。
-        /// 攀爬时 Facing 朝向墙：墙在左（Facing<0）时水平镜像汗滴，墙在右保持原样。
-        /// SweatOffsetY 可微调水滴相对头部的垂直位置（游戏像素，向下为正）。
-        /// </summary>
-        const float SweatOffsetY = 0f;
-        void DrawSweat(Graphics g)
+        void DrawLowStaminaSweat(Graphics g, float anchorX, float anchorY)
         {
-            if (player.SweatId == "idle") return;
-            bool flip = player.Facing < 0;   // 攀爬时 Facing 朝向墙：墙在左 → 镜像汗滴
-            var frame = Sprites.Get(sweatAnimator.CurrentFrameId, flip);
-            if (frame == null) return;
-            float sx = player.SpriteScaleX, sy = player.SpriteScaleY;
-            g.DrawImage(frame,
-                SnapPx(AnchorX - 16 * sx), SnapPx(AnchorY - 32 * sy + SweatOffsetY),
-                SnapPx(32 * sx), SnapPx(32 * sy));
+            if (!player.IsLowStamina || introWakeUp) return;
+            int frameIndex = (renderFrameCount / 4) % 6;
+            var sweat = Sprites.Get("sweatDanger" + frameIndex.ToString("00"), player.Facing < 0);
+            if (sweat != null)
+                g.DrawImage(sweat, anchorX - 16, anchorY - 32, 32, 32);
+        }
+
+        void DrawWavedashWaves(Graphics g, float camX, float camY)
+        {
+            foreach (var ring in waveRings)
+            {
+                float alpha = 0.6f * (1f - ring.Progress);
+                int a = Math.Max(0, Math.Min(255, (int)Math.Round(alpha * 255f)));
+                using var pen = new Pen(Color.FromArgb(a, Color.White), 1f);
+                var points = new PointF[16];
+                float maxRadius = 4f + (14f - 4f) * ring.Progress;
+                float nx = (float)Math.Cos(ring.Angle), ny = (float)Math.Sin(ring.Angle);
+                for (int i = 0; i < points.Length; i++)
+                {
+                    float radians = i * (float)Math.PI * 2f / points.Length;
+                    float vx = (float)Math.Cos(radians), vy = (float)Math.Sin(radians);
+                    float along = Math.Abs(vx * nx + vy * ny);
+                    float radius = maxRadius * (1f - 0.5f * along);
+                    points[i] = new PointF(
+                        SnapPx(ring.X - camX + vx * radius),
+                        SnapPx(ring.Y - camY + vy * radius));
+                }
+                g.DrawPolygon(pen, points);
+            }
         }
 
         void DrawHair(Graphics g, float camX, float camY)
         {
-            // 皮肤配置：隐藏头发 / 固定头发颜色
-            if (Skins.HideHair) return;
             var hair = player.Hair;
-            Color color = Skins.HairColorOverride ?? player.HairColor;
+            Color color = player.HairColor;
             bool flip = player.Facing < 0;
             var blob = Sprites.Get("hair00", false);
             // 刘海帧：按当前动画帧的朝向元数据选择（0左看/1居中/2右看）；编辑模式下用实时值预览
@@ -963,16 +977,17 @@ namespace DeskMadeline
 
             // 画布坐标（像素完美：原版渲染时 Nodes[0].Floor()，这里把每个节点吸附到整数游戏像素，
             // ×整数倍放大 = 整数物理像素，避免亚像素模糊）
-            Span<PointF> pt = stackalloc PointF[PlayerHairSim.Count];
-            for (int i = 0; i < PlayerHairSim.Count; i++)
+            int hairCount = hair.ActiveCount;
+            Span<PointF> pt = stackalloc PointF[PlayerHairSim.MaxCount];
+            for (int i = 0; i < hairCount; i++)
                 pt[i] = new PointF(
                     SnapPx(hair.Nodes[i].X - camX),
                     SnapPx(hair.Nodes[i].Y - camY));
 
             // 黑色描边（原作：±1px 四方向）
-            for (int i = 0; i < PlayerHairSim.Count; i++)
+            for (int i = 0; i < hairCount; i++)
             {
-                float sc = HairSegmentScale(i);
+                float sc = HairSegmentScale(i, hairCount);
                 var tex = i == 0 ? bangs : blob;
                 float w = SnapEven(10 * sc);
                 DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2 - 1, pt[i].Y - w / 2, w, w);
@@ -981,24 +996,24 @@ namespace DeskMadeline
                 DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2, pt[i].Y - w / 2 + 1, w, w);
             }
             // 本体（后画前面，刘海最后）
-            for (int i = PlayerHairSim.Count - 1; i >= 0; i--)
+            for (int i = hairCount - 1; i >= 0; i--)
             {
-                float sc = HairSegmentScale(i);
+                float sc = HairSegmentScale(i, hairCount);
                 var tex = i == 0 ? bangs : blob;
                 float w = SnapEven(10 * sc);
                 DrawTintedSafe(g, tex, color, pt[i].X - w / 2, pt[i].Y - w / 2, w, w);
             }
         }
 
-        static float HairSegmentScale(int i)
-            => 0.25f + (1f - (float)i / PlayerHairSim.Count) * 0.75f;
+        static float HairSegmentScale(int i, int count)
+            => 0.25f + (1f - (float)i / count) * 0.75f;
 
         // 像素完美：浮点游戏像素吸附到整数（偶数取整保证 w/2 也为整数，矩形边缘不落亚像素）
         static float SnapPx(float v) => (float)Math.Round(v);
         static float SnapEven(float v) => (float)(Math.Round(v / 2f) * 2f);
 
-        static void DrawTintedSafe(Graphics g, Bitmap tex, Color c, float x, float y, float w, float h)
-            => Sprites.DrawTinted(g, tex, c, x, y, w, h);
+        static void DrawTintedSafe(Graphics g, Bitmap tex, Color c, float x, float y, float w, float h, float alpha = 1f)
+            => Sprites.DrawTinted(g, tex, c, x, y, w, h, alpha);
 
         // ================= 鼠标拖拽 =================
         protected override void WndProc(ref Message m)
@@ -1011,6 +1026,9 @@ namespace DeskMadeline
             switch (m.Msg)
             {
                 case WM_LBUTTONDOWN:
+                    // 正常情况下移除 WS_EX_NOACTIVATE 后鼠标按下已经会激活窗口；显式
+                    // Activate 也覆盖某些分层窗口/窗口管理工具的特殊激活行为。
+                    Activate();
                     dragging = true;
                     player.BeingDragged = true;
                     var feet = new Point((int)(player.Pos.X * GameScale), (int)(player.Pos.Y * GameScale));
@@ -1054,189 +1072,216 @@ namespace DeskMadeline
         }
 
         // ================= 托盘 =================
-        /// <summary>应用皮肤（游戏循环线程调用）。name="" 恢复默认。</summary>
-        void ApplySkin(string name)
-        {
-            if (name == "")
-            {
-                Sprites.LoadSkin(null);
-                animator.SetAnims(anims);
-                activeSkin = "";
-            }
-            else if (Skins.TryGetSkinSource(name, out var zipPath, out var dir))
-            {
-                if (zipPath != null)
-                {
-                    Sprites.LoadSkinZip(zipPath, name);
-                    var sa = Skins.BuildSkinAnims(zipPath, anims);
-                    animator.SetAnims(sa.Count > 0 ? sa : anims);
-                }
-                else
-                {
-                    Sprites.LoadSkin(dir);
-                    animator.SetAnims(anims);
-                }
-                activeSkin = name;
-            }
-            Skins.LoadOptions(activeSkin);
-            Skins.SaveActive(activeSkin);
-            PetWindow.Log("skin -> " + (activeSkin == "" ? "default" : activeSkin) +
-                (Skins.HideHair ? " hair=off" : "") +
-                (Skins.HairColorOverride != null ? " hair=" + Skins.HairColorOverride.Value.ToArgb().ToString("X6") : ""));
+        string T(string en, string zh) => english ? en : zh;
 
-            // 切换皮肤 → 重播一遍醒来动画（同「回放醒来动画」）
-            introWakeUp = true;
-            animator.Play("wakeUp", true);
-            player.SweatId = "idle";
-            sweatAnimator.Play("idle", true);
+        void SaveSettings()
+        {
+            settings.Scale = pendingScale > 0 ? pendingScale : GameScale;
+            settings.InputEnabled = InputEnabled;
+            settings.AlwaysOnTop = AlwaysOnTop;
+            settings.ParticlesEnabled = ParticlesEnabled;
+            settings.InfiniteStamina = player.InfiniteStamina;
+            settings.DashMode = player.DashMode;
+            settings.Language = english ? "en" : "zh";
+            settings.Save();
         }
 
-        /// <summary>刷新「皮肤」子菜单：默认 + 已安装皮肤（勾选当前）。</summary>
-        void RebuildSkinMenu(ToolStripMenuItem skinMenu)
+        void ChangeLanguage(bool useEnglish)
         {
-            skinMenu.DropDownItems.Clear();
-            var def = new ToolStripMenuItem("默认（玛德琳）", null, (_, __) => pendingSkin = "");
-            def.Checked = activeSkin == "";
-            skinMenu.DropDownItems.Add(def);
-            foreach (var s in Skins.ListInstalled())
+            if (english == useEnglish) return;
+            english = useEnglish;
+            SaveSettings();
+            // 菜单点击事件结束后重建，避免在 WinForms 正在派发事件时释放当前菜单。
+            BeginInvoke(new Action(() =>
             {
-                var item = new ToolStripMenuItem(s, null, (_, __) => pendingSkin = s);
-                item.Checked = string.Equals(s, activeSkin, StringComparison.OrdinalIgnoreCase);
-                skinMenu.DropDownItems.Add(item);
-            }
+                var old = trayMenu;
+                trayMenu = BuildMenu();
+                tray.ContextMenuStrip = trayMenu;
+                tray.Text = T("Madeline", "玛德琳");
+                old?.Dispose();
+            }));
         }
 
-        /// <summary>选择 mod zip 安装皮肤，安装后自动切换过去。</summary>
-        void InstallSkinMod()
+        string ActionName(PetAction action)
         {
-            using (var dlg = new OpenFileDialog())
+            return action switch
             {
-                dlg.Title = "选择 Celeste 皮肤 mod（.zip）";
-                dlg.Filter = "Celeste 皮肤 mod (*.zip)|*.zip|所有文件 (*.*)|*.*";
-                dlg.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                if (dlg.ShowDialog() != DialogResult.OK) return;
-                try
+                PetAction.Left => T("Left", "左"),
+                PetAction.Right => T("Right", "右"),
+                PetAction.Up => T("Up", "上"),
+                PetAction.Down => T("Down", "下"),
+                PetAction.Jump => T("Jump", "跳跃"),
+                PetAction.Dash => T("Dash", "冲刺"),
+                PetAction.Grab => T("Grab", "抓取"),
+                PetAction.CrouchDash => T("Crouch Dash", "蹲冲"),
+                _ => action.ToString()
+            };
+        }
+
+        string KeyName(int virtualKey)
+            => virtualKey == 0 ? T("Unbound", "未绑定") : ((Keys)virtualKey).ToString();
+
+        void RefreshBindingItems(ToolStripMenuItem actionItem, PetAction action)
+        {
+            int[] values = bindings.Get(action);
+            for (int i = 0; i < 3; i++)
+                actionItem.DropDownItems[i].Text = (i + 1) + ": " + KeyName(values[i]);
+        }
+
+        ToolStripMenuItem BuildBindingsMenu()
+        {
+            var root = new ToolStripMenuItem(T("Key bindings", "按键绑定"));
+            foreach (PetAction action in KeyBindings.Actions)
+            {
+                var actionItem = new ToolStripMenuItem(ActionName(action));
+                int[] values = bindings.Get(action);
+                for (int i = 0; i < 3; i++)
                 {
-                    string name = Skins.InstallZip(dlg.FileName);
-                    pendingSkin = name;   // 装完直接切过去
-                    PetWindow.Log("skin installed: " + name);
+                    int slot = i;
+                    var slotItem = new ToolStripMenuItem((i + 1) + ": " + KeyName(values[i]));
+                    slotItem.DropDownItems.Add(new ToolStripMenuItem(T("Change…", "更改…"), null, (_, __) =>
+                    {
+                        using var capture = new KeyCaptureDialog(
+                            T("Bind " + ActionName(action), "绑定" + ActionName(action)),
+                            T("Press a key. Backspace/Delete clears this slot; Esc cancels.",
+                              "请按一个键。Backspace/Delete 清除此栏；Esc 取消。"));
+                        if (capture.ShowDialog(this) == DialogResult.OK)
+                        {
+                            bindings.Set(action, slot, capture.CapturedKey);
+                            RefreshBindingItems(actionItem, action);
+                        }
+                    }));
+                    slotItem.DropDownItems.Add(new ToolStripMenuItem(T("Unbind", "解除绑定"), null, (_, __) =>
+                    {
+                        bindings.Set(action, slot, 0);
+                        RefreshBindingItems(actionItem, action);
+                    }));
+                    actionItem.DropDownItems.Add(slotItem);
                 }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("安装失败：" + ex.Message, "玛德琳", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    PetWindow.Log("skin install failed: " + ex);
-                }
+                root.DropDownItems.Add(actionItem);
             }
+            root.DropDownItems.Add(new ToolStripSeparator());
+            root.DropDownItems.Add(new ToolStripMenuItem(T("Reset defaults", "恢复默认"), null, (_, __) =>
+            {
+                bindings.ResetDefaults();
+                // Rebuild so every open slot label reflects the reset values.
+                BeginInvoke(new Action(() =>
+                {
+                    var old = trayMenu;
+                    trayMenu = BuildMenu();
+                    tray.ContextMenuStrip = trayMenu;
+                    old?.Dispose();
+                }));
+            }));
+            return root;
         }
 
         ContextMenuStrip BuildMenu()
         {
-            var menu = new ContextMenuStrip();            var scaleItem = new ToolStripMenuItem("缩放（等比放大）");
+            var menu = new ContextMenuStrip();
+
+            var languageItem = new ToolStripMenuItem(T("Language", "语言"));
+            languageItem.DropDownItems.Add(new ToolStripMenuItem("English", null, (_, __) => ChangeLanguage(true))
+                { Checked = english });
+            languageItem.DropDownItems.Add(new ToolStripMenuItem("中文", null, (_, __) => ChangeLanguage(false))
+                { Checked = !english });
+            menu.Items.Add(languageItem);
+
+            var scaleItem = new ToolStripMenuItem(T("Scale (nearest-neighbor)", "缩放（等比放大）"));
             foreach (var v in new[] { 2, 3, 4, 5, 6, 8 })
             {
                 var item = new ToolStripMenuItem(v + "x") { Tag = v, Checked = v == GameScale };
                 item.Click += (_, __) =>
                 {
                     pendingScale = v;
+                    SaveSettings();
                     foreach (ToolStripMenuItem s in scaleItem.DropDownItems) s.Checked = (int)s.Tag == v;
                 };
                 scaleItem.DropDownItems.Add(item);
             }
             menu.Items.Add(scaleItem);
 
-            var inputItem = new ToolStripMenuItem("响应键盘", null, (_, __) =>
-            { InputEnabled = !InputEnabled; ((ToolStripMenuItem)menu.Items[1]).Checked = InputEnabled; })
-            { Checked = true };
+            ToolStripMenuItem inputItem = null;
+            inputItem = new ToolStripMenuItem(T("Keyboard controls while focused", "聚焦时响应键盘"), null, (_, __) =>
+            { InputEnabled = !InputEnabled; inputItem.Checked = InputEnabled; SaveSettings(); })
+            { Checked = InputEnabled };
             menu.Items.Add(inputItem);
+            menu.Items.Add(BuildBindingsMenu());
 
-            var topItem = new ToolStripMenuItem("总是置顶", null, (_, __) =>
+            ToolStripMenuItem topItem = null;
+            topItem = new ToolStripMenuItem(T("Always on top", "总是置顶"), null, (_, __) =>
             {
                 AlwaysOnTop = !AlwaysOnTop;
-                ((ToolStripMenuItem)menu.Items[2]).Checked = AlwaysOnTop;
+                topItem.Checked = AlwaysOnTop;
+                SaveSettings();
                 Win32.SetWindowPos(Handle, AlwaysOnTop ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST,
                     0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+                if (compositionHost != null)
+                    Win32.SetWindowPos(compositionHost.Handle, AlwaysOnTop ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST,
+                        0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
             })
-            { Checked = true };
+            { Checked = AlwaysOnTop };
             menu.Items.Add(topItem);
 
-            var particleItem = new ToolStripMenuItem("粒子特效", null, (sender, __) =>
+            var particleItem = new ToolStripMenuItem(T("Particle effects", "粒子特效"), null, (sender, __) =>
             {
                 ParticlesEnabled = !ParticlesEnabled;
                 ((ToolStripMenuItem)sender).Checked = ParticlesEnabled;
+                SaveSettings();
             })
-            { Checked = false };
+            { Checked = ParticlesEnabled };
             menu.Items.Add(particleItem);
 
-            var speedMeterItem = new ToolStripMenuItem("速度计", null, (sender, __) =>
+            var staminaItem = new ToolStripMenuItem(T("Infinite stamina", "无限体力"), null, (sender, __) =>
             {
-                SpeedMeter = !SpeedMeter;
-                if (SpeedMeter) peakHSpeed = peakTSpeed = 0f;   // 重新开启时清零峰值
-                ((ToolStripMenuItem)sender).Checked = SpeedMeter;
+                player.InfiniteStamina = !player.InfiniteStamina;
+                ((ToolStripMenuItem)sender).Checked = player.InfiniteStamina;
+                SaveSettings();
+            }) { Checked = player.InfiniteStamina };
+            menu.Items.Add(staminaItem);
+
+            var dashItem = new ToolStripMenuItem(T("Dash count", "冲刺次数"));
+            foreach (var option in new[]
+            {
+                new KeyValuePair<int, string>(0, "0"),
+                new KeyValuePair<int, string>(1, "1"),
+                new KeyValuePair<int, string>(2, "2"),
+                new KeyValuePair<int, string>(-1, "∞")
             })
-            { Checked = false };
-            menu.Items.Add(speedMeterItem);
-
-            var speedLogItem = new ToolStripMenuItem("速度日志", null, (sender, __) =>
             {
-                SpeedLog = !SpeedLog;
-                SetSpeedLog(SpeedLog);
-                ((ToolStripMenuItem)sender).Checked = SpeedLog;
-            })
-            { Checked = false };
-            menu.Items.Add(speedLogItem);
-
-            var freezeItem = new ToolStripMenuItem("冲刺冻结帧", null, (sender, __) =>
-            {
-                player.FreezeFrameEnabled = !player.FreezeFrameEnabled;
-                ((ToolStripMenuItem)sender).Checked = player.FreezeFrameEnabled;
-            })
-            { Checked = true };
-            menu.Items.Add(freezeItem);
-
-            // ---- 皮肤 ----
-            var skinMenu = new ToolStripMenuItem("皮肤");
-            menu.Items.Add(skinMenu);
-            var installItem = new ToolStripMenuItem("安装皮肤 mod（zip）…", null, (_, __) => InstallSkinMod());
-            menu.Items.Add(installItem);
-            menu.Opening += (_, __) => RebuildSkinMenu(skinMenu);   // 每次打开时刷新已装皮肤
-
-            var hairEditItem = new ToolStripMenuItem("头发调试器（F1 进入）", null, (sender, __) =>
-            {
-                HairDebug = !HairDebug;
-                if (!HairDebug && HairEdit) ExitHairEdit();
-                ((ToolStripMenuItem)sender).Checked = HairDebug;
-            })
-            { Checked = false };
-            menu.Items.Add(hairEditItem);
-
-            menu.Items.Add(new ToolStripMenuItem("按键设置", null, (_, __) =>
-            {
-                KeyBinds.DialogOpen = true;
-                try
+                int mode = option.Key;
+                var choice = new ToolStripMenuItem(option.Value)
                 {
-                    using var dlg = new KeyBindDialog();
-                    if (dlg.ShowDialog() == DialogResult.OK) KeyBinds.Save(keysPath);
-                    else KeyBinds.Load(keysPath);   // 取消 → 还原上次保存的绑定
-                }
-                finally { KeyBinds.DialogOpen = false; }
-            }));
+                    Checked = player.DashMode == mode,
+                    Tag = mode
+                };
+                choice.Click += (_, __) =>
+                {
+                    player.SetDashMode(mode);
+                    SaveSettings();
+                    foreach (ToolStripMenuItem item in dashItem.DropDownItems)
+                        item.Checked = (int)item.Tag == mode;
+                };
+                dashItem.DropDownItems.Add(choice);
+            }
+            menu.Items.Add(dashItem);
 
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripMenuItem("回放醒来动画", null, (_, __) =>
+            menu.Items.Add(new ToolStripMenuItem(T("Replay wake-up animation", "回放醒来动画"), null, (_, __) =>
             {
                 introWakeUp = true;
                 animator.Play("wakeUp", true);
-                player.SweatId = "idle";          // 睡觉期间不出汗
-                sweatAnimator.Play("idle", true);
             }));
-            menu.Items.Add(new ToolStripMenuItem("重置位置", null, (_, __) => ResetPosition()));
+            menu.Items.Add(new ToolStripMenuItem(T("Reset position", "重置位置"), null, (_, __) => ResetPosition()));
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripMenuItem("操作说明", null, (_, __) =>
+            menu.Items.Add(new ToolStripMenuItem(T("Controls", "操作说明"), null, (_, __) =>
                 MessageBox.Show(
-                    "移动：方向键 / AD\n跳跃：C（土狼时间+可变跳高）\n冲刺：X（8方向，着地恢复）\n攀爬：Z（对准墙按住，消耗体力）\n\n技巧（原作全套）：\n· Super：地面冲刺中按 C → 水平 260 超级跳\n· Hyper：地面斜下冲（↓+X）转蹲冲后按 C → 325 超跳\n· Ultra：空中斜下冲落地瞬间按 C → 高速弹起\n· Cornerboost：冲刺撞墙后 0.06s 内抓墙+蹬墙跳，越过墙顶保留冲刺速度\n· 蹬墙跳：贴墙跳 C；冲刺中抓墙 Z 转攀爬\n· 左键拖着玛德琳甩出去\n\n窗口是空心边框：内部可自由穿行，\n可站边框、爬侧边",
-                    "玛德琳桌宠", MessageBoxButtons.OK, MessageBoxIcon.Information)));
+                    T(
+                        "Click Madeline first to focus her; she ignores keys while another app is focused.\nKeys can be changed under Key bindings (three slots per action). Crouch Dash is separate and unbound by default.\n\nMove: Arrow keys / A D\nJump: C (coyote time + variable height)\nDash: X (8 directions; refills on landing)\nClimb: Hold Grab against a wall (uses stamina)\n\nTech:\n· Super: press Jump during a grounded dash\n· Hyper: down-diagonal grounded dash, then Jump\n· Wavedash/Ultra: down-diagonal air dash, then Jump on landing\n· Cornerboost: Grab + wall-jump within 0.06s after hitting a wall\n· Left-drag Madeline to throw her\n\nWindows are hollow platforms: stand on borders or climb their sides.",
+                        "先点击玛德琳取得键盘焦点；切换到其他程序后她会忽略按键。\n可在“按键绑定”中修改按键（每项三栏）。蹲冲为独立按键，默认未绑定。\n\n移动：方向键 / AD\n跳跃：C（土狼时间+可变跳高）\n冲刺：X（8方向，着地恢复）\n攀爬：对准墙按住抓取（消耗体力）\n\n技巧：\n· Super：地面冲刺中按跳跃\n· Hyper：地面斜下冲后按跳跃\n· Wavedash/Ultra：空中斜下冲，落地时按跳跃\n· Cornerboost：冲刺撞墙后 0.06s 内抓墙+蹬墙跳\n· 左键拖着玛德琳甩出去\n\n窗口是空心平台：可站边框、爬侧边。"),
+                    T("Desk Madeline", "玛德琳桌宠"), MessageBoxButtons.OK, MessageBoxIcon.Information)));
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripMenuItem("退出", null, (_, __) => ExitApp()));
+            menu.Items.Add(new ToolStripMenuItem(T("Exit", "退出"), null, (_, __) => ExitApp()));
             return menu;
         }
 
@@ -1300,7 +1345,6 @@ namespace DeskMadeline
 
         void ExitApp()
         {
-            if (SpeedLog) SetSpeedLog(false);   // 退出时补写"结束 + 峰值"标记
             running = false;
             tray.Visible = false;
             Application.Exit();
@@ -1309,108 +1353,54 @@ namespace DeskMadeline
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             running = false;
-            // 等游戏循环线程结束当前帧再释放资源，避免渲染线程还在用 DIB/DC 时被删除
+            SaveSettings();
+            // 等游戏循环线程结束当前帧再释放资源，避免渲染线程还在使用 GPU 对象
             if (loopThread != null && loopThread != Thread.CurrentThread)
                 loopThread.Join(1500);
             tray.Visible = false;
             tray.Dispose();
-            // 释放托盘图标 HICON 与分层窗口 GDI 资源（DIB/DC）
+            // 释放托盘图标 HICON 与 Direct3D / DirectComposition 资源
             if (trayIconHandle != IntPtr.Zero) { Win32.DestroyIcon(trayIconHandle); trayIconHandle = IntPtr.Zero; }
             presenter?.Dispose();
+            compositionHost?.Close();
+            compositionHost?.Dispose();
             base.OnFormClosing(e);
         }
     }
 
-    /// <summary>把 32bpp 预乘位图通过 UpdateLayeredWindow 呈现到分层窗口。</summary>
-    class LayeredPresenter : IDisposable
+    /// <summary>
+    /// Stationary, click-through virtual-desktop host for the DirectComposition tree.
+    /// Input is handled by PetWindow's small invisible body-sized HWND instead.
+    /// </summary>
+    sealed class CompositionHost : Form
     {
-        readonly IntPtr hwnd;
-        int w, h;
-        IntPtr memDc, dib, oldObj, bits;
-        byte[] managedBuf;
+        readonly bool topmost;
 
-        public LayeredPresenter(IntPtr hwnd, int w, int h)
+        public CompositionHost(Rectangle bounds, bool topmost)
         {
-            this.hwnd = hwnd;
-            Resize(w, h);
+            this.topmost = topmost;
+            FormBorderStyle = FormBorderStyle.None;
+            AutoScaleMode = AutoScaleMode.None;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            Bounds = bounds;
+            Text = "Desk Madeline Renderer";
         }
 
-        public void Resize(int w, int h)
+        protected override bool ShowWithoutActivation => true;
+
+        protected override CreateParams CreateParams
         {
-            FreeGdi();
-            this.w = w; this.h = h;
-            IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
-            memDc = Win32.CreateCompatibleDC(screenDc);
-            Win32.ReleaseDC(IntPtr.Zero, screenDc);
-
-            var bmi = new Win32.BITMAPINFO();
-            bmi.bmiHeader.biSize = 40;
-            bmi.bmiHeader.biWidth = w;
-            bmi.bmiHeader.biHeight = -h;
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = 0; // BI_RGB（32bpp 时顶字节作为 alpha，ULW 会读取）
-            dib = Win32.CreateDIBSection(memDc, ref bmi, 0, out bits, IntPtr.Zero, 0);
-            if (dib == IntPtr.Zero || bits == IntPtr.Zero)
-                PetWindow.Log("CreateDIBSection failed: dib=" + dib + " bits=" + bits + " err=" + Marshal.GetLastWin32Error());
-            oldObj = Win32.SelectObject(memDc, dib);
-            managedBuf = new byte[w * h * 4];
-        }
-
-        public void Present(Bitmap bmp, int left, int top)
-        {
-            var data = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
-            try { Marshal.Copy(data.Scan0, managedBuf, 0, managedBuf.Length); }
-            finally { bmp.UnlockBits(data); }
-            Marshal.Copy(managedBuf, 0, bits, managedBuf.Length);
-
-            var ptDst = new Win32.POINT { X = left, Y = top };
-            var sz = new Win32.SIZE { cx = w, cy = h };
-            var ptSrc = new Win32.POINT { X = 0, Y = 0 };
-            var blend = new Win32.BLENDFUNCTION
+            get
             {
-                BlendOp = Win32.AC_SRC_OVER,
-                BlendFlags = 0,
-                SourceConstantAlpha = 255,
-                AlphaFormat = Win32.AC_SRC_ALPHA
-            };
-            IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
-            bool ok = Win32.UpdateLayeredWindow(hwnd, screenDc, ref ptDst, ref sz, memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
-            if (!ok)
-            {
-                if (!loggedFail)
-                {
-                    loggedFail = true;
-                    int ex = Win32.GetWindowLong(hwnd, Win32.GWL_EXSTYLE);
-                    Win32.GetWindowRect(hwnd, out var r);
-                    PetWindow.Log("ULW failed, err=" + Marshal.GetLastWin32Error() +
-                        " exstyle=" + ex + " rect=" + r.Left + "," + r.Top + "," + r.Width + "x" + r.Height +
-                        " psize=" + w + "x" + h + " dib=" + dib + " memDc=" + memDc);
-                }
-            }
-            else if (!loggedOk)
-            {
-                loggedOk = true;
-                PetWindow.Log("ULW ok at " + left + "," + top + " size " + w + "x" + h);
-            }
-            Win32.ReleaseDC(IntPtr.Zero, screenDc);
-        }
-
-        bool loggedFail;
-        bool loggedOk;
-
-        void FreeGdi()
-        {
-            if (memDc != IntPtr.Zero)
-            {
-                if (oldObj != IntPtr.Zero) Win32.SelectObject(memDc, oldObj);
-                if (dib != IntPtr.Zero) Win32.DeleteObject(dib);
-                Win32.DeleteDC(memDc);
-                memDc = dib = oldObj = IntPtr.Zero;
+                const int WS_EX_TOPMOST = 0x00000008;
+                var cp = base.CreateParams;
+                cp.ExStyle |= Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_TRANSPARENT |
+                              Win32.WS_EX_NOACTIVATE | Win32.WS_EX_LAYERED;
+                if (topmost) cp.ExStyle |= WS_EX_TOPMOST;
+                return cp;
             }
         }
-
-        public void Dispose() => FreeGdi();
     }
 
     /// <summary>提升定时器精度（winmm）。</summary>
@@ -1420,5 +1410,50 @@ namespace DeskMadeline
         [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint uMilliseconds);
         public static void Begin(uint ms) => timeBeginPeriod(ms);
         public static void End(uint ms) => timeEndPeriod(ms);
+    }
+
+    /// <summary>Small modal key-capture window used by the tray binding editor.</summary>
+    sealed class KeyCaptureDialog : Form
+    {
+        public int CapturedKey { get; private set; }
+
+        public KeyCaptureDialog(string title, string instructions)
+        {
+            Text = title;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterScreen;
+            ShowInTaskbar = false;
+            MinimizeBox = false;
+            MaximizeBox = false;
+            TopMost = true;
+            KeyPreview = true;
+            ClientSize = new Size(430, 100);
+            Controls.Add(new Label
+            {
+                Dock = DockStyle.Fill,
+                Text = instructions,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = SystemFonts.MessageBoxFont,
+                Padding = new Padding(16)
+            });
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            e.SuppressKeyPress = true;
+            e.Handled = true;
+            if (e.KeyCode == Keys.Escape)
+            {
+                DialogResult = DialogResult.Cancel;
+            }
+            else
+            {
+                CapturedKey = (e.KeyCode == Keys.Back || e.KeyCode == Keys.Delete)
+                    ? 0
+                    : (int)e.KeyCode;
+                DialogResult = DialogResult.OK;
+            }
+            Close();
+        }
     }
 }

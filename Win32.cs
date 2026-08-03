@@ -4,7 +4,7 @@ using System.Text;
 
 namespace DeskMadeline
 {
-    /// <summary>Win32 P/Invoke：窗口枚举、全局按键、分层窗口逐像素渲染。</summary>
+    /// <summary>Win32 P/Invoke：窗口枚举、键盘/焦点、分层窗口逐像素渲染。</summary>
     internal static class Win32
     {
         // ---------------- 基础结构 ----------------
@@ -93,6 +93,9 @@ namespace DeskMadeline
 
         // ---------------- 全局键盘 ----------------
         [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
         public static extern short GetAsyncKeyState(int vKey);
 
         public static bool KeyDown(int vKey) => (GetAsyncKeyState(vKey) & 0x8000) != 0;
@@ -123,6 +126,9 @@ namespace DeskMadeline
 
         [DllImport("gdi32.dll")]
         public static extern bool DeleteObject(IntPtr hObject);
+
+        [DllImport("kernel32.dll", EntryPoint = "RtlMoveMemory")]
+        public static extern void CopyMemory(IntPtr destination, IntPtr source, UIntPtr length);
 
         [StructLayout(LayoutKind.Sequential)]
         public struct BITMAPINFOHEADER
@@ -186,6 +192,7 @@ namespace DeskMadeline
         public static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
         public const uint SWP_NOMOVE = 0x0002;
         public const uint SWP_NOSIZE = 0x0001;
+        public const uint SWP_NOZORDER = 0x0004;
         public const uint SWP_NOACTIVATE = 0x0010;
     }
 }

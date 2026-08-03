@@ -9,6 +9,8 @@ namespace DeskMadeline
     {
         public string[] Tex;        // 纹理 id 组（发射时随机选一个）
         public Color Color = Color.White;
+        public Color Color2 = Color.White;
+        public bool BlinkColor;
         public float GravY;         // 重力（px/s²，正=向下）
         public float Friction;      // 摩擦（px/s²，减速）
         public float LifeMin = 0.3f, LifeMax = 0.5f;
@@ -17,6 +19,7 @@ namespace DeskMadeline
         public float SpeedMin = 5f, SpeedMax = 15f;
         public bool ScaleOut;       // 消亡时缩小
         public bool FadeOut = true; // 消亡时淡出
+        public bool LateFade;       // 原作 Late：仅最后 25% 生命周期淡出
     }
 
     /// <summary>单个粒子（持有所用贴图引用）。</summary>
@@ -27,10 +30,13 @@ namespace DeskMadeline
         public float Size;
         public Bitmap Tex;
         public Color Color;
+        public Color Color2;
+        public bool BlinkColor;
         public float GravY;
         public float Friction;
         public bool FadeOut;
         public bool ScaleOut;
+        public bool LateFade;
     }
 
     /// <summary>
@@ -64,10 +70,13 @@ namespace DeskMadeline
                     Size = size,
                     Tex = b,
                     Color = t.Color,
+                    Color2 = t.Color2,
+                    BlinkColor = t.BlinkColor,
                     GravY = t.GravY,
                     Friction = t.Friction,
                     FadeOut = t.FadeOut,
-                    ScaleOut = t.ScaleOut
+                    ScaleOut = t.ScaleOut,
+                    LateFade = t.LateFade
                 });
             }
         }
@@ -100,7 +109,7 @@ namespace DeskMadeline
                 if (p.Tex == null) continue;
 
                 float k = p.Life / p.MaxLife;          // 1→0
-                float alpha = p.FadeOut ? Math.Min(1f, k * 2f) : 1f;
+                float alpha = p.FadeOut ? Math.Min(1f, k * (p.LateFade ? 4f : 1f)) : 1f;
                 float size = p.ScaleOut ? p.Size * (0.3f + 0.7f * k) : p.Size;
                 if (size < 1) size = 1;
 
@@ -109,7 +118,8 @@ namespace DeskMadeline
                 int s = (int)Math.Round(size);
                 if (s < 1) s = 1;
 
-                Sprites.DrawTinted(g, p.Tex, p.Color, sx, sy, s, s, alpha);
+                Color color = p.BlinkColor && ((int)(p.Life / 0.1f) & 1) != 0 ? p.Color2 : p.Color;
+                Sprites.DrawTinted(g, p.Tex, color, sx, sy, s, s, alpha);
             }
         }
     }
