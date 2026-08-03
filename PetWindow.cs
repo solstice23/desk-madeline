@@ -35,6 +35,7 @@ namespace DeskMadeline
         readonly Player player = new Player();
         readonly KeyBindings bindings;
         readonly PetSettings settings;
+        internal readonly SkinManager skinManager;
         readonly Animator animator;
         readonly Dictionary<string, Anim> anims;
         readonly NotifyIcon tray;
@@ -43,6 +44,7 @@ namespace DeskMadeline
         Thread loopThread;
         volatile bool running;
         int pendingScale = -1;
+        volatile string pendingSkinId;
         bool introWakeUp = true;   // 启动时先播"醒来"动画（wakeUp 00-14），播完切 idle
 
         // 渲染
@@ -148,7 +150,11 @@ namespace DeskMadeline
             Opacity = 0.01; // nonzero alpha keeps the small body hit target interactive
 
             // ---- 贴图与动画 ----
-            Sprites.LoadAll(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "player"));
+            skinManager = new SkinManager(AppDomain.CurrentDomain.BaseDirectory);
+            var initialSkin = skinManager.Find(settings.Skin);
+            skinManager.Activate(initialSkin);
+            Sprites.LoadAll(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "player"),
+                initialSkin?.PlayerDirectory);
             HairMeta.LoadOverrides(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hair_tweaks.txt"));
             dust = new PType
             {
@@ -357,6 +363,19 @@ namespace DeskMadeline
 
         void Tick(float dt)
         {
+            if (pendingSkinId != null)
+            {
+                string id = pendingSkinId;
+                pendingSkinId = null;
+                var skin = skinManager.Find(id);
+                Sprites.LoadAll(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "player"),
+                    skin?.PlayerDirectory);
+                skinManager.Activate(skin);
+                settings.Skin = skin?.Id ?? SkinManager.DefaultId;
+                settings.Save();
+                Log("skin -> " + (skin?.DisplayName ?? "default"));
+            }
+
             // 应用待定的缩放变更
             if (pendingScale > 0)
             {
@@ -1148,6 +1167,7 @@ namespace DeskMadeline
             settings.InfiniteStamina = player.InfiniteStamina;
             settings.DashMode = player.DashMode;
             settings.Language = english ? "en" : "zh";
+            settings.Skin = skinManager.Active?.Id ?? SkinManager.DefaultId;
             settings.Save();
         }
 
@@ -1251,6 +1271,26 @@ namespace DeskMadeline
             languageItem.DropDownItems.Add(new ToolStripMenuItem("中文", null, (_, __) => ChangeLanguage(false))
                 { Checked = !english });
             menu.Items.Add(languageItem);
+
+            var skinItem = new ToolStripMenuItem(T("Skin", "皮肤"));
+            void AddSkinChoice(string id, string label)
+            {
+                var choice = new ToolStripMenuItem(label)
+                {
+                    Checked = (skinManager.Active?.Id ?? SkinManager.DefaultId).Equals(id, StringComparison.OrdinalIgnoreCase),
+                    Tag = id
+                };
+                choice.Click += (_, __) =>
+                {
+                    pendingSkinId = id;
+                    foreach (ToolStripMenuItem item in skinItem.DropDownItems)
+                        if (item.Tag is string) item.Checked = ((string)item.Tag).Equals(id, StringComparison.OrdinalIgnoreCase);
+                };
+                skinItem.DropDownItems.Add(choice);
+            }
+            AddSkinChoice(SkinManager.DefaultId, T("Default Madeline", "默认玛德琳"));
+            foreach (var skin in skinManager.Skins) AddSkinChoice(skin.Id, skin.DisplayName);
+            menu.Items.Add(skinItem);
 
             var scaleItem = new ToolStripMenuItem(T("Scale (nearest-neighbor)", "缩放（等比放大）"));
             foreach (var v in new[] { 2, 3, 4, 5, 6, 8 })

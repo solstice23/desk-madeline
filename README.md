@@ -58,6 +58,14 @@ bin\Release\net8.0-windows\DeskMadeline.exe
 
 每帧头发的锚点偏移/刘海朝向已内置于 `HairMeta.cs`，并可在 exe 旁的 `hair_tweaks.txt` 追加覆盖行（一行：`帧名 x y bangs`），**启动自动加载，不用重编译**。撤销：删掉 `hair_tweaks.txt` 里对应行。
 
+## Skins / 皮肤
+
+The right-click menu's **Skin** submenu supports complete Skin Mod Helper and Skin Mod Helper Plus packages. Put each unpacked mod in its own directory under `skins` beside `DeskMadeline.exe`, then restart the pet. The selected skin is remembered in `settings.txt`; **Default Madeline** switches back to the built-in art.
+
+右键菜单的「皮肤」子菜单支持完整的 Skin Mod Helper / Skin Mod Helper Plus 皮肤包。把解压后的每个 mod 文件夹放进 exe 同目录的 `skins` 文件夹，然后重启桌宠。选择会保存进 `settings.txt`；选「默认玛德琳」可恢复内置贴图。
+
+The loader follows Skin Mod Helper's source behavior: legacy `SkinId` paths, Plus `Player_List` + `Character_ID`, sprite paths from `Graphics/Sprites.xml`, vanilla fallback for omitted frames/hair/bangs, and legacy per-dash hair colors. The checked-in `example_skins` packages are discovered automatically by local development builds but are not copied into release output.
+
 ## 实现要点
 
 - **GPU 合成**：1x 游戏像素缓冲上传至 Direct2D/Direct3D 11，并按绝对物理桌面坐标画进固定的虚拟桌面交换链；宿主 HWND 和 DirectComposition visual 都不随角色移动。

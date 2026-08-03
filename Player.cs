@@ -540,16 +540,16 @@ namespace DeskMadeline
             }
             else if (Dashes >= 2)
             {
-                HairColor = TwoDashesHairColor;
+                HairColor = PetWindow.Instance?.skinManager.ResolveHairColor(2, TwoDashesHairColor) ?? TwoDashesHairColor;
             }
             else if (Dashes > 0 || DashCapacity == 0)
             {
-                HairColor = NormalHairColor;  // 闪白结束 → 直接切红（不作渐变）
+                HairColor = PetWindow.Instance?.skinManager.ResolveHairColor(1, NormalHairColor) ?? NormalHairColor;
             }
             else
             {
                 // 没 Dash 时渐变到蓝色（6/s）
-                Color target = UsedHairColor;
+                Color target = PetWindow.Instance?.skinManager.ResolveHairColor(0, UsedHairColor) ?? UsedHairColor;
                 float k = Math.Min(1f, 6f * dt);
                 HairColor = Color.FromArgb(
                     (int)(HairColor.R + (target.R - HairColor.R) * k),

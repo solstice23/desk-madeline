@@ -15,6 +15,7 @@ namespace DeskMadeline
         public bool InfiniteStamina;
         public int DashMode = 1;
         public string Language;
+        public string Skin = "default";
 
         readonly string path;
 
@@ -45,6 +46,7 @@ namespace DeskMadeline
                     result.DashMode = dashValue < 0 ? -1 : Math.Max(0, Math.Min(2, dashValue));
                 if (values.TryGetValue("Language", out string language) &&
                     (language == "en" || language == "zh")) result.Language = language;
+                if (values.TryGetValue("Skin", out string skin) && skin.Length > 0) result.Skin = skin;
             }
             catch { }
             return result;
@@ -69,7 +71,8 @@ namespace DeskMadeline
                     "FreezeFramesEnabled=" + FreezeFramesEnabled,
                     "InfiniteStamina=" + InfiniteStamina,
                     "DashMode=" + DashMode,
-                    "Language=" + (Language ?? "")
+                    "Language=" + (Language ?? ""),
+                    "Skin=" + (Skin ?? "default")
                 });
             }
             catch { }

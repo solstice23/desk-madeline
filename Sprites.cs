@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 
 namespace DeskMadeline
 {
@@ -86,16 +87,32 @@ namespace DeskMadeline
 
         public static string AssetsDir;
 
-        public static void LoadAll(string dir)
+        public static void LoadAll(string dir, string skinDir = null)
         {
             AssetsDir = dir;
             foreach (var kv in _tex) kv.Value.Dispose();
             foreach (var kv in _texFlip) kv.Value.Dispose();
             _tex.Clear();
             _texFlip.Clear();
+            LoadDirectory(dir, null);
+            if (!string.IsNullOrEmpty(skinDir) && Directory.Exists(skinDir))
+            {
+                LoadDirectory(skinDir, null);
+                // Player wake-up is the one supported animation stored below the
+                // sprite root in the SMH examples.  Other subdirectories are
+                // alternate modes (NB, tentacle, sweat...) and must not overwrite
+                // the selected player's ordinary frames.
+                string wakeUp = Directory.GetDirectories(skinDir)
+                    .FirstOrDefault(d => Path.GetFileName(d).Equals("wakeup", StringComparison.OrdinalIgnoreCase));
+                if (wakeUp != null) LoadDirectory(wakeUp, "wakeUp");
+            }
+        }
+
+        static void LoadDirectory(string dir, string idPrefix)
+        {
             foreach (var file in Directory.GetFiles(dir, "*.png"))
             {
-                string id = Path.GetFileNameWithoutExtension(file);
+                string id = (idPrefix ?? "") + Path.GetFileNameWithoutExtension(file);
                 using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var tmp = Image.FromStream(fs);
                 var bmp = new Bitmap(tmp.Width, tmp.Height, PixelFormat.Format32bppPArgb);
