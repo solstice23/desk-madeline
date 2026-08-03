@@ -1358,6 +1358,10 @@ namespace DeskMadeline
                     }
                     DrawBody(g, bodyAnchorX, bodyAnchorY);
                     DrawSweat(g, bodyAnchorX, bodyAnchorY);
+                    // Glider.Depth is -5 in vanilla, in front of Player.Depth 0.
+                    // Drawing held gliders in this layer also avoids rebuilding a
+                    // separately uploaded rotated stamp on every carry frame.
+                    DrawGliders(g, camX, camY, heldOnly: true);
                 }
 
                 if (ParticlesEnabled) particles.Draw(g, camX, camY);
@@ -1379,6 +1383,7 @@ namespace DeskMadeline
             }
             foreach (Glider glider in gliders)
             {
+                if (glider.IsHeld) continue;
                 if (trailCount >= trailStamps.Length) break;
                 Bitmap stamp = GetGliderStamp(glider);
                 if (stamp != null)
@@ -1434,10 +1439,11 @@ namespace DeskMadeline
             g.Restore(state);
         }
 
-        void DrawGliders(Graphics g, float camX, float camY)
+        void DrawGliders(Graphics g, float camX, float camY, bool heldOnly = false)
         {
             foreach (Glider glider in gliders)
             {
+                if (heldOnly && !glider.IsHeld) continue;
                 Bitmap frame = Sprites.Get(glider.FrameId, false);
                 if (frame == null) continue;
                 var state = g.Save();

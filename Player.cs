@@ -209,6 +209,8 @@ namespace DeskMadeline
         PointF pickupCurveBegin, pickupCurveControl;
         float dreamDashCanEndTimer;
         float dreamDashAnimTimer, dreamDashOutTimer;
+        float dreamGroundedDashGraceTimer;
+        bool dashStartedWithDreamGrace;
         float throwAnimTimer;
         float gliderBoostTimer;
         PointF gliderBoostDir;
@@ -449,6 +451,28 @@ namespace DeskMadeline
             return true;
         }
 
+        bool TryGetDreamExitWall(int direction, out Solid wall)
+        {
+            wall = default;
+            if (direction == 0) return false;
+            HitboxAt(Pos.X, Pos.Y, out _, out float top, out _, out float bottom);
+            float bestDistance = float.MaxValue;
+            bool found = false;
+            foreach (Solid solid in Solids)
+            {
+                if (!solid.Dream || top >= solid.B || bottom <= solid.T) continue;
+                float distance = direction > 0
+                    ? Pos.X - 4f - solid.R
+                    : solid.L - (Pos.X + 4f);
+                // NaiveMove can overshoot the face by at most one 240px/s frame.
+                if (distance < -0.01f || distance > 8f || distance >= bestDistance) continue;
+                bestDistance = distance;
+                wall = solid;
+                found = true;
+            }
+            return found;
+        }
+
         bool OnCollideH(int sign)
         {
             // Vanilla turns a grounded horizontal dash into a duck when the
@@ -624,6 +648,8 @@ namespace DeskMadeline
             pickupCurveBegin = pickupCurveControl = PointF.Empty;
             dreamDashCanEndTimer = 0f;
             dreamDashAnimTimer = dreamDashOutTimer = 0f;
+            dreamGroundedDashGraceTimer = 0f;
+            dashStartedWithDreamGrace = false;
             throwAnimTimer = 0f;
             gliderBoostTimer = 0f;
             gliderBoostDir = PointF.Empty;
@@ -705,6 +731,7 @@ namespace DeskMadeline
             if (minHoldTimer > 0f) minHoldTimer -= dt;
             if (dreamDashAnimTimer > 0f) dreamDashAnimTimer -= dt;
             if (dreamDashOutTimer > 0f) dreamDashOutTimer -= dt;
+            if (dreamGroundedDashGraceTimer > 0f) dreamGroundedDashGraceTimer -= dt;
             if (throwAnimTimer > 0f) throwAnimTimer -= dt;
 
             onGround = !BeingDragged && CheckGround();
@@ -859,9 +886,14 @@ namespace DeskMadeline
                     Holding.Carry(new PointF(Pos.X, Pos.Y - 12f +
                         (PetWindow.Instance?.ResolveCarryYOffset(CurrentFrameId) ?? 0f)));
 
-                // 屏幕左右边界
-                if (Pos.X < MinX + 4) { Pos.X = MinX + 4; if (Speed.X < 0) Speed.X = 0; }
-                if (Pos.X > MaxX - 4) { Pos.X = MaxX - 4; if (Speed.X > 0) Speed.X = 0; }
+                // Vanilla skips level-bound enforcement during DreamDash. The
+                // desktop perimeter is represented by real non-dream solids, so
+                // allowing the naive move to reach them produces the proper death.
+                if (State != StDreamDash)
+                {
+                    if (Pos.X < MinX + 4) { Pos.X = MinX + 4; if (Speed.X < 0) Speed.X = 0; }
+                    if (Pos.X > MaxX - 4) { Pos.X = MaxX - 4; if (Speed.X > 0) Speed.X = 0; }
+                }
                 }
             }
             else
@@ -1424,6 +1456,8 @@ namespace DeskMadeline
             }
             DashSequenceCount++;
             dashStartedOnGround = onGround;
+            dashStartedWithDreamGrace = dreamGroundedDashGraceTimer > 0f;
+            dreamGroundedDashGraceTimer = 0f;
             dashCooldownTimer = DashCooldown;
             dashRefillCooldownTimer = DashRefillCooldown;
             dashAttackTimer = DashAttackTime;
@@ -1465,7 +1499,8 @@ namespace DeskMadeline
             Speed = speed;
 
             // 地面斜下冲 → 蹲冲（1.2x，原作同款）
-            if (dashStartedOnGround && DashDir.X != 0 && DashDir.Y > 0 && Speed.Y > 0 &&
+            if ((dashStartedOnGround || dashStartedWithDreamGrace) &&
+                DashDir.X != 0 && DashDir.Y > 0 && Speed.Y > 0 &&
                 !DreamAt(Pos.X, Pos.Y + 1f))
             {
                 DashDir = new PointF(Sign(DashDir.X), 0);
@@ -1568,26 +1603,34 @@ namespace DeskMadeline
             else
             {
                 autoJump = true;
-                // DreamDashUpdate's vanilla exit correction and Dream Grab.
-                // The 5px move puts Madeline back against the face she exited,
-                // then Grab + opposite movement can transition directly to Climb.
+                // Dream Grab. Vanilla's generic 5px correction can leave this
+                // desktop representation visibly embedded in a window because a
+                // 240px/s naive step may overshoot its face. Snap the 8px collider
+                // flush to the exact DreamBlock boundary instead.
                 if (DashDir.Y >= 0f || Math.Abs(DashDir.X) > 0.01f)
                 {
-                    if (DashDir.X > 0f && CollideAt(Pos.X - 5f, Pos.Y))
-                        MoveHExact(-5, false);
-                    else if (DashDir.X < 0f && CollideAt(Pos.X + 5f, Pos.Y))
-                        MoveHExact(5, false);
-                    bool wallLeft = ClimbCheck(-1);
-                    bool wallRight = ClimbCheck(1);
-                    if (Holding == null && input.GrabHeld &&
-                        ((moveX == 1 && wallRight) || (moveX == -1 && wallLeft)))
+                    int exitDirection = Sign(DashDir.X);
+                    if (Holding == null && input.GrabHeld && moveX == -exitDirection &&
+                        TryGetDreamExitWall(exitDirection, out Solid wall))
                     {
                         Facing = moveX;
+                        Pos.X = exitDirection > 0 ? wall.R + 4f : wall.L - 4f;
                         enterClimb = true;
+                    }
+                    else if (Holding == null && input.GrabHeld && exitDirection == 0)
+                    {
+                        bool wallLeft = ClimbCheck(-1);
+                        bool wallRight = ClimbCheck(1);
+                        if ((moveX == 1 && wallRight) || (moveX == -1 && wallLeft))
+                        {
+                            Facing = moveX;
+                            enterClimb = true;
+                        }
                     }
                 }
             }
             jumpGraceTimer = Math.Abs(DashDir.X) > 0.01f ? JumpGraceTime : 0f;
+            dreamGroundedDashGraceTimer = Math.Abs(DashDir.X) > 0.01f ? JumpGraceTime : 0f;
             RefillDash();
             Stamina = ClimbMaxStamina;
             dreamDashOutTimer = 0.16f;
