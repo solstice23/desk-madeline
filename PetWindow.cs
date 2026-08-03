@@ -334,6 +334,7 @@ namespace DeskMadeline
             Add("runSlow_carry", Sprites.Seq("run_carry", 0, 11), 0.07f, true);
             Add("jumpSlow_carry", Sprites.Seq("jump_carry", 0, 1), 0.1f, true);
             Add("fallSlow_carry", Sprites.Seq("jump_carry", 2, 3), 0.1f, false);
+            Add("pickUp", Sprites.Seq("pickup", 0, 4), 0.06f, false);
             var stumble = new List<string> { "runStumble10", "runStumble11" };
             stumble.AddRange(Sprites.Seq("runStumble", 0, 11));
             Add("runStumble", stumble.ToArray(), 0.05f, false);

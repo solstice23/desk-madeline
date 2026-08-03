@@ -76,6 +76,7 @@ namespace DeskMadeline
         public const int StNormal = 0;
         public const int StClimb = 1;
         public const int StDash = 2;
+        public const int StPickup = 8;
 
         // 头发颜色（Player.cs）
         public static readonly Color NormalHairColor = Color.FromArgb(0xAC, 0x32, 0x32);
@@ -176,6 +177,8 @@ namespace DeskMadeline
         float landingStumbleTimer;
         float sweatJumpTimer;
         float minHoldTimer;
+        float pickupTimer;
+        PointF pickupStoredSpeed;
 
         // 保留速度（cornerboost）：撞墙瞬间保存水平速度，时限内墙不再阻挡则返还
         float wallSpeedRetained;
@@ -491,6 +494,8 @@ namespace DeskMadeline
             SweatAnimId = "idle";
             sweatJumpTimer = 0f;
             minHoldTimer = 0f;
+            pickupTimer = 0f;
+            pickupStoredSpeed = PointF.Empty;
             counter.X = counter.Y = 0;
             Hair.Reset(new PointF(Pos.X, Pos.Y - 9), Facing);
         }
@@ -598,7 +603,7 @@ namespace DeskMadeline
             // (1) is excluded among the states implemented here.  Updating it
             // during Dash is what makes reverse supers, hypers and wavedashes
             // possible: SuperJump launches in Facing, not in DashDir.
-            if (!BeingDragged && moveX != 0 && State != StClimb)
+            if (!BeingDragged && moveX != 0 && (State == StNormal || State == StDash))
             {
                 if (Facing != moveX && Ducking)
                 {
@@ -610,6 +615,20 @@ namespace DeskMadeline
 
             if (!BeingDragged)
             {
+                if (State == StPickup)
+                {
+                    pickupTimer -= dt;
+                    if (Holding != null)
+                        Holding.Carry(new PointF(Pos.X, Pos.Y - 12f));
+                    if (pickupTimer <= 0f)
+                    {
+                        Speed = pickupStoredSpeed;
+                        Speed.Y = Math.Min(Speed.Y, 0f);
+                        EnterNormal();
+                    }
+                }
+                else
+                {
                 // Celeste updates retained wall speed before its StateMachine
                 // component.  This ordering matters for corner boosts: the
                 // restored dash speed must be visible to ClimbJump/Jump.
@@ -659,6 +678,7 @@ namespace DeskMadeline
                 // 屏幕左右边界
                 if (Pos.X < MinX + 4) { Pos.X = MinX + 4; if (Speed.X < 0) Speed.X = 0; }
                 if (Pos.X > MaxX - 4) { Pos.X = MaxX - 4; if (Speed.X > 0) Speed.X = 0; }
+                }
             }
             else
             {
@@ -712,9 +732,8 @@ namespace DeskMadeline
         {
             if (Holding == null && input.GrabHeld && !IsTired && !Ducking && TryPickupGlider())
             {
-                // Vanilla briefly enters its pickup state.  The pet has no cutscene
-                // state, so it keeps the same motion and begins carrying immediately.
                 Ducking = false;
+                return;
             }
 
             // 抓墙进入攀爬
@@ -899,6 +918,10 @@ namespace DeskMadeline
             if (nearest == null || !nearest.Pickup(this)) return false;
             Holding = nearest;
             minHoldTimer = 0.35f;
+            pickupStoredSpeed = Speed;
+            Speed = PointF.Empty;
+            pickupTimer = 0.16f;
+            State = StPickup;
             nearest.Carry(new PointF(Pos.X, Pos.Y - 12f));
             return true;
         }
@@ -1245,8 +1268,8 @@ namespace DeskMadeline
             dashTime -= dt;
 
             if (Holding == null && (DashDir.X != 0f || DashDir.Y != 0f) &&
-                input.GrabHeld && !IsTired && CanUnDuck)
-                TryPickupGlider();
+                input.GrabHeld && !IsTired && CanUnDuck && TryPickupGlider())
+                return;
 
             // 跳跃打断冲刺 → Super / Hyper / Ultra / 蹬墙跳（原作 DashUpdate 中 jump 优先于一切）
             if (input.JumpPressed)
@@ -1300,6 +1323,10 @@ namespace DeskMadeline
             if (BeingDragged)
             {
                 id = "dangling";
+            }
+            else if (State == StPickup)
+            {
+                id = "pickUp";
             }
             else if (!onGround && landingStumbleTimer > 0f)
             {
