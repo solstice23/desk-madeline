@@ -39,6 +39,7 @@ namespace DeskMadeline
         readonly Player player = new Player();
         readonly KeyBindings bindings;
         readonly PetSettings settings;
+        readonly SoundEffects soundEffects;
         internal readonly SkinManager skinManager;
         readonly Animator animator;
         readonly Animator sweatAnimator;
@@ -100,6 +101,9 @@ namespace DeskMadeline
         readonly List<DashTrail> dashTrails = new List<DashTrail>();
         SlashVisual slash;
         int observedDashSequenceCount;
+        int soundDashSequenceCount, soundJumpEffectCount, soundWallJumpEffectCount;
+        int soundLandingEffectCount, soundDeathSequenceCount;
+        bool soundWasRespawning;
         bool dashVisualPending;
         float dashVisualTimer = -1f;
         int dashTrailStage;
@@ -181,6 +185,9 @@ namespace DeskMadeline
             player.InfiniteStamina = settings.InfiniteStamina;
             player.SetDashMode(settings.DashMode);
             player.Gliders = gliders;
+            soundEffects = new SoundEffects(
+                () => IsPetInputWindow(Win32.GetForegroundWindow()),
+                settings.SfxMode, settings.SfxVolume);
             if (settings.Language == "en") english = true;
             else if (settings.Language == "zh") english = false;
             bindings = new KeyBindings(System.IO.Path.Combine(
@@ -567,6 +574,7 @@ namespace DeskMadeline
             bool wasDeadOrRespawning = player.IsDead || player.IsRespawning;
             PointF beforeUpdatePosition = player.Pos;
             player.Update(dt, input);
+            UpdateSoundEffects(wasState);
             if (!wasDeadOrRespawning) ApplyEdgeWrap(beforeUpdatePosition);
 
             // A frame that began frozen only advances the raw freeze countdown.
@@ -633,6 +641,42 @@ namespace DeskMadeline
 
         static Color Rgb(int value) => Color.FromArgb((value >> 16) & 255, (value >> 8) & 255, value & 255);
         static int RgbValue(Color value) => (value.R << 16) | (value.G << 8) | value.B;
+
+        void UpdateSoundEffects(int wasState)
+        {
+            if (player.DashSequenceCount != soundDashSequenceCount)
+            {
+                soundDashSequenceCount = player.DashSequenceCount;
+                soundEffects.Play(PetSound.Dash);
+            }
+            if (player.WallJumpEffectCount != soundWallJumpEffectCount)
+            {
+                soundWallJumpEffectCount = player.WallJumpEffectCount;
+                soundEffects.Play(PetSound.WallJump);
+            }
+            if (player.JumpEffectCount != soundJumpEffectCount)
+            {
+                soundJumpEffectCount = player.JumpEffectCount;
+                soundEffects.Play(PetSound.Jump);
+            }
+            if (player.LandingEffectCount != soundLandingEffectCount)
+            {
+                soundLandingEffectCount = player.LandingEffectCount;
+                soundEffects.Play(PetSound.Land);
+            }
+            if (player.DeathSequenceCount != soundDeathSequenceCount)
+            {
+                soundDeathSequenceCount = player.DeathSequenceCount;
+                soundEffects.Play(PetSound.Death);
+            }
+            if (wasState != Player.StDreamDash && player.State == Player.StDreamDash)
+                soundEffects.Play(PetSound.DreamEnter);
+            else if (wasState == Player.StDreamDash && player.State != Player.StDreamDash && !player.IsDead)
+                soundEffects.Play(PetSound.DreamExit);
+            if (soundWasRespawning && !player.IsRespawning && !player.IsDead)
+                soundEffects.Play(PetSound.Respawn);
+            soundWasRespawning = player.IsRespawning;
+        }
 
         internal Color ResolveHairColor(int dashes, Color fallback)
         {
@@ -1981,6 +2025,8 @@ namespace DeskMadeline
             settings.RespawnReversalEnabled = player.RespawnReversalEnabled;
             settings.EdgeWrapMode = edgeWrapMode;
             settings.ElytraEnabled = player.ElytraEnabled;
+            settings.SfxMode = soundEffects.Mode;
+            settings.SfxVolume = soundEffects.Volume;
             settings.Save();
         }
 
@@ -2259,6 +2305,56 @@ namespace DeskMadeline
             })
             { Checked = AlwaysOnTop };
             menu.Items.Add(topItem);
+
+            var sfxItem = new ToolStripMenuItem(T("Sound effects", "音效"));
+            foreach (var option in new[]
+            {
+                new KeyValuePair<int, string>(0, T("Off", "关闭")),
+                new KeyValuePair<int, string>(1, T("Only when focused", "仅聚焦时")),
+                new KeyValuePair<int, string>(2, T("On", "开启"))
+            })
+            {
+                int mode = option.Key;
+                var choice = new ToolStripMenuItem(option.Value)
+                {
+                    Checked = soundEffects.Mode == mode,
+                    Tag = mode
+                };
+                choice.Click += (_, __) =>
+                {
+                    soundEffects.Mode = mode;
+                    SaveSettings();
+                    foreach (ToolStripItem raw in sfxItem.DropDownItems)
+                        if (raw is ToolStripMenuItem item && item.Tag is int)
+                            item.Checked = (int)item.Tag == mode;
+                };
+                sfxItem.DropDownItems.Add(choice);
+            }
+            sfxItem.DropDownItems.Add(new ToolStripSeparator());
+            var volumeItem = new ToolStripMenuItem();
+            void RefreshVolumeLabel() => volumeItem.Text =
+                T("Volume", "音量") + ": " + soundEffects.Volume + "%";
+            for (int volume = 0; volume <= 100; volume += 10)
+            {
+                int value = volume;
+                var choice = new ToolStripMenuItem(value + "%")
+                {
+                    Checked = soundEffects.Volume == value,
+                    Tag = "volume"
+                };
+                choice.Click += (_, __) =>
+                {
+                    soundEffects.Volume = value;
+                    RefreshVolumeLabel();
+                    SaveSettings();
+                    foreach (ToolStripMenuItem item in volumeItem.DropDownItems)
+                        item.Checked = item.Text == value + "%";
+                };
+                volumeItem.DropDownItems.Add(choice);
+            }
+            RefreshVolumeLabel();
+            sfxItem.DropDownItems.Add(volumeItem);
+            menu.Items.Add(sfxItem);
 
             var particleItem = new ToolStripMenuItem(T("Particle effects", "粒子特效"), null, (sender, __) =>
             {

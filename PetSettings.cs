@@ -30,6 +30,8 @@ namespace DeskMadeline
         public bool RespawnReversalEnabled;
         public int EdgeWrapMode;
         public bool ElytraEnabled;
+        public int SfxMode;
+        public int SfxVolume = 100;
 
         readonly string path;
 
@@ -78,6 +80,12 @@ namespace DeskMadeline
                     int.TryParse(edgeWrap, out int edgeWrapValue))
                     result.EdgeWrapMode = Math.Max(0, Math.Min(3, edgeWrapValue));
                 ReadBool(values, "ElytraEnabled", ref result.ElytraEnabled);
+                if (values.TryGetValue("SfxMode", out string sfxMode) &&
+                    int.TryParse(sfxMode, out int sfxModeValue))
+                    result.SfxMode = Math.Max(0, Math.Min(2, sfxModeValue));
+                if (values.TryGetValue("SfxVolume", out string sfxVolume) &&
+                    int.TryParse(sfxVolume, out int sfxVolumeValue))
+                    result.SfxVolume = Math.Max(0, Math.Min(100, sfxVolumeValue));
             }
             catch { }
             return result;
@@ -124,7 +132,9 @@ namespace DeskMadeline
                     "DreamBlockMode=" + DreamBlockMode,
                     "RespawnReversalEnabled=" + RespawnReversalEnabled,
                     "EdgeWrapMode=" + EdgeWrapMode,
-                    "ElytraEnabled=" + ElytraEnabled
+                    "ElytraEnabled=" + ElytraEnabled,
+                    "SfxMode=" + SfxMode,
+                    "SfxVolume=" + SfxVolume
                 });
             }
             catch { }
