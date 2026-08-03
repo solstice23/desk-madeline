@@ -37,6 +37,7 @@ namespace DeskMadeline
         readonly PetSettings settings;
         internal readonly SkinManager skinManager;
         readonly Animator animator;
+        readonly Animator sweatAnimator;
         readonly Dictionary<string, Anim> anims;
         readonly NotifyIcon tray;
         ContextMenuStrip trayMenu;
@@ -77,6 +78,10 @@ namespace DeskMadeline
         bool ParticlesEnabled = false;   // 粒子特效开关（默认关，托盘菜单可开）
         float runDustTimer;        // 跑步扬尘间隔
         int observedLaunchCount;
+        int observedWallJumpEffectCount;
+        int observedJumpEffectCount;
+        int observedLandingEffectCount;
+        int observedSweatAnimSequenceCount;
         bool speedRingLaunchActive;
         float speedRingLaunchTimer;
         float nextSpeedRingTime;
@@ -192,6 +197,8 @@ namespace DeskMadeline
             };
             anims = BuildAnims();
             animator = new Animator(anims);
+            sweatAnimator = new Animator(BuildSweatAnims());
+            sweatAnimator.Play("idle");
             animator.Play("wakeUp");   // 启动先播醒来动画
 
             // ---- 出生点：主屏工作区底部中央 ----
@@ -267,13 +274,16 @@ namespace DeskMadeline
             void Add(string id, string[] frames, float delay, bool loop, bool manual = false)
             { if (frames.Length > 0) d[id] = new Anim { Frames = frames, Delay = delay, Loop = loop, Manual = manual }; }
 
-            Add("idle", Sprites.Seq("idle", 0, 8), 0.09f, true);
-            Add("wakeUp", Sprites.Seq("wakeUp", 0, 14), 0.09f, false);   // 启动醒来动画（蜷→起身）
-            Add("idleA", Sprites.Seq("idleA", 0, 30), 0.09f, false);
-            Add("idleB", Sprites.Seq("idleB", 0, 30), 0.09f, false);
-            Add("idleC", Sprites.Seq("idleC", 0, 30), 0.09f, false);
-            Add("runSlow", Sprites.Seq("runSlow", 0, 11), 0.08f, true);
-            Add("runFast", Sprites.Seq("runFast", 0, 11), 0.06f, true);
+            Add("idle", Sprites.Seq("idle", 0, 8), 0.1f, true);
+            var wakeUp = new List<string>(Sprites.Seq("wakeUp", 0, 4));
+            for (int i = 0; i < 10 && Sprites.Has("wakeUp05"); i++) wakeUp.Add("wakeUp05");
+            wakeUp.AddRange(Sprites.Seq("wakeUp", 6, 14));
+            Add("wakeUp", wakeUp.ToArray(), 0.1f, false); // Sprites.xml: 0-4, 5*10, 6-14
+            Add("idleA", Sprites.Seq("idleA", 0, 30), 0.12f, false);
+            Add("idleB", Sprites.Seq("idleB", 0, 30), 0.16f, false);
+            Add("idleC", Sprites.Seq("idleC", 0, 30), 0.05f, false);
+            Add("runSlow", Sprites.Seq("runSlow", 0, 11), 0.07f, true);
+            Add("runFast", Sprites.Seq("runFast", 0, 11), 0.05f, true);
             // Vanilla Sprites.xml splits each jump sheet in half: 00/01 loop while
             // rising, then 02/03 play once and hold while falling.  The separate
             // fall00-07 sheet belongs to the scripted "fall" state, not fast-fall.
@@ -281,29 +291,34 @@ namespace DeskMadeline
             Add("jumpFast", Sprites.Seq("jumpFast", 0, 1), 0.10f, true);
             Add("fallSlow", Sprites.Seq("jumpSlow", 2, 3), 0.10f, false);
             Add("fallFast", Sprites.Seq("jumpFast", 2, 3), 0.10f, false);
-            Add("dash", Sprites.Seq("dash", 0, 3), 0.05f, true);
-            Add("climb", ClimbFrames(), 0.1f, true, manual: true);
-            Add("wallslide", new[] { "climb02" }, 1f, true);
-            Add("dangling", Sprites.Seq("dangling", 0, 9), 0.1f, true);
+            Add("dash", Sprites.Seq("dash", 0, 3), 0.09f, true);
+            Add("climb", Sprites.Seq("climb", 0, 5), 0.04f, true);
+            Add("wallslide", new[] { "climb00" }, 1f, true);
+            Add("climbLookBack", new[] { "climb06", "climb07", "climb08" }, 0.08f, false);
+            Add("dangling", Sprites.Seq("dangling", 0, 9), 0.11f, true);
             Add("duck", new[] { "duck" }, 1f, true);
-            Add("lookUp", Sprites.Seq("lookUp", 0, 7), 0.1f, false);
+            Add("lookUp", Sprites.Seq("lookUp", 2, 7), 0.1f, false);
             Add("tired", Sprites.Seq("tired", 0, 3), 0.16f, true);
-            Add("edge", Sprites.Seq("edge", 0, 13), 0.08f, true);
-            Add("flip", Sprites.Seq("flip", 0, 8), 0.06f, false);
+            Add("edge", Sprites.Seq("edge", 0, 13), 0.25f, true);
+            Add("edgeBack", Sprites.Seq("edge_back", 0, 13), 0.25f, true);
+            Add("push", Sprites.Seq("push", 0, 15), 0.1f, true);
+            Add("flip", Sprites.Seq("flip", 0, 7), 0.04f, false);
+            Add("skid", new[] { "flip08" }, 1f, true);
             return d;
         }
 
-        /// <summary>攀爬循环帧：跳过 climb07/08（扭头帧，不参与正常攀爬）。</summary>
-        static string[] ClimbFrames()
+        static Dictionary<string, Anim> BuildSweatAnims()
         {
-            var list = new List<string>();
-            for (int i = 0; i <= 14; i++)
-            {
-                if (i == 7 || i == 8) continue;
-                var id = "climb" + i.ToString("00");
-                if (Sprites.Has(id)) list.Add(id);
-            }
-            return list.ToArray();
+            var d = new Dictionary<string, Anim>(StringComparer.OrdinalIgnoreCase);
+            void Add(string id, string[] frames, float delay, bool loop)
+            { if (frames.Length > 0) d[id] = new Anim { Frames = frames, Delay = delay, Loop = loop }; }
+            Add("idle", new[] { "sweatIdle00" }, 1f, true);
+            Add("still", Sprites.Seq("sweatStill", 0, 5), 0.1f, true);
+            Add("climbLoop", Sprites.Seq("sweatClimb", 2, 7), 0.1f, true);
+            d["climb"] = new Anim { Frames = Sprites.Seq("sweatClimb", 0, 1), Delay = 0.1f, Goto = "climbLoop" };
+            Add("danger", Sprites.Seq("sweatDanger", 0, 5), 0.05f, true);
+            d["jump"] = new Anim { Frames = Sprites.Seq("sweatJump", 0, 3), Delay = 0.1f, Goto = "idle" };
+            return d;
         }
 
         // ================= 游戏循环 =================
@@ -415,7 +430,6 @@ namespace DeskMadeline
             var input = SampleInput();
 
             // 物理
-            bool wasOnGround = player.onGround;
             int wasState = player.State;
             player.Update(dt, input);
 
@@ -434,21 +448,27 @@ namespace DeskMadeline
             // 粒子（走路/落地/跳跃/冲刺）+ 冲刺斩击计时
             if (ParticlesEnabled)
             {
-                EmitPlayerParticles(dt, wasOnGround, wasState);
+                EmitPlayerParticles(dt, wasState);
                 particles.Update(dt);
             }
             else
             {
                 particles.Clear();
+                observedJumpEffectCount = player.JumpEffectCount;
+                observedWallJumpEffectCount = player.WallJumpEffectCount;
+                observedLandingEffectCount = player.LandingEffectCount;
             }
 
             // 动画
             animator.Play(player.AnimId);
-            if (player.AnimId == "climb") animator.Frame = player.ClimbFrame;
             animator.Update(dt);
             player.AnimFinished = animator.Finished;
             player.AnimLoopCount = animator.LoopCount;
             player.CurrentFrameId = animator.CurrentFrameId; // 下一帧起头发锚点跟随当前帧
+            bool restartSweat = player.SweatAnimSequenceCount != observedSweatAnimSequenceCount;
+            observedSweatAnimSequenceCount = player.SweatAnimSequenceCount;
+            sweatAnimator.Play(player.SweatAnimId, restartSweat);
+            sweatAnimator.Update(dt);
             UpdateDashCoreVisuals(dt);
         }
 
@@ -673,17 +693,37 @@ namespace DeskMadeline
         }
 
         // 粒子发射（参数移植自 Celeste Player.cs 的 Dust.Burst 调用）
-        void EmitPlayerParticles(float dt, bool wasOnGround, int wasState)
+        void EmitPlayerParticles(float dt, int wasState)
         {
             float up = (float)-Math.PI / 2f;
 
-            // 落地尘
-            if (player.onGround && !wasOnGround)
-                particles.Emit(dust, player.Pos.X, player.Pos.Y, up, 0.6f, 4);
+            if (player.WallJumpEffectCount != observedWallJumpEffectCount)
+            {
+                observedWallJumpEffectCount = player.WallJumpEffectCount;
+                int dir = player.LastWallJumpDirection;
+                float angle = dir < 0 ? (float)(Math.PI * -3.0 / 4.0) : (float)(-Math.PI / 4.0);
+                particles.Emit(dust, player.Pos.X - dir * 2f, player.Pos.Y - 5.5f,
+                    angle, 0.6f, 4);
+            }
 
-            // 跳跃 puff
-            if (!player.onGround && wasOnGround && player.Speed.Y < 0)
-                particles.Emit(dust, player.Pos.X, player.Pos.Y, up, 0.6f, 6);
+            if (player.JumpEffectCount != observedJumpEffectCount)
+            {
+                observedJumpEffectCount = player.JumpEffectCount;
+                particles.Emit(dust, player.Pos.X, player.Pos.Y, up, 0.6f, 4);
+            }
+
+            if (player.LandingEffectCount != observedLandingEffectCount)
+            {
+                observedLandingEffectCount = player.LandingEffectCount;
+                particles.Emit(dust, player.Pos.X, player.Pos.Y, up, 0.6f, 8);
+            }
+
+            if (player.WallSlideDustActive)
+            {
+                int dir = player.WallSlideDirection;
+                particles.Emit(dust, player.Pos.X + dir * 5f, player.Pos.Y - 1.5f,
+                    up, 0.6f, 1);
+            }
 
             // 跑步扬尘
             if (player.onGround && Math.Abs(player.Speed.X) > 30)
@@ -933,7 +973,7 @@ namespace DeskMadeline
                 if (animator.CurrentId != "wakeUp")
                     DrawHair(g, camX, camY);
                 DrawBody(g, bodyAnchorX, bodyAnchorY);
-                DrawLowStaminaSweat(g, bodyAnchorX, bodyAnchorY);
+                DrawSweat(g, bodyAnchorX, bodyAnchorY);
 
                 if (ParticlesEnabled) particles.Draw(g, camX, camY);
                 // SlashFx 与 TrailManager 是核心冲刺表现，不受粒子开关控制。
@@ -1006,13 +1046,16 @@ namespace DeskMadeline
             }
         }
 
-        void DrawLowStaminaSweat(Graphics g, float anchorX, float anchorY)
+        void DrawSweat(Graphics g, float anchorX, float anchorY)
         {
-            if (!player.IsLowStamina || introWakeUp) return;
-            int frameIndex = (renderFrameCount / 4) % 6;
-            var sweat = Sprites.Get("sweatDanger" + frameIndex.ToString("00"), player.Facing < 0);
+            if (introWakeUp) return;
+            var sweat = Sprites.Get(sweatAnimator.CurrentFrameId, player.Facing < 0);
             if (sweat != null)
-                g.DrawImage(sweat, anchorX - 16, anchorY - 32, 32, 32);
+            {
+                float sx = player.SpriteScaleX, sy = player.SpriteScaleY;
+                float x = SnapPx(anchorX - 16 * sx), y = SnapPx(anchorY - 32 * sy);
+                g.DrawImage(sweat, x, y, SnapPx(32 * sx), SnapPx(32 * sy));
+            }
         }
 
         void DrawWavedashWaves(Graphics g, float camX, float camY)

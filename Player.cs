@@ -63,7 +63,6 @@ namespace DeskMadeline
         const float DashRefillCooldown = 0.1f;
         const float DashAttackTime = 0.3f;
         const float ClimbMaxStamina = 110f;
-        const int ClimbFrameCount = 13;         // 攀爬动画帧数（climb00-14 去掉扭头帧 07/08）
         const float WallSpeedRetentionTime = 0.06f;  // 撞墙保留速度时限（原作 wallSpeedRetentionTimer，约 4 帧）
         const float ClimbJumpCost = 27.5f;
         const float ClimbUpSpeed = -45f;
@@ -103,15 +102,23 @@ namespace DeskMadeline
         // 表现
         public float SpriteScaleX = 1f, SpriteScaleY = 1f;
         public string AnimId = "idle";
-        public int ClimbFrame;
         public string CurrentFrameId;   // 由窗口每帧同步（头发锚点跟随当前帧）
+        public string SweatAnimId { get; private set; } = "idle";
+        public int SweatAnimSequenceCount { get; private set; }
         public Color HairColor = NormalHairColor;
         public readonly PlayerHairSim Hair = new PlayerHairSim();
         public int WavedashCount { get; private set; }
         public int LaunchCount { get; private set; }
         public int DashSequenceCount { get; private set; }
+        public int WallJumpEffectCount { get; private set; }
+        public int LastWallJumpDirection { get; private set; }
+        public int JumpEffectCount { get; private set; }
+        public int LandingEffectCount { get; private set; }
+        public bool WallSlideDustActive => (wallSlideDir != 0 && wallSlideTimer / WallSlideTime > 0.65f) ||
+                                           (State == StClimb && lastClimbMove > 0);
+        public int WallSlideDirection => State == StClimb ? Facing : wallSlideDir;
         public bool LastDashWasTwo { get; private set; }
-        public bool IsLowStamina => !InfiniteStamina && Stamina <= 20f;
+        public bool IsLowStamina => !InfiniteStamina && Stamina < 20f;
         public int DashCapacity => DashMode < 0 ? 2 : DashMode;
         public bool InfiniteDash => DashMode < 0;
         public bool IsFrozen => freezeTimer > 0f || dashAimPending;
@@ -156,10 +163,9 @@ namespace DeskMadeline
         bool autoJump;          // 冲刺结束后的自动跳保持（原作 AutoJump：半重力/可变跳高视为按住跳）
         int lastClimbMove;
         bool fastJump;
-        float climbAnimAccum;
         float idleTimer;
         string fidgetId;
-        float impactSpeed;
+        float sweatJumpTimer;
 
         // 保留速度（cornerboost）：撞墙瞬间保存水平速度，时限内墙不再阻挡则返还
         float wallSpeedRetained;
@@ -310,6 +316,15 @@ namespace DeskMadeline
 
         bool OnCollideH(int sign)
         {
+            // Vanilla turns a grounded horizontal dash into a duck when the
+            // crouched hitbox fits one pixel ahead.  The collision still stops
+            // movement for this frame, but does not kill dash speed/attack.
+            if (State == StDash && onGround && !CollideAt(Pos.X + sign, Pos.Y, 6f))
+            {
+                Ducking = true;
+                return false;
+            }
+
             // 冲刺水平撞墙：垂直角修正 ±1..4（优先向下贴地）
             if (State == StDash && Speed.Y == 0f && Speed.X != 0f)
             {
@@ -328,6 +343,7 @@ namespace DeskMadeline
                 }
             }
             Speed.X = 0;
+            dashAttackTimer = 0f;
             return false;
         }
 
@@ -335,7 +351,6 @@ namespace DeskMadeline
         {
             if (sign > 0)
             {
-                impactSpeed = Speed.Y;
                 // 空中冲刺落地：水平角修正 ±1..4，滑上平台边缘（仅冲刺状态，原作同款）
                 if (State == StDash && !dashStartedOnGround)
                 {
@@ -355,6 +370,13 @@ namespace DeskMadeline
                     Speed.Y = 0;
                     Speed.X *= 1.2f;
                     Ducking = true;
+                }
+                if (State != StClimb)
+                {
+                    float amount = Math.Min(Speed.Y / FastMaxFall, 1f);
+                    SpriteScaleX = 1f + 0.6f * amount;
+                    SpriteScaleY = 1f - 0.6f * amount;
+                    if (Speed.Y >= 80f) LandingEffectCount++;
                 }
                 Speed.Y = 0;
                 return false;
@@ -421,6 +443,8 @@ namespace DeskMadeline
             hairFlashTimer = 0;
             wallSpeedRetained = 0;
             wallSpeedRetentionTimer = 0;
+            SweatAnimId = "idle";
+            sweatJumpTimer = 0f;
             counter.X = counter.Y = 0;
             Hair.Reset(new PointF(Pos.X, Pos.Y - 9), Facing);
         }
@@ -471,9 +495,12 @@ namespace DeskMadeline
             // wallSlideTimer 只在正在滑墙时递减（原作行为）——挪到 NormalUpdate 滑墙段
             if (forceMoveXTimer > 0) forceMoveXTimer -= dt;
             if (varJumpTimer > 0) varJumpTimer -= dt;
+            if (sweatJumpTimer > 0f)
+            {
+                sweatJumpTimer -= dt;
+                if (sweatJumpTimer <= 0f) SweatAnimId = "idle";
+            }
 
-            bool wasOnGround = onGround;
-            impactSpeed = 0;
             onGround = !BeingDragged && CheckGround();
 
             if (onGround)
@@ -482,38 +509,33 @@ namespace DeskMadeline
                 wallSlideTimer = WallSlideTime;  // 原作：着地即重置滑墙时间
                 if (dashRefillReady && Dashes < DashCapacity) RefillDash();
                 jumpGraceTimer = JumpGraceTime;
-                if (!wasOnGround)
-                {
-                    // 落地压缩（原作连续公式：Lerp(1→1.6, Lerp(1→0.4), Speed.Y/240)）
-                    float amount = Math.Min(impactSpeed / 240f, 1f);
-                    SpriteScaleX = 1f + 0.6f * amount;  // Lerp(1, 1.6, amount)
-                    SpriteScaleY = 1f - 0.6f * amount;  // Lerp(1, 0.4, amount)
-                }
             }
             else if (jumpGraceTimer > 0) jumpGraceTimer -= dt;
 
             if (!BeingDragged)
             {
+                // Celeste updates retained wall speed before its StateMachine
+                // component.  This ordering matters for corner boosts: the
+                // restored dash speed must be visible to ClimbJump/Jump.
+                if (wallSpeedRetentionTimer > 0f)
+                {
+                    int rs = Math.Sign(wallSpeedRetained);
+                    if (Math.Sign(Speed.X) == -rs)
+                        wallSpeedRetentionTimer = 0f;
+                    else if (!CollideAt(Pos.X + rs, Pos.Y))
+                    {
+                        Speed.X = wallSpeedRetained;
+                        wallSpeedRetentionTimer = 0f;
+                    }
+                    else
+                        wallSpeedRetentionTimer -= dt;
+                }
+
                 switch (State)
                 {
                     case StNormal: NormalUpdate(dt, input); break;
                     case StClimb: ClimbUpdate(dt, input); break;
                     case StDash: DashUpdate(dt, input); break;
-                }
-
-                // 保留速度返还（cornerboost）：撞墙后时限内，若前进方向不再被墙阻挡，恢复撞墙时的水平速度
-                if (wallSpeedRetentionTimer > 0f)
-                {
-                    int rs = Math.Sign(wallSpeedRetained);
-                    if (Math.Sign(Speed.X) == -rs)
-                        wallSpeedRetentionTimer = 0f;                 // 反向移动取消保留
-                    else if (!CollideAt(Pos.X + rs, Pos.Y))
-                    {
-                        Speed.X = wallSpeedRetained;                  // 墙不再阻挡 → 返还
-                        wallSpeedRetentionTimer = 0f;
-                    }
-                    else
-                        wallSpeedRetentionTimer -= dt;                // 仍被挡 → 倒计时
                 }
 
                 MoveH(Speed.X * dt);
@@ -717,7 +739,7 @@ namespace DeskMadeline
 
         float maxFall = MaxFall;
 
-        void Jump(PetInput input)
+        void Jump(PetInput input, bool particles = true)
         {
             ConsumeJump();
             autoJump = false;
@@ -729,7 +751,7 @@ namespace DeskMadeline
             Speed.Y = JumpSpeed;
             varJumpSpeed = Speed.Y;
             SpriteScaleX = 0.6f; SpriteScaleY = 1.4f;
-            if (Ducking && CanUnDuck) Ducking = false;
+            if (particles) JumpEffectCount++;
         }
 
         void SuperJump()
@@ -754,6 +776,7 @@ namespace DeskMadeline
             varJumpSpeed = Speed.Y;
             Facing = dir;
             LaunchCount++;
+            JumpEffectCount++;
             SpriteScaleX = 0.6f; SpriteScaleY = 1.4f;
         }
 
@@ -772,6 +795,8 @@ namespace DeskMadeline
             // 原作：只有按住方向键时才强制移动（无输入时蹬墙跳不强制方向偏移）
             if (input.MoveX != 0) { forceMoveX = dir; forceMoveXTimer = WallJumpForceTime; }
             Facing = dir;
+            LastWallJumpDirection = dir;
+            WallJumpEffectCount++;
             SpriteScaleX = 0.6f; SpriteScaleY = 1.4f;
         }
 
@@ -791,24 +816,38 @@ namespace DeskMadeline
             // 原作 SuperWallJump 不设 forceMove（可立即转向）
             Facing = dir;
             LaunchCount++;
+            LastWallJumpDirection = dir;
+            WallJumpEffectCount++;
             SpriteScaleX = 0.6f; SpriteScaleY = 1.4f;
         }
 
         void ClimbJump(PetInput input)
         {
-            if (!onGround && !InfiniteStamina) Stamina -= ClimbJumpCost;
-            Jump(input);
+            if (!onGround)
+            {
+                if (!InfiniteStamina) Stamina -= ClimbJumpCost;
+                SweatAnimId = "jump";
+                sweatJumpTimer = 0.4f;
+                SweatAnimSequenceCount++;
+            }
+            Jump(input, particles: false);
             // 原作 wallBoost：无方向攀爬跳不立刻推离；0.2s 内按住离墙方向 → 130 加速 + 返还体力
             if (input.MoveX == 0)
             {
                 wallBoostDir = -Facing;
                 wallBoostTimer = 0.2f;
             }
+            LastWallJumpDirection = -Facing;
+            WallJumpEffectCount++;
         }
 
         void EnterClimb()
         {
             autoJump = false;
+            wallSpeedRetained = 0f;
+            wallSpeedRetentionTimer = 0f;
+            SweatAnimId = "idle";
+            sweatJumpTimer = 0f;
             Speed.X = 0;
             Speed.Y *= 0.2f;
             wallSlideTimer = WallSlideTime;
@@ -834,11 +873,12 @@ namespace DeskMadeline
                 State = StNormal;
                 return;
             }
-            if (CanDash) { State = StartDash(input); return; }
-            if (!input.GrabHeld) { State = StNormal; return; }
+            if (CanDash) { SweatAnimId = "idle"; State = StartDash(input); return; }
+            if (!input.GrabHeld) { SweatAnimId = "idle"; State = StNormal; return; }
             if (!CollideAt(Pos.X + Facing, Pos.Y))
             {
                 if (Speed.Y < 0) ClimbHop();
+                SweatAnimId = "idle";
                 State = StNormal;
                 return;
             }
@@ -869,16 +909,20 @@ namespace DeskMadeline
             if (Stamina <= 0)
             {
                 Stamina = 0;
+                SweatAnimId = "idle";
                 State = StNormal;
             }
+            else if (climbNoMoveTimer > 0f)
+                SweatAnimId = !InfiniteStamina && Stamina <= 20f ? "danger" : "idle";
+            else if (!InfiniteStamina && Stamina <= 20f)
+                SweatAnimId = "danger";
+            else if (lastClimbMove < 0)
+                SweatAnimId = "climb";
+            else if (!onGround)
+                SweatAnimId = "still";
+            else
+                SweatAnimId = "idle";
 
-            // 攀爬动画由位移驱动（每爬 2px 进一帧）
-            climbAnimAccum += Math.Abs(Speed.Y * dt);
-            while (climbAnimAccum >= 2)
-            {
-                climbAnimAccum -= 2;
-                ClimbFrame = (ClimbFrame + 1) % ClimbFrameCount;
-            }
         }
 
         void ClimbHop()
@@ -898,6 +942,11 @@ namespace DeskMadeline
             bool crouchDash = crouchDashBufferTimer > 0f;
             ConsumeDash();
             autoJump = false;
+            // NormalEnd/ClimbEnd clear this in Celeste before entering Dash.
+            wallSpeedRetained = 0f;
+            wallSpeedRetentionTimer = 0f;
+            SweatAnimId = "idle";
+            sweatJumpTimer = 0f;
             LastDashWasTwo = Dashes == 2;
             Dashes = Math.Max(0, Dashes - 1);
             DashSequenceCount++;
@@ -972,18 +1021,21 @@ namespace DeskMadeline
                 }
                 else
                 {
-                    if (CanUnDuck && WallJumpCheck(1)) { WallJump(-1, input); State = StNormal; return; }
-                    if (CanUnDuck && WallJumpCheck(-1)) { WallJump(1, input); State = StNormal; return; }
+                    if (CanUnDuck && WallJumpCheck(1))
+                    {
+                        if (Facing == 1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
+                        else WallJump(-1, input);
+                        State = StNormal;
+                        return;
+                    }
+                    if (CanUnDuck && WallJumpCheck(-1))
+                    {
+                        if (Facing == -1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
+                        else WallJump(1, input);
+                        State = StNormal;
+                        return;
+                    }
                 }
-            }
-            // 冲刺中抓墙 → 攀爬（jump 之后检查，避免抢走超跳）
-            if (input.GrabHeld && DashDir.X != 0 && !IsTired &&
-                CollideAt(Pos.X + Sign(DashDir.X), Pos.Y))
-            {
-                State = StClimb;
-                Speed = new PointF(0, 0);
-                EnterClimb();
-                return;
             }
             if (dashTime <= 0)
             {
@@ -1003,16 +1055,18 @@ namespace DeskMadeline
             {
                 id = "dangling";
             }
-            else if (State == StDash || dashAttackTimer > 0)
+            else if (dashAttackTimer > 0)
             {
-                id = Ducking ? "duck" : "dash";
+                if (onGround && DashDir.Y == 0f && !Ducking && Speed.X != 0f &&
+                    input.MoveX == -Sign(Speed.X)) id = "skid";
+                else id = Ducking ? "duck" : "dash";
             }
             else if (State == StClimb)
             {
                 if (lastClimbMove < 0) id = "climb";
                 else if (lastClimbMove > 0) id = "wallslide";
                 else if (!CollideAt(Pos.X + Facing, Pos.Y + 6)) id = "dangling";
-                else if (Stamina <= 20) id = "tired";
+                else if (input.MoveX == -Facing) id = "climbLookBack";
                 else id = "wallslide";
             }
             else if (Ducking && State == StNormal)
@@ -1022,15 +1076,22 @@ namespace DeskMadeline
             else if (onGround)
             {
                 fastJump = false;
-                if (Math.Abs(Speed.X) <= 25 && input.MoveX == 0)
+                if (input.MoveX != 0 && CollideAt(Pos.X + input.MoveX, Pos.Y))
+                {
+                    id = "push";
+                }
+                else if (Math.Abs(Speed.X) <= 25 && input.MoveX == 0)
                 {
                     bool noGroundAhead1 = !CollideAt(Pos.X + Facing, Pos.Y + 2);
                     bool noGroundAhead4 = !CollideAt(Pos.X + Facing * 4, Pos.Y + 2);
+                    bool noGroundBehind1 = !CollideAt(Pos.X - Facing, Pos.Y + 2);
+                    bool noGroundBehind4 = !CollideAt(Pos.X - Facing * 4, Pos.Y + 2);
                     if (noGroundAhead1 && noGroundAhead4) id = "edge";
+                    else if (noGroundBehind1 && noGroundBehind4) id = "edgeBack";
                     else if (input.MoveY == -1) id = "lookUp";
                     else id = "idle";
                 }
-                else if (Sign(Speed.X) == -input.MoveX && input.MoveX != 0 && Math.Abs(Speed.X) > 30)
+                else if (Sign(Speed.X) == -input.MoveX && input.MoveX != 0)
                 {
                     id = "flip";
                 }

@@ -15,6 +15,7 @@ namespace DeskMadeline
         public float Delay;
         public bool Loop;      // 循环
         public bool Manual;    // 帧由代码驱动（攀爬）
+        public string Goto;    // 播完后切换（SpriteBank goto）
     }
 
     /// <summary>动画播放器：跟踪当前动画、帧计时。</summary>
@@ -35,6 +36,9 @@ namespace DeskMadeline
         {
             if (id == null) return;
             if (CurrentId == id && !restart) return;
+            if (!restart && _anims.TryGetValue(id, out var requested) &&
+                requested.Goto != null && requested.Goto.Equals(CurrentId, StringComparison.OrdinalIgnoreCase))
+                return;
             CurrentId = id;
             Frame = 0;
             Timer = 0;
@@ -56,6 +60,15 @@ namespace DeskMadeline
                 if (Frame >= a.Frames.Length)
                 {
                     if (a.Loop) { Frame = 0; LoopCount++; }
+                    else if (a.Goto != null && _anims.ContainsKey(a.Goto))
+                    {
+                        CurrentId = a.Goto;
+                        a = _anims[CurrentId];
+                        Frame = 0;
+                        Timer = 0;
+                        Finished = false;
+                        LoopCount++;
+                    }
                     else { Frame = a.Frames.Length - 1; Finished = true; break; }
                 }
             }
@@ -99,12 +112,14 @@ namespace DeskMadeline
             {
                 LoadDirectory(skinDir, null);
                 // Player wake-up is the one supported animation stored below the
-                // sprite root in the SMH examples.  Other subdirectories are
-                // alternate modes (NB, tentacle, sweat...) and must not overwrite
-                // the selected player's ordinary frames.
+                // sprite root in the SMH examples. Sweat is a separate overlay;
+                // load it under prefixed ids so it cannot overwrite body frames.
                 string wakeUp = Directory.GetDirectories(skinDir)
                     .FirstOrDefault(d => Path.GetFileName(d).Equals("wakeup", StringComparison.OrdinalIgnoreCase));
                 if (wakeUp != null) LoadDirectory(wakeUp, "wakeUp");
+                string sweat = Directory.GetDirectories(skinDir)
+                    .FirstOrDefault(d => Path.GetFileName(d).Equals("sweat", StringComparison.OrdinalIgnoreCase));
+                if (sweat != null) LoadDirectory(sweat, "sweat");
             }
         }
 
