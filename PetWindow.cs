@@ -118,6 +118,7 @@ namespace DeskMadeline
             InputEnabled = settings.InputEnabled;
             AlwaysOnTop = settings.AlwaysOnTop;
             ParticlesEnabled = settings.ParticlesEnabled;
+            player.SetFreezeFramesEnabled(settings.FreezeFramesEnabled);
             player.InfiniteStamina = settings.InfiniteStamina;
             player.SetDashMode(settings.DashMode);
             if (settings.Language == "en") english = true;
@@ -398,6 +399,14 @@ namespace DeskMadeline
             bool wasOnGround = player.onGround;
             int wasState = player.State;
             player.Update(dt, input);
+
+            // Celeste.Freeze is global hit-stop: physics has already advanced only its
+            // raw freeze countdown, and every animation/effect timer must hold too.
+            if (player.FreezeFramesEnabled && player.IsFrozen)
+            {
+                UpdateDashCoreVisuals(0f); // observe the dash, but do not spawn/age FX
+                return;
+            }
             UpdateWavedashWaves(dt);
 
             // 离开屏幕很远自动重置（防"无限下落"/被甩出虚拟屏幕）
@@ -1135,6 +1144,7 @@ namespace DeskMadeline
             settings.InputEnabled = InputEnabled;
             settings.AlwaysOnTop = AlwaysOnTop;
             settings.ParticlesEnabled = ParticlesEnabled;
+            settings.FreezeFramesEnabled = player.FreezeFramesEnabled;
             settings.InfiniteStamina = player.InfiniteStamina;
             settings.DashMode = player.DashMode;
             settings.Language = english ? "en" : "zh";
@@ -1286,6 +1296,15 @@ namespace DeskMadeline
             })
             { Checked = ParticlesEnabled };
             menu.Items.Add(particleItem);
+
+            var freezeItem = new ToolStripMenuItem(T("Freeze frames", "冻结帧"), null, (sender, __) =>
+            {
+                player.SetFreezeFramesEnabled(!player.FreezeFramesEnabled);
+                ((ToolStripMenuItem)sender).Checked = player.FreezeFramesEnabled;
+                SaveSettings();
+            })
+            { Checked = player.FreezeFramesEnabled };
+            menu.Items.Add(freezeItem);
 
             var staminaItem = new ToolStripMenuItem(T("Infinite stamina", "无限体力"), null, (sender, __) =>
             {

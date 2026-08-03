@@ -95,6 +95,7 @@ namespace DeskMadeline
         public int DashMode = 1;
         public float Stamina = ClimbMaxStamina;
         public bool InfiniteStamina;
+        public bool FreezeFramesEnabled = true;
         public bool onGround;
         public IntPtr GroundId;
         public PointF DashDir;
@@ -114,6 +115,12 @@ namespace DeskMadeline
         public int DashCapacity => DashMode < 0 ? 2 : DashMode;
         public bool InfiniteDash => DashMode < 0;
         public bool IsFrozen => freezeTimer > 0f || dashAimPending;
+
+        public void SetFreezeFramesEnabled(bool enabled)
+        {
+            FreezeFramesEnabled = enabled;
+            if (!enabled) freezeTimer = 0f;
+        }
 
         public void SetDashMode(int mode)
         {
@@ -899,7 +906,7 @@ namespace DeskMadeline
             dashRefillCooldownTimer = DashRefillCooldown;
             dashAttackTimer = DashAttackTime;
             wallSlideTimer = WallSlideTime;
-            freezeTimer = 0.05f; // 原作 Freeze(0.05)
+            freezeTimer = FreezeFramesEnabled ? 0.05f : 0f; // 原作 Freeze(0.05)
             beforeDashSpeed = Speed;
 
             if (!onGround && Ducking && CanUnDuck) Ducking = false;
