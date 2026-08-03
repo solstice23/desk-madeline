@@ -88,11 +88,11 @@ namespace DeskMadeline
                 var p = parts[i];
                 p.Life -= dt;
                 if (p.Life <= 0) { parts.RemoveAt(i); continue; }
+                p.X += p.VX * dt;
+                p.Y += p.VY * dt;
                 p.VY += p.GravY * dt;
                 if (p.VX > 0) p.VX = Math.Max(0, p.VX - p.Friction * dt);
                 else p.VX = Math.Min(0, p.VX + p.Friction * dt);
-                p.X += p.VX * dt;
-                p.Y += p.VY * dt;
                 parts[i] = p;
             }
         }
@@ -110,7 +110,9 @@ namespace DeskMadeline
 
                 float k = p.Life / p.MaxLife;          // 1→0
                 float alpha = p.FadeOut ? Math.Min(1f, k * (p.LateFade ? 4f : 1f)) : 1f;
-                float size = p.ScaleOut ? p.Size * (0.3f + 0.7f * k) : p.Size;
+                // Particle.ScaleOut uses Ease.CubeOut(remainingLife), reaching zero
+                // rather than retaining a 30% minimum size.
+                float size = p.ScaleOut ? p.Size * (1f - (float)Math.Pow(1f - k, 3f)) : p.Size;
                 if (size < 1) size = 1;
 
                 int sx = (int)Math.Round(p.X - camX - size / 2f);
@@ -118,7 +120,11 @@ namespace DeskMadeline
                 int s = (int)Math.Round(size);
                 if (s < 1) s = 1;
 
-                Color color = p.BlinkColor && ((int)(p.Life / 0.1f) & 1) != 0 ? p.Color2 : p.Color;
+                // Calc.BetweenInterval(Life, .1): odd intervals use StartColor,
+                // even intervals use Color2.
+                Color color = p.BlinkColor
+                    ? ((((int)(p.Life / 0.1f) & 1) != 0) ? p.Color : p.Color2)
+                    : p.Color;
                 Sprites.DrawTinted(g, p.Tex, color, sx, sy, s, s, alpha);
             }
         }

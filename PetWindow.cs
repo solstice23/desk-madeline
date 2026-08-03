@@ -77,7 +77,9 @@ namespace DeskMadeline
         readonly Random effectRng = new Random();
         PType dust, dashBlue, dashRed;
         bool ParticlesEnabled = true;    // 粒子特效开关（默认开，托盘菜单可关闭）
-        float runDustTimer;        // 跑步扬尘间隔
+        float skidDustTimer;
+        string observedParticleAnimId;
+        int observedParticleAnimFrame = -1;
         int observedLaunchCount;
         int observedRingDashSequenceCount;
         int observedWallJumpEffectCount;
@@ -88,6 +90,8 @@ namespace DeskMadeline
         float speedRingLaunchTimer;
         float nextSpeedRingTime;
         float dashParticleTimer;
+        float tiredFlashTimer;
+        bool tiredFlash;
         readonly List<DashTrail> dashTrails = new List<DashTrail>();
         SlashVisual slash;
         int observedDashSequenceCount;
@@ -197,11 +201,12 @@ namespace DeskMadeline
             dust = new PType
             {
                 Tex = new[] { "smoke0", "smoke1", "smoke2", "smoke3" },
-                Color = Color.FromArgb(238, 238, 242),
+                Color = Color.White,
                 GravY = 4f,
                 LifeMin = 0.3f, LifeMax = 0.5f,
-                Size = 5f, SizeRange = 1f,
-                SpeedMin = 6f, SpeedMax = 16f,
+                // ParticleType.Size scales the 8x8 smoke texture by 0.7 ± 0.2.
+                Size = 5.6f, SizeRange = 1.6f,
+                SpeedMin = 5f, SpeedMax = 15f,
                 ScaleOut = true
             };
             dashBlue = new PType
@@ -315,8 +320,15 @@ namespace DeskMadeline
             Add("idleA", Sprites.Seq("idleA", 0, 30), 0.12f, false);
             Add("idleB", Sprites.Seq("idleB", 0, 30), 0.16f, false);
             Add("idleC", Sprites.Seq("idleC", 0, 30), 0.05f, false);
-            Add("runSlow", Sprites.Seq("runSlow", 0, 11), 0.07f, true);
+            foreach (string fidget in new[] { "idleA", "idleB", "idleC" })
+                if (d.TryGetValue(fidget, out var fidgetAnim)) fidgetAnim.Goto = "idle";
+            Add("runSlow", Sprites.Seq("runSlow", 0, 11), 0.07f, false);
+            if (d.TryGetValue("runSlow", out var runSlowAnim)) runSlowAnim.Goto = "runFast";
             Add("runFast", Sprites.Seq("runFast", 0, 11), 0.05f, true);
+            var stumble = new List<string> { "runStumble10", "runStumble11" };
+            stumble.AddRange(Sprites.Seq("runStumble", 0, 11));
+            Add("runStumble", stumble.ToArray(), 0.05f, false);
+            if (d.TryGetValue("runStumble", out var stumbleAnim)) stumbleAnim.Goto = "runFast";
             // Vanilla Sprites.xml splits each jump sheet in half: 00/01 loop while
             // rising, then 02/03 play once and hold while falling.  The separate
             // fall00-07 sheet belongs to the scripted "fall" state, not fast-fall.
@@ -327,15 +339,18 @@ namespace DeskMadeline
             Add("dash", Sprites.Seq("dash", 0, 3), 0.09f, true);
             Add("climb", Sprites.Seq("climb", 0, 5), 0.04f, true);
             Add("wallslide", new[] { "climb00" }, 1f, true);
-            Add("climbLookBack", new[] { "climb06", "climb07", "climb08" }, 0.08f, false);
+            Add("climbLookBack", new[] { "climb08" }, 1f, true);
+            Add("climbLookBackStart", new[] { "climb06", "climb07", "climb08" }, 0.08f, false);
+            if (d.TryGetValue("climbLookBackStart", out var lookBackStart)) lookBackStart.Goto = "climbLookBack";
             Add("dangling", Sprites.Seq("dangling", 0, 9), 0.11f, true);
             Add("duck", new[] { "duck" }, 1f, true);
             Add("lookUp", Sprites.Seq("lookUp", 2, 7), 0.1f, false);
-            Add("tired", Sprites.Seq("tired", 0, 3), 0.16f, true);
+            Add("tired", Sprites.Seq("tired", 0, 3), 0.18f, true);
             Add("edge", Sprites.Seq("edge", 0, 13), 0.25f, true);
             Add("edgeBack", Sprites.Seq("edge_back", 0, 13), 0.25f, true);
             Add("push", Sprites.Seq("push", 0, 15), 0.1f, true);
             Add("flip", Sprites.Seq("flip", 0, 7), 0.04f, false);
+            if (d.TryGetValue("flip", out var flipAnim)) flipAnim.Goto = "runFast";
             Add("skid", new[] { "flip08" }, 1f, true);
             return d;
         }
@@ -462,17 +477,66 @@ namespace DeskMadeline
             // 输入
             var input = SampleInput();
 
+            bool frozenAtStart = player.FreezeFramesEnabled && player.IsHitStopped;
+            if (!frozenAtStart)
+            {
+                // Hair/Sprite/Sweat components update before StateMachine in Player.
+                animator.Update(dt);
+                sweatAnimator.Update(dt);
+                player.AnimFinished = animator.Finished ||
+                    !string.Equals(player.AnimId, animator.CurrentId, StringComparison.OrdinalIgnoreCase);
+                player.AnimLoopCount = animator.LoopCount;
+                player.CurrentFrameId = animator.CurrentFrameId;
+                if (ParticlesEnabled) EmitAnimationParticles();
+
+                tiredFlashTimer += dt;
+                while (tiredFlashTimer >= 0.05f)
+                {
+                    tiredFlashTimer -= 0.05f;
+                    tiredFlash = !tiredFlash;
+                }
+            }
+
             // 物理
             int wasState = player.State;
             player.Update(dt, input);
 
-            // Celeste.Freeze is global hit-stop: physics has already advanced only its
-            // raw freeze countdown, and every animation/effect timer must hold too.
-            if (player.FreezeFramesEnabled && player.IsFrozen)
+            // A frame that began frozen only advances the raw freeze countdown.
+            if (frozenAtStart)
             {
                 UpdateDashCoreVisuals(0f); // observe the dash, but do not spawn/age FX
                 return;
             }
+
+            // UpdateSprite selects animations after component advancement. A newly
+            // selected animation stays on frame zero until the next game frame.
+            animator.Play(player.AnimId);
+            bool restartSweat = player.SweatAnimSequenceCount != observedSweatAnimSequenceCount;
+            observedSweatAnimSequenceCount = player.SweatAnimSequenceCount;
+            sweatAnimator.Play(player.SweatAnimId, restartSweat);
+            player.AnimFinished = animator.Finished ||
+                !string.Equals(player.AnimId, animator.CurrentId, StringComparison.OrdinalIgnoreCase);
+            player.AnimLoopCount = animator.LoopCount;
+            player.CurrentFrameId = animator.CurrentFrameId;
+            if (ParticlesEnabled) EmitAnimationParticles();
+
+            float hairX = 0f, hairY = 0f;
+            if (HairMeta.TryGet(animator.CurrentFrameId, out var hairMeta))
+            {
+                hairX = hairMeta.Offset.X;
+                hairY = hairMeta.Offset.Y;
+            }
+            player.UpdateHairOnly(dt, hairX, hairY);
+            UpdateCatTail(dt);
+
+            // DashBegin starts freeze mid-update, after sprite selection and hair
+            // anchoring, but before DashCoroutine creates slash/trail effects.
+            if (player.FreezeFramesEnabled && player.IsHitStopped)
+            {
+                UpdateDashCoreVisuals(0f);
+                return;
+            }
+
             UpdateWavedashWaves(dt);
 
             // 离开屏幕很远自动重置（防"无限下落"/被甩出虚拟屏幕）
@@ -492,17 +556,6 @@ namespace DeskMadeline
                 observedLandingEffectCount = player.LandingEffectCount;
             }
 
-            // 动画
-            animator.Play(player.AnimId);
-            animator.Update(dt);
-            player.AnimFinished = animator.Finished;
-            player.AnimLoopCount = animator.LoopCount;
-            player.CurrentFrameId = animator.CurrentFrameId; // 下一帧起头发锚点跟随当前帧
-            bool restartSweat = player.SweatAnimSequenceCount != observedSweatAnimSequenceCount;
-            observedSweatAnimSequenceCount = player.SweatAnimSequenceCount;
-            sweatAnimator.Play(player.SweatAnimId, restartSweat);
-            sweatAnimator.Update(dt);
-            UpdateCatTail(dt);
             UpdateDashCoreVisuals(dt);
         }
 
@@ -562,6 +615,25 @@ namespace DeskMadeline
 
         void UpdateDashCoreVisuals(float dt)
         {
+            // Existing effects update before Player/DashCoroutine can add new ones,
+            // so a freshly-created slash or snapshot renders once at age zero.
+            if (slash.Active)
+            {
+                slash.Age += dt;
+                slash.X += (float)Math.Cos(slash.Angle) * 8f * dt;
+                slash.Y += (float)Math.Sin(slash.Angle) * 8f * dt;
+                if (slash.Age >= 0.4f) slash.Active = false;
+            }
+            for (int i = dashTrails.Count - 1; i >= 0; i--)
+            {
+                dashTrails[i].Age += dt;
+                if (dashTrails[i].Age >= 1f)
+                {
+                    dashTrails[i].Mask?.Dispose();
+                    dashTrails.RemoveAt(i);
+                }
+            }
+
             if (player.DashSequenceCount != observedDashSequenceCount)
             {
                 observedDashSequenceCount = player.DashSequenceCount;
@@ -571,6 +643,7 @@ namespace DeskMadeline
             }
 
             // Celeste.Freeze(0.05) occurs before DashCoroutine creates SlashFx and the first trail.
+            bool spawnedThisFrame = false;
             if (dashVisualPending && !player.IsFrozen)
             {
                 dashVisualPending = false;
@@ -584,9 +657,10 @@ namespace DeskMadeline
                 };
                 CaptureDashTrail();
                 dashTrailStage = 1;
+                spawnedThisFrame = true;
             }
 
-            if (dashVisualTimer >= 0f)
+            if (dashVisualTimer >= 0f && !spawnedThisFrame)
             {
                 float previous = dashVisualTimer;
                 dashVisualTimer += dt;
@@ -605,23 +679,6 @@ namespace DeskMadeline
                 }
             }
 
-            if (slash.Active)
-            {
-                slash.Age += dt;
-                slash.X += (float)Math.Cos(slash.Angle) * 8f * dt;
-                slash.Y += (float)Math.Sin(slash.Angle) * 8f * dt;
-                if (slash.Age >= 0.4f) slash.Active = false;
-            }
-
-            for (int i = dashTrails.Count - 1; i >= 0; i--)
-            {
-                dashTrails[i].Age += dt;
-                if (dashTrails[i].Age >= 1f)
-                {
-                    dashTrails[i].Mask?.Dispose();
-                    dashTrails.RemoveAt(i);
-                }
-            }
         }
 
         void CaptureDashTrail()
@@ -653,8 +710,11 @@ namespace DeskMadeline
                 HairNodes = nodes,
                 CatTailNodes = tailNodes,
                 HairColor = player.HairColor,
-                // Player.GetTrailColor(wasDashB): second-charge dash -> red; otherwise blue.
-                Tint = player.LastDashWasTwo ? Player.NormalHairColor : Player.UsedHairColor
+                // Player.GetTrailColor(wasDashB), resolved through the active skin's
+                // corresponding one-dash / no-dash palette.
+                Tint = player.LastDashWasTwo
+                    ? ResolveHairColor(1, Player.NormalHairColor)
+                    : ResolveHairColor(0, Player.UsedHairColor)
             };
             trail.Mask = BakeDashTrailMask(trail);
             dashTrails.Add(trail);
@@ -758,6 +818,18 @@ namespace DeskMadeline
         // 140+ 的前 0.5 秒内每 0.15 秒生成一个环；每个环以 3/s 展开并以 10px/s 前移。
         void UpdateWavedashWaves(float dt)
         {
+            // Existing SpeedRing entities update before Player can add another one;
+            // newly emitted rings therefore render once at lerp=0 and origin position.
+            for (int i = waveRings.Count - 1; i >= 0; i--)
+            {
+                var ring = waveRings[i];
+                ring.Progress += 3f * dt;
+                ring.X += (float)Math.Cos(ring.Angle) * 10f * dt;
+                ring.Y += (float)Math.Sin(ring.Angle) * 10f * dt;
+                if (ring.Progress >= 1f) waveRings.RemoveAt(i);
+                else waveRings[i] = ring;
+            }
+
             // DashBegin explicitly sets vanilla's `launched` flag false. This is
             // particularly important for multi-ultras: each new diagonal dash ends
             // the preceding jump's speed-ring sequence.
@@ -818,15 +890,6 @@ namespace DeskMadeline
                 }
             }
 
-            for (int i = waveRings.Count - 1; i >= 0; i--)
-            {
-                var ring = waveRings[i];
-                ring.Progress += 3f * dt;
-                ring.X += (float)Math.Cos(ring.Angle) * 10f * dt;
-                ring.Y += (float)Math.Sin(ring.Angle) * 10f * dt;
-                if (ring.Progress >= 1f) waveRings.RemoveAt(i);
-                else waveRings[i] = ring;
-            }
         }
 
         // 粒子发射（参数移植自 Celeste Player.cs 的 Dust.Burst 调用）
@@ -839,40 +902,39 @@ namespace DeskMadeline
                 observedWallJumpEffectCount = player.WallJumpEffectCount;
                 int dir = player.LastWallJumpDirection;
                 float angle = dir < 0 ? (float)(Math.PI * -3.0 / 4.0) : (float)(-Math.PI / 4.0);
-                particles.Emit(dust, player.Pos.X - dir * 2f, player.Pos.Y - 5.5f,
-                    angle, 0.6f, 4);
+                EmitDustBurst(player.Pos.X - dir * 2f, player.Pos.Y - 5.5f, angle, 4);
             }
 
             if (player.JumpEffectCount != observedJumpEffectCount)
             {
                 observedJumpEffectCount = player.JumpEffectCount;
-                particles.Emit(dust, player.Pos.X, player.Pos.Y, up, 0.6f, 4);
+                EmitDustBurst(player.Pos.X, player.Pos.Y, up, 4);
             }
 
             if (player.LandingEffectCount != observedLandingEffectCount)
             {
                 observedLandingEffectCount = player.LandingEffectCount;
-                particles.Emit(dust, player.Pos.X, player.Pos.Y, up, 0.6f, 8);
+                EmitDustBurst(player.Pos.X, player.Pos.Y, up, 8);
             }
 
             if (player.WallSlideDustActive)
             {
                 int dir = player.WallSlideDirection;
-                particles.Emit(dust, player.Pos.X + dir * 5f, player.Pos.Y - 1.5f,
-                    up, 0.6f, 1);
+                EmitDustBurst(player.Pos.X + dir * 5f, player.Pos.Y - 1.5f, up, 1);
             }
 
-            // 跑步扬尘
-            if (player.onGround && Math.Abs(player.Speed.X) > 30)
+            // Dash-attacking against the held direction emits skid dust every
+            // 0.02s from orig_UpdateSprite. Ordinary running has no dust burst.
+            if (player.IsDashAttacking && player.AnimId == "skid")
             {
-                runDustTimer += dt;
-                if (runDustTimer > 0.12f)
+                skidDustTimer += dt;
+                while (skidDustTimer >= 0.02f)
                 {
-                    runDustTimer = 0;
-                    particles.Emit(dust, player.Pos.X + player.Facing * 2, player.Pos.Y, up, 0.5f, 1);
+                    skidDustTimer -= 0.02f;
+                    EmitDustBurst(player.Pos.X, player.Pos.Y, up, 1);
                 }
             }
-            else runDustTimer = 0;
+            else skidDustTimer = 0f;
 
             // 冲刺
             if (player.State == Player.StDash)
@@ -895,6 +957,35 @@ namespace DeskMadeline
                 }
             }
             else dashParticleTimer = 0f;
+        }
+
+        void EmitAnimationParticles()
+        {
+            if (animator.CurrentId == observedParticleAnimId && animator.Frame == observedParticleAnimFrame)
+                return;
+            observedParticleAnimId = animator.CurrentId;
+            observedParticleAnimFrame = animator.Frame;
+            // Player.OnFrameChange: pushing emits foreground dust on frames 8 and 15.
+            if (animator.CurrentId == "push" && (animator.Frame == 8 || animator.Frame == 15))
+            {
+                float dx = -player.Facing;
+                float angle = (float)Math.Atan2(-0.5f, dx);
+                EmitDustBurst(player.Pos.X - player.Facing * 5f, player.Pos.Y - 1f,
+                    angle, 1, 0f);
+            }
+        }
+
+        void EmitDustBurst(float x, float y, float direction, int count, float positionRange = 4f)
+        {
+            float perpendicular = direction - (float)Math.PI / 2f;
+            float rangeX = Math.Abs((float)Math.Cos(perpendicular) * positionRange);
+            float rangeY = Math.Abs((float)Math.Sin(perpendicular) * positionRange);
+            for (int i = 0; i < count; i++)
+            {
+                float px = x + ((float)effectRng.NextDouble() * 2f - 1f) * rangeX;
+                float py = y + ((float)effectRng.NextDouble() * 2f - 1f) * rangeY;
+                particles.Emit(dust, px, py, direction, 0.5f, 1);
+            }
         }
 
         PetInput SampleInput()
@@ -1181,7 +1272,7 @@ namespace DeskMadeline
                 float x = SnapPx(anchorX - 16 * sx), y = SnapPx(anchorY - 32 * sy);
                 float w = SnapPx(32 * sx), h = SnapPx(32 * sy);
                 // 原作低体力表现：每 0.05 秒红/白闪烁身体。
-                if (player.IsLowStamina && ((renderFrameCount / 3) & 1) == 0)
+                if (player.IsLowStamina && tiredFlash)
                     Sprites.DrawTinted(g, frame, Color.Red, x, y, w, h);
                 else
                     g.DrawImage(frame, x, y, w, h);
