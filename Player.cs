@@ -175,7 +175,7 @@ namespace DeskMadeline
         public PointF RespawnEffectPosition { get; private set; }
         public Color RespawnColor { get; private set; }
         public readonly Queue<PlayerSoundEvent> SoundEvents = new Queue<PlayerSoundEvent>();
-        public const int NormalSurfaceSoundIndex = 8;  // Platform.cs default (brick)
+        public int NormalSurfaceSoundIndex = 8;        // Platform.cs default (brick)
         public const int DreamSurfaceSoundIndex = 12; // active DreamBlock
 
         public int GroundSurfaceSoundIndex => SurfaceSoundIndexAt(Pos.X, Pos.Y + 1f);

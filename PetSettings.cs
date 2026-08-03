@@ -32,6 +32,7 @@ namespace DeskMadeline
         public bool ElytraEnabled;
         public int SfxMode;
         public int SfxVolume = 100;
+        public int SurfaceSoundIndex = 8;
 
         readonly string path;
 
@@ -86,6 +87,9 @@ namespace DeskMadeline
                 if (values.TryGetValue("SfxVolume", out string sfxVolume) &&
                     int.TryParse(sfxVolume, out int sfxVolumeValue))
                     result.SfxVolume = Math.Max(0, Math.Min(100, sfxVolumeValue));
+                if (values.TryGetValue("SurfaceSoundIndex", out string surfaceSound) &&
+                    int.TryParse(surfaceSound, out int surfaceSoundValue))
+                    result.SurfaceSoundIndex = Math.Max(0, Math.Min(44, surfaceSoundValue));
             }
             catch { }
             return result;
@@ -134,7 +138,8 @@ namespace DeskMadeline
                     "EdgeWrapMode=" + EdgeWrapMode,
                     "ElytraEnabled=" + ElytraEnabled,
                     "SfxMode=" + SfxMode,
-                    "SfxVolume=" + SfxVolume
+                    "SfxVolume=" + SfxVolume,
+                    "SurfaceSoundIndex=" + SurfaceSoundIndex
                 });
             }
             catch { }

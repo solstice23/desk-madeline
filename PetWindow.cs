@@ -184,6 +184,7 @@ namespace DeskMadeline
             player.RespawnReversalEnabled = settings.RespawnReversalEnabled;
             player.InfiniteStamina = settings.InfiniteStamina;
             player.SetDashMode(settings.DashMode);
+            player.NormalSurfaceSoundIndex = settings.SurfaceSoundIndex;
             player.Gliders = gliders;
             soundEffects = new SoundEffects(
                 () => IsPetInputWindow(Win32.GetForegroundWindow()),
@@ -2062,6 +2063,7 @@ namespace DeskMadeline
             settings.ElytraEnabled = player.ElytraEnabled;
             settings.SfxMode = soundEffects.Mode;
             settings.SfxVolume = soundEffects.Volume;
+            settings.SurfaceSoundIndex = player.NormalSurfaceSoundIndex;
             settings.Save();
         }
 
@@ -2389,6 +2391,62 @@ namespace DeskMadeline
             }
             RefreshVolumeLabel();
             sfxItem.DropDownItems.Add(volumeItem);
+            sfxItem.DropDownItems.Add(new ToolStripSeparator());
+            var surfaceItem = new ToolStripMenuItem(T("Surface material", "表面材质"));
+            foreach (var option in new[]
+            {
+                new KeyValuePair<int, string>(1, T("Asphalt", "沥青")),
+                new KeyValuePair<int, string>(2, T("Car", "汽车")),
+                new KeyValuePair<int, string>(3, T("Dirt", "泥土")),
+                new KeyValuePair<int, string>(4, T("Snow", "雪地")),
+                new KeyValuePair<int, string>(5, T("Wood", "木材")),
+                new KeyValuePair<int, string>(6, T("Stone bridge", "石桥")),
+                new KeyValuePair<int, string>(7, T("Girder", "钢梁")),
+                new KeyValuePair<int, string>(8, T("Brick (Default)", "砖块（默认）")),
+                new KeyValuePair<int, string>(9, T("Zip mover", "轨道方块")),
+                new KeyValuePair<int, string>(11, T("Inactive Dream Block", "未激活梦境方块")),
+                new KeyValuePair<int, string>(12, T("Active Dream Block", "激活梦境方块")),
+                new KeyValuePair<int, string>(13, T("Resort wood", "度假村木材")),
+                new KeyValuePair<int, string>(14, T("Resort roof", "度假村屋顶")),
+                new KeyValuePair<int, string>(15, T("Resort sinking platform", "度假村下沉平台")),
+                new KeyValuePair<int, string>(16, T("Resort basement tile", "度假村地下室")),
+                new KeyValuePair<int, string>(17, T("Resort linens", "度假村布料")),
+                new KeyValuePair<int, string>(18, T("Resort boxes", "度假村纸箱")),
+                new KeyValuePair<int, string>(19, T("Resort books", "度假村书本")),
+                new KeyValuePair<int, string>(20, T("Clutter door", "杂物门")),
+                new KeyValuePair<int, string>(21, T("Clutter switch", "杂物开关")),
+                new KeyValuePair<int, string>(22, T("Resort elevator", "度假村电梯")),
+                new KeyValuePair<int, string>(23, T("Cliffside snow", "山脊雪地")),
+                new KeyValuePair<int, string>(25, T("Cliffside grass", "山脊草地")),
+                new KeyValuePair<int, string>(27, T("Cliffside white block", "山脊白块")),
+                new KeyValuePair<int, string>(28, T("Gondola", "缆车")),
+                new KeyValuePair<int, string>(32, T("Aurora glass", "极光玻璃")),
+                new KeyValuePair<int, string>(33, T("Grass", "草地")),
+                new KeyValuePair<int, string>(35, T("Cassette block", "磁带方块")),
+                new KeyValuePair<int, string>(36, T("Core ice", "核心冰面")),
+                new KeyValuePair<int, string>(37, T("Core molten rock", "核心熔岩")),
+                new KeyValuePair<int, string>(40, T("Glitch", "故障方块")),
+                new KeyValuePair<int, string>(42, T("Moon cafe", "月球咖啡馆")),
+                new KeyValuePair<int, string>(43, T("Dream clouds", "梦境云层")),
+                new KeyValuePair<int, string>(44, T("Moon", "月球"))
+            })
+            {
+                int index = option.Key;
+                var choice = new ToolStripMenuItem(index + " — " + option.Value)
+                {
+                    Checked = player.NormalSurfaceSoundIndex == index,
+                    Tag = index
+                };
+                choice.Click += (_, __) =>
+                {
+                    player.NormalSurfaceSoundIndex = index;
+                    SaveSettings();
+                    foreach (ToolStripMenuItem item in surfaceItem.DropDownItems)
+                        item.Checked = (int)item.Tag == index;
+                };
+                surfaceItem.DropDownItems.Add(choice);
+            }
+            sfxItem.DropDownItems.Add(surfaceItem);
             menu.Items.Add(sfxItem);
 
             var particleItem = new ToolStripMenuItem(T("Particle effects", "粒子特效"), null, (sender, __) =>
