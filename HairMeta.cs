@@ -8,6 +8,16 @@ namespace DeskMadeline
         public static readonly string[] BangsFrames = { "bangs00", "bangs01", "bangs02" };
         public static readonly System.Collections.Generic.Dictionary<string, Meta> Offsets = new System.Collections.Generic.Dictionary<string, Meta>
         {
+            // CommunalHelper/CustomPlayerFrameMetadata.xml (hair frame defaults to 0).
+            { "fly00", new Meta(new System.Drawing.PointF(4f, 0f), 0) },
+            { "fly01", new Meta(new System.Drawing.PointF(4f, 0f), 0) },
+            { "fly02", new Meta(new System.Drawing.PointF(4f, -1f), 0) },
+            { "fly03", new Meta(new System.Drawing.PointF(4f, -1f), 0) },
+            { "fly04", new Meta(new System.Drawing.PointF(3f, -1f), 0) },
+            { "fly05", new Meta(new System.Drawing.PointF(3f, -1f), 0) },
+            { "fly06", new Meta(new System.Drawing.PointF(2f, -1f), 0) },
+            { "fly07", new Meta(new System.Drawing.PointF(2f, -1f), 0) },
+            { "fly08", new Meta(new System.Drawing.PointF(2f, -1f), 0) },
             { "climb00", new Meta(new System.Drawing.PointF(-0.9f, -0.9f), 2) },
             { "climb01", new Meta(new System.Drawing.PointF(-1.1f, -1.2f), 2) },
             { "climb02", new Meta(new System.Drawing.PointF(-1.2f, -1.6f), 2) },

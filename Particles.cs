@@ -11,6 +11,7 @@ namespace DeskMadeline
         public Color Color = Color.White;
         public Color Color2 = Color.White;
         public bool BlinkColor;
+        public bool ChooseColor;
         public float GravY;         // 重力（px/s²，正=向下）
         public float Friction;      // 摩擦（px/s²，减速）
         public float LifeMin = 0.3f, LifeMax = 0.5f;
@@ -69,7 +70,7 @@ namespace DeskMadeline
                     Life = life, MaxLife = life,
                     Size = size,
                     Tex = b,
-                    Color = t.Color,
+                    Color = t.ChooseColor && rng.Next(2) != 0 ? t.Color2 : t.Color,
                     Color2 = t.Color2,
                     BlinkColor = t.BlinkColor,
                     GravY = t.GravY,

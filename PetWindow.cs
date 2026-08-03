@@ -78,7 +78,7 @@ namespace DeskMadeline
         readonly ParticleSystem particles = new ParticleSystem();
         readonly List<WaveRing> waveRings = new List<WaveRing>();
         readonly Random effectRng = new Random();
-        PType dust, dashBlue, dashRed;
+        PType dust, dashBlue, dashRed, elytraDeploy;
         bool ParticlesEnabled = true;    // 粒子特效开关（默认开，托盘菜单可关闭）
         float skidDustTimer;
         string observedParticleAnimId;
@@ -88,6 +88,7 @@ namespace DeskMadeline
         int observedWallJumpEffectCount;
         int observedJumpEffectCount;
         int observedLandingEffectCount;
+        int observedElytraDeployCount;
         int observedSweatAnimSequenceCount;
         bool speedRingLaunchActive;
         float speedRingLaunchTimer;
@@ -173,6 +174,7 @@ namespace DeskMadeline
             hitboxesEnabled = settings.HitboxesEnabled;
             dreamBlockMode = settings.DreamBlockMode;
             edgeWrapMode = settings.EdgeWrapMode;
+            player.ElytraEnabled = settings.ElytraEnabled;
             player.SetFreezeFramesEnabled(settings.FreezeFramesEnabled);
             player.RespawnReversalEnabled = settings.RespawnReversalEnabled;
             player.InfiniteStamina = settings.InfiniteStamina;
@@ -258,6 +260,20 @@ namespace DeskMadeline
                 Size = 1f,
                 SpeedMin = 10f, SpeedMax = 20f,
                 LateFade = true
+            };
+            elytraDeploy = new PType
+            {
+                Tex = new[] { "smoke0", "smoke1", "smoke2", "smoke3" },
+                Color = Color.White,
+                Color2 = Color.LightGray,
+                ChooseColor = true,
+                GravY = 1f,
+                LifeMin = 1f, LifeMax = 3f,
+                // The source texture is 8px and the mod uses scale 1 +/- 0.4.
+                Size = 8f, SizeRange = 3.2f,
+                SpeedMin = 10f, SpeedMax = 60f,
+                ScaleOut = true,
+                FadeOut = false
             };
             anims = BuildAnims();
             animator = new Animator(anims);
@@ -373,6 +389,7 @@ namespace DeskMadeline
             Add("fallSlow", Sprites.Seq("jumpSlow", 2, 3), 0.10f, false);
             Add("fallFast", Sprites.Seq("jumpFast", 2, 3), 0.10f, false);
             Add("dash", Sprites.Seq("dash", 0, 3), 0.09f, true);
+            Add("elytra", Sprites.Seq("fly", 0, 8), 10f, true, manual: true);
             Add("climb", Sprites.Seq("climb", 0, 5), 0.04f, true);
             Add("wallslide", new[] { "climb00" }, 1f, true);
             Add("climbLookBack", new[] { "climb08" }, 1f, true);
@@ -561,6 +578,7 @@ namespace DeskMadeline
             // UpdateSprite selects animations after component advancement. A newly
             // selected animation stays on frame zero until the next game frame.
             animator.Play(player.AnimId);
+            if (player.State == Player.StElytra) animator.Frame = player.ElytraAnimationFrame;
             bool restartSweat = player.SweatAnimSequenceCount != observedSweatAnimSequenceCount;
             observedSweatAnimSequenceCount = player.SweatAnimSequenceCount;
             sweatAnimator.Play(player.SweatAnimId, restartSweat);
@@ -1004,6 +1022,18 @@ namespace DeskMadeline
                 EmitDustBurst(player.Pos.X, player.Pos.Y, up, 8);
             }
 
+            if (player.ElytraDeploySequenceCount != observedElytraDeployCount)
+            {
+                observedElytraDeployCount = player.ElytraDeploySequenceCount;
+                for (int i = 0; i < 10; i++)
+                {
+                    float deviation = (float)(effectRng.NextDouble() * 2.0 - 1.0);
+                    particles.Emit(elytraDeploy, player.Pos.X, player.Pos.Y - 5.5f,
+                        player.ElytraDeployParticleAngle + deviation * 0.1f,
+                        (float)Math.PI / 4f, 1);
+                }
+            }
+
             if (player.WallSlideDustActive)
             {
                 int dir = player.WallSlideDirection;
@@ -1096,11 +1126,13 @@ namespace DeskMadeline
             bool dash = bindings.IsDown(PetAction.Dash);
             bool grab = bindings.IsDown(PetAction.Grab);
             bool crouchDash = bindings.IsDown(PetAction.CrouchDash);
+            bool elytra = bindings.IsDown(PetAction.DeployElytra);
 
             input.MoveX = (right ? 1 : 0) - (left ? 1 : 0);
             input.MoveY = (down ? 1 : 0) - (up ? 1 : 0);
             input.JumpHeld = jump;
             input.GrabHeld = grab;
+            input.ElytraHeld = elytra;
 
             if (jump && !prevJump) player.BufferJump();
             // Crouch Dash wins if both actions are pressed on the same frame, as it explicitly
@@ -1947,6 +1979,7 @@ namespace DeskMadeline
             settings.DreamBlockMode = dreamBlockMode;
             settings.RespawnReversalEnabled = player.RespawnReversalEnabled;
             settings.EdgeWrapMode = edgeWrapMode;
+            settings.ElytraEnabled = player.ElytraEnabled;
             settings.Save();
         }
 
@@ -1978,6 +2011,7 @@ namespace DeskMadeline
                 PetAction.Dash => T("Dash", "冲刺"),
                 PetAction.Grab => T("Grab", "抓取"),
                 PetAction.CrouchDash => T("Crouch Dash", "蹲冲"),
+                PetAction.DeployElytra => T("Deploy Elytra", "展开鞘翅"),
                 _ => action.ToString()
             };
         }
@@ -2261,7 +2295,8 @@ namespace DeskMadeline
             }) { Checked = dreamBlockMode };
             menu.Items.Add(dreamItem);
 
-            var edgeWrapItem = new ToolStripMenuItem(T("Infinite screen edges", "无限屏幕边缘"));
+            var edgeWrapItem = new ToolStripMenuItem(
+                T("Infinite screen edges (Experimental)", "无限屏幕边缘（实验性）"));
             foreach (var option in new[]
             {
                 new KeyValuePair<int, string>(0, T("Off", "关闭")),
@@ -2287,6 +2322,15 @@ namespace DeskMadeline
                 edgeWrapItem.DropDownItems.Add(choice);
             }
             menu.Items.Add(edgeWrapItem);
+
+            var elytraItem = new ToolStripMenuItem(
+                T("Elytra mode (CommunalHelper)", "鞘翅模式（CommunalHelper）"), null, (sender, __) =>
+            {
+                player.ElytraEnabled = !player.ElytraEnabled;
+                ((ToolStripMenuItem)sender).Checked = player.ElytraEnabled;
+                SaveSettings();
+            }) { Checked = player.ElytraEnabled };
+            menu.Items.Add(elytraItem);
 
             var overlaysItem = new ToolStripMenuItem(T("Extra overlays", "额外叠加层"));
             var speedometerItem = new ToolStripMenuItem(T("Speedometer", "速度计"));

@@ -120,6 +120,9 @@ namespace DeskMadeline
                 string sweat = Directory.GetDirectories(skinDir)
                     .FirstOrDefault(d => Path.GetFileName(d).Equals("sweat", StringComparison.OrdinalIgnoreCase));
                 if (sweat != null) LoadDirectory(sweat, "sweat");
+                string communal = Directory.GetDirectories(skinDir)
+                    .FirstOrDefault(d => Path.GetFileName(d).Equals("CommunalHelper", StringComparison.OrdinalIgnoreCase));
+                if (communal != null) LoadDirectory(communal, null);
             }
             string glider = Path.Combine(Path.GetDirectoryName(dir), "glider");
             if (Directory.Exists(glider)) LoadDirectory(glider, "glider/");

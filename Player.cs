@@ -21,6 +21,7 @@ namespace DeskMadeline
         public bool GrabHeld;
         public bool JumpPressed;  // 已做输入缓冲（本帧有效）
         public bool DashPressed;
+        public bool ElytraHeld;
     }
 
     /// <summary>
@@ -85,7 +86,7 @@ namespace DeskMadeline
             StIntroWakeUp = 15, StBirdDashTutorial = 16, StFrozen = 17,
             StReflectionFall = 18, StStarFly = 19, StTempleFall = 20,
             StCassetteFly = 21, StAttract = 22, StIntroMoonJump = 23,
-            StFlingBird = 24, StIntroThinkForABit = 25;
+            StFlingBird = 24, StIntroThinkForABit = 25, StElytra = 26;
 
         public static readonly string[] StateNames =
         {
@@ -94,7 +95,7 @@ namespace DeskMadeline
             "Dummy", "IntroWalk", "IntroJump", "IntroRespawn", "IntroWakeUp",
             "BirdDashTutorial", "Frozen", "ReflectionFall", "StarFly",
             "TempleFall", "CassetteFly", "Attract", "IntroMoonJump",
-            "FlingBird", "IntroThinkForABit"
+            "FlingBird", "IntroThinkForABit", "Elytra"
         };
 
         // 头发颜色（Player.cs）
@@ -118,6 +119,7 @@ namespace DeskMadeline
         public bool InfiniteStamina;
         public bool FreezeFramesEnabled = true;
         public bool RespawnReversalEnabled;
+        public bool ElytraEnabled;
         public bool onGround;
         public IntPtr GroundId;
         public PointF DashDir;
@@ -158,6 +160,9 @@ namespace DeskMadeline
         public Color DeathColor { get; private set; }
         public int DeathSequenceCount { get; private set; }
         public bool IsRespawning => State == StIntroRespawn;
+        public int ElytraAnimationFrame { get; private set; } = 6;
+        public int ElytraDeploySequenceCount { get; private set; }
+        public float ElytraDeployParticleAngle { get; private set; }
         public float RespawnPercent { get; private set; }
         public PointF RespawnEffectPosition { get; private set; }
         public Color RespawnColor { get; private set; }
@@ -229,6 +234,21 @@ namespace DeskMadeline
         bool respawnTravels;
         PointF respawnEffectStart;
         PointF respawnTarget;
+        float elytraAngle;
+        float elytraSpeed;
+        int elytraFacing;
+        float elytraStableTimer;
+        float elytraCooldown;
+
+        const float ElytraStableAngle = 0.2f;
+        const float ElytraAngleRange = 2f;
+        const float ElytraMinSpeed = 64f;
+        const float ElytraMaxSpeed = 320f;
+        const float ElytraAccel = 90f;
+        const float ElytraDecel = 165f;
+        const float ElytraFastDecel = 220f;
+        const float ElytraAngleChangeFactor = 480f;
+        const float ElytraCooldownTime = 7f / 60f;
 
         // 保留速度（cornerboost）：撞墙瞬间保存水平速度，时限内墙不再阻挡则返还
         float wallSpeedRetained;
@@ -501,6 +521,10 @@ namespace DeskMadeline
 
         bool OnCollideH(int sign)
         {
+            // CommunalHelper consumes Elytra collision callbacks without changing
+            // velocity; GlideUpdate chooses the next state on the following tick.
+            if (State == StElytra) return false;
+
             // Vanilla turns a grounded horizontal dash into a duck when the
             // crouched hitbox fits one pixel ahead.  The collision still stops
             // movement for this frame, but does not kill dash speed/attack.
@@ -541,6 +565,8 @@ namespace DeskMadeline
 
         bool OnCollideV(int sign)
         {
+            if (State == StElytra) return false;
+
             if (sign > 0)
             {
                 // 空中冲刺落地：水平角修正 ±1..4，滑上平台边缘（仅冲刺状态，原作同款）
@@ -953,10 +979,15 @@ namespace DeskMadeline
 
                 switch (State)
                 {
-                    case StNormal: NormalUpdate(dt, input); break;
+                    case StNormal:
+                        elytraCooldown = Approach(elytraCooldown, 0f, dt);
+                        NormalUpdate(dt, input);
+                        TryDeployElytra(input);
+                        break;
                     case StClimb: ClimbUpdate(dt, input); break;
                     case StDash: DashUpdate(dt, input); break;
                     case StDreamDash: DreamDashUpdate(dt, input); break;
+                    case StElytra: ElytraUpdate(dt, input); break;
                 }
 
                 // Vanilla releases the duck hitbox while falling once standing
@@ -1409,6 +1440,111 @@ namespace DeskMadeline
             maxFall = MaxFall; // NormalBegin
         }
 
+        void TryDeployElytra(PetInput input)
+        {
+            if (!ElytraEnabled || !input.ElytraHeld || onGround || elytraCooldown > 0f ||
+                Dashes <= 0 || BeingDragged || IsDead)
+                return;
+
+            Dashes = Math.Max(0, Dashes - 1);
+            State = StElytra;
+            SpriteScaleX = 1.4f;
+            SpriteScaleY = 0.6f;
+            elytraFacing = Facing;
+            PointF relative = elytraFacing == 1 ? Speed : new PointF(-Speed.X, Speed.Y);
+            elytraAngle = (float)Math.Atan2(relative.Y, relative.X);
+            elytraSpeed = (float)Math.Sqrt(relative.X * relative.X + relative.Y * relative.Y);
+            elytraStableTimer = 0f;
+            UpdateElytraAnimationFrame(elytraAngle);
+            float deployAngle = ClampElytraDeployAngle(elytraAngle);
+            ElytraDeployParticleAngle = elytraFacing == 1
+                ? deployAngle : (float)Math.PI - deployAngle;
+            ElytraDeploySequenceCount++;
+        }
+
+        static float ClampElytraDeployAngle(float angle)
+            => Math.Max(ElytraStableAngle - ElytraAngleRange / 2f,
+                Math.Min(ElytraStableAngle, angle));
+
+        void EndElytra() => elytraCooldown = ElytraCooldownTime;
+
+        void ElytraUpdate(float dt, PetInput input)
+        {
+            // This order is significant and matches CommunalHelper.GlideUpdate.
+            if (onGround)
+            {
+                EndElytra();
+                EnterNormal();
+                return;
+            }
+            if (ClimbCheck(elytraFacing))
+            {
+                EndElytra();
+                Facing = elytraFacing;
+                EnterClimb();
+                State = StClimb;
+                return;
+            }
+            if (CanDash)
+            {
+                EndElytra();
+                State = StartDash(input);
+                return;
+            }
+            if (!ElytraEnabled || !input.ElytraHeld)
+            {
+                EndElytra();
+                EnterNormal();
+                return;
+            }
+
+            float oldAngle = elytraAngle;
+            float oldSpeed = Math.Max(elytraSpeed, ElytraMinSpeed);
+            float maxAngleChange = dt * ElytraAngleChangeFactor / oldSpeed;
+            float newAngle;
+            if (elytraStableTimer > 0f)
+                newAngle = oldAngle;
+            else if (oldSpeed == ElytraMinSpeed && input.MoveY < 0)
+                newAngle = Approach(oldAngle, ElytraStableAngle, maxAngleChange);
+            else
+                newAngle = Approach(oldAngle,
+                    ElytraStableAngle + ElytraAngleRange / 2f * input.MoveY,
+                    maxAngleChange);
+            newAngle = Math.Max(ElytraStableAngle - ElytraAngleRange / 2f,
+                Math.Min(ElytraStableAngle + ElytraAngleRange / 2f, newAngle));
+            elytraStableTimer = Approach(elytraStableTimer, 0f, dt);
+
+            float newSpeed = oldSpeed;
+            float inputAmount = Math.Abs(input.MoveY);
+            if (elytraStableTimer <= 0f)
+            {
+                if (newAngle < ElytraStableAngle)
+                    newSpeed = Approach(oldSpeed, ElytraMinSpeed,
+                        dt * (oldSpeed > ElytraMaxSpeed ? ElytraFastDecel : ElytraDecel) * inputAmount);
+                else if (newAngle > ElytraStableAngle && oldSpeed < ElytraMaxSpeed)
+                    newSpeed = Approach(oldSpeed, ElytraMaxSpeed, dt * ElytraAccel * inputAmount);
+            }
+
+            elytraAngle = newAngle;
+            elytraSpeed = newSpeed;
+            Facing = elytraFacing;
+            Speed = new PointF((float)Math.Cos(newAngle) * newSpeed * elytraFacing,
+                (float)Math.Sin(newAngle) * newSpeed);
+
+            UpdateElytraAnimationFrame(newAngle);
+        }
+
+        void UpdateElytraAnimationFrame(float angle)
+        {
+            const int frameCount = 9;
+            const int stableFrame = 6;
+            float t = (angle - ElytraStableAngle) / (ElytraAngleRange / 2f);
+            int frame = stableFrame;
+            if (t < 0f) frame -= (int)(t * (frameCount - stableFrame - 1));
+            else frame -= (int)(t * stableFrame);
+            ElytraAnimationFrame = Math.Max(0, Math.Min(frameCount - 1, frame));
+        }
+
         bool SlipCheck(float addY = 0f)
         {
             // Player.SlipCheck probes the upper edge of the wall beside the
@@ -1787,6 +1923,10 @@ namespace DeskMadeline
             else if (State == StDreamDash)
             {
                 id = dreamDashAnimTimer > 0f ? "dreamDashIn" : "dreamDashLoop";
+            }
+            else if (State == StElytra)
+            {
+                id = "elytra";
             }
             else if (dreamDashOutTimer > 0f)
             {

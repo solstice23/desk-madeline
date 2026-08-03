@@ -29,6 +29,7 @@ namespace DeskMadeline
         public bool DreamBlockMode;
         public bool RespawnReversalEnabled;
         public int EdgeWrapMode;
+        public bool ElytraEnabled;
 
         readonly string path;
 
@@ -76,6 +77,7 @@ namespace DeskMadeline
                 if (values.TryGetValue("EdgeWrapMode", out string edgeWrap) &&
                     int.TryParse(edgeWrap, out int edgeWrapValue))
                     result.EdgeWrapMode = Math.Max(0, Math.Min(3, edgeWrapValue));
+                ReadBool(values, "ElytraEnabled", ref result.ElytraEnabled);
             }
             catch { }
             return result;
@@ -121,7 +123,8 @@ namespace DeskMadeline
                     "HitboxesEnabled=" + HitboxesEnabled,
                     "DreamBlockMode=" + DreamBlockMode,
                     "RespawnReversalEnabled=" + RespawnReversalEnabled,
-                    "EdgeWrapMode=" + EdgeWrapMode
+                    "EdgeWrapMode=" + EdgeWrapMode,
+                    "ElytraEnabled=" + ElytraEnabled
                 });
             }
             catch { }

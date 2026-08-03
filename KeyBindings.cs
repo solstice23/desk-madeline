@@ -13,7 +13,8 @@ namespace DeskMadeline
         Jump,
         Dash,
         Grab,
-        CrouchDash
+        CrouchDash,
+        DeployElytra
     }
 
     /// <summary>Celeste-style keyboard bindings: exactly three keyboard slots per gameplay action.</summary>
@@ -26,7 +27,8 @@ namespace DeskMadeline
         public static readonly PetAction[] Actions =
         {
             PetAction.Left, PetAction.Right, PetAction.Up, PetAction.Down,
-            PetAction.Jump, PetAction.Dash, PetAction.Grab, PetAction.CrouchDash
+            PetAction.Jump, PetAction.Dash, PetAction.Grab, PetAction.CrouchDash,
+            PetAction.DeployElytra
         };
 
         public KeyBindings(string path)
@@ -81,6 +83,8 @@ namespace DeskMadeline
                 keys[PetAction.Dash] = new[] { 0x58, 0, 0 };
                 keys[PetAction.Grab] = new[] { 0x5A, 0x56, 0xA0 };
                 keys[PetAction.CrouchDash] = new[] { 0, 0, 0 };
+                // CommunalHelper's default keyboard binding is W.
+                keys[PetAction.DeployElytra] = new[] { 0x57, 0, 0 };
                 if (save) SaveLocked();
             }
         }
