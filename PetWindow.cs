@@ -25,11 +25,12 @@ namespace DeskMadeline
         public bool AlwaysOnTop = true;
         public static PetWindow Instance;
 
-        // Keep a fixed, wide 1x render footprint. At 768 game pixels the complete
-        // one-second trail remains available even through fast ultras; GPU scaling
-        // makes this much cheaper than the old full-size GDI canvas.
-        const int CanvasW = 1024, CanvasH = 160;
-        const float AnchorX = 512, AnchorY = 80; // 脚底锚点（画布内）
+        // Keep a symmetric world-space envelope around the player. Particles stay
+        // where they were emitted while the camera follows Madeline; the former
+        // 160px-tall strip clipped dash/Elytra particles after fast vertical moves.
+        // 1024px retains the same one-second ultra envelope on both axes.
+        const int CanvasW = 1024, CanvasH = 1024;
+        const float AnchorX = 512, AnchorY = 512; // 脚底锚点（画布内）
         const double FixedDt = 1.0 / 60.0;
         static readonly IntPtr FloorId = new IntPtr(-991);
         const int WindowBorderPx = 8;           // 窗口空心边框厚度（物理像素）
