@@ -241,6 +241,17 @@ namespace DeskMadeline
                 PlayerDirectory = playerDirectory
             };
             LoadHairColors(Path.Combine(playerDirectory, "skinConfig", "HairConfig.yaml"), result);
+            // Mikuline predates per-skin HairConfig and relies on a separately configured
+            // LiquidMod. DeskMadeline has no global Everest mod settings to import, so
+            // use the palette authored into Mikuline's sprites as this one compatibility
+            // exception. Match the manifest package name, never the ZIP filename.
+            if (result.HairColors.Count == 0 && displayName.Equals("Mikuline", StringComparison.OrdinalIgnoreCase))
+            {
+                Color mikuGreen = Color.FromArgb(0x00, 0xD8, 0xC1);
+                result.HairColors[0] = mikuGreen;
+                result.HairColors[1] = mikuGreen;
+                result.HairColors[2] = mikuGreen;
+            }
             return result;
         }
 
