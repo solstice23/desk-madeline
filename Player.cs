@@ -239,6 +239,8 @@ namespace DeskMadeline
         int elytraFacing;
         float elytraStableTimer;
         float elytraCooldown;
+        bool normalDashRequested;
+        bool normalDashWasCrouch;
 
         const float ElytraStableAngle = 0.2f;
         const float ElytraAngleRange = 2f;
@@ -980,9 +982,15 @@ namespace DeskMadeline
                 switch (State)
                 {
                     case StNormal:
+                        normalDashRequested = false;
                         elytraCooldown = Approach(elytraCooldown, 0f, dt);
                         NormalUpdate(dt, input);
                         TryDeployElytra(input);
+                        // StateMachine applies NormalUpdate's returned state only
+                        // after the CommunalHelper hook has had a chance to replace
+                        // it with Elytra. Do not run DashBegin when Elytra wins.
+                        if (normalDashRequested && State != StElytra)
+                            State = BeginDash(input, normalDashWasCrouch);
                         break;
                     case StClimb: ClimbUpdate(dt, input); break;
                     case StDash: DashUpdate(dt, input); break;
@@ -1098,7 +1106,12 @@ namespace DeskMadeline
                     }
                 }
             }
-            if (CanDash) { State = StartDash(input); return; }
+            if (CanDash)
+            {
+                normalDashWasCrouch = ConsumeDashRequest();
+                normalDashRequested = true;
+                return;
+            }
 
             if (Holding != null && !input.GrabHeld && minHoldTimer <= 0f)
             {
@@ -1659,10 +1672,22 @@ namespace DeskMadeline
         void MoveVExactLocal(int n) => MoveVExact(n);
 
         // ===== 冲刺状态 =====
-        int StartDash(PetInput input)
+        bool ConsumeDashRequest()
         {
             bool crouchDash = crouchDashBufferTimer > 0f;
             ConsumeDash();
+            LastDashWasTwo = Dashes == 2;
+            Dashes = Math.Max(0, Dashes - 1);
+            hairFlashTimer = 0.12f;
+            HairColor = FlashHairColor;
+            return crouchDash;
+        }
+
+        int StartDash(PetInput input)
+            => BeginDash(input, ConsumeDashRequest());
+
+        int BeginDash(PetInput input, bool crouchDash)
+        {
             autoJump = false;
             // NormalEnd/ClimbEnd clear this in Celeste before entering Dash.
             wallSpeedRetained = 0f;
@@ -1671,12 +1696,6 @@ namespace DeskMadeline
             hopWaitX = 0;
             SweatAnimId = "idle";
             sweatJumpTimer = 0f;
-            LastDashWasTwo = Dashes == 2;
-            Dashes = Math.Max(0, Dashes - 1);
-            // Player.UpdateHair flashes on every dash-count change, including
-            // the common 1 -> 0 transition used to enter a DreamBlock.
-            hairFlashTimer = 0.12f;
-            HairColor = FlashHairColor;
             DashSequenceCount++;
             dashStartedOnGround = onGround;
             dashStartedWithDreamGrace = dreamGroundedDashGraceTimer > 0f;
