@@ -27,6 +27,8 @@ namespace DeskMadeline
         public int SpeedometerMode;
         public bool HitboxesEnabled;
         public bool DreamBlockMode;
+        public bool RespawnReversalEnabled;
+        public int EdgeWrapMode;
 
         readonly string path;
 
@@ -70,6 +72,10 @@ namespace DeskMadeline
                     result.SpeedometerMode = Math.Max(0, Math.Min(3, speedometerValue));
                 ReadBool(values, "HitboxesEnabled", ref result.HitboxesEnabled);
                 ReadBool(values, "DreamBlockMode", ref result.DreamBlockMode);
+                ReadBool(values, "RespawnReversalEnabled", ref result.RespawnReversalEnabled);
+                if (values.TryGetValue("EdgeWrapMode", out string edgeWrap) &&
+                    int.TryParse(edgeWrap, out int edgeWrapValue))
+                    result.EdgeWrapMode = Math.Max(0, Math.Min(3, edgeWrapValue));
             }
             catch { }
             return result;
@@ -113,7 +119,9 @@ namespace DeskMadeline
                     "HairColor2=#" + HairColor2.ToString("X6", CultureInfo.InvariantCulture),
                     "SpeedometerMode=" + SpeedometerMode,
                     "HitboxesEnabled=" + HitboxesEnabled,
-                    "DreamBlockMode=" + DreamBlockMode
+                    "DreamBlockMode=" + DreamBlockMode,
+                    "RespawnReversalEnabled=" + RespawnReversalEnabled,
+                    "EdgeWrapMode=" + EdgeWrapMode
                 });
             }
             catch { }

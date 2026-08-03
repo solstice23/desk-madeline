@@ -111,6 +111,8 @@ namespace DeskMadeline
         int speedometerMode;
         bool hitboxesEnabled;
         bool dreamBlockMode;
+        int edgeWrapMode;
+        readonly List<RectangleF> monitorGameBounds = new List<RectangleF>();
         readonly Bitmap[] picoDigits = new Bitmap[10];
         readonly List<Glider> gliders = new List<Glider>();
         readonly object gliderWindowLock = new object();
@@ -169,7 +171,9 @@ namespace DeskMadeline
             speedometerMode = settings.SpeedometerMode;
             hitboxesEnabled = settings.HitboxesEnabled;
             dreamBlockMode = settings.DreamBlockMode;
+            edgeWrapMode = settings.EdgeWrapMode;
             player.SetFreezeFramesEnabled(settings.FreezeFramesEnabled);
+            player.RespawnReversalEnabled = settings.RespawnReversalEnabled;
             player.InfiniteStamina = settings.InfiniteStamina;
             player.SetDashMode(settings.DashMode);
             player.Gliders = gliders;
@@ -541,7 +545,10 @@ namespace DeskMadeline
 
             // 物理
             int wasState = player.State;
+            bool wasDeadOrRespawning = player.IsDead || player.IsRespawning;
+            PointF beforeUpdatePosition = player.Pos;
             player.Update(dt, input);
+            if (!wasDeadOrRespawning) ApplyEdgeWrap(beforeUpdatePosition);
 
             // A frame that began frozen only advances the raw freeze countdown.
             if (frozenAtStart)
@@ -841,14 +848,16 @@ namespace DeskMadeline
             {
                 // Hair.Render includes its four-direction black outline. The max-blend
                 // mask pass includes that outline in the final silhouette as well.
+                float rootX = SnapPx(trail.HairNodes[0].X - trail.X + center);
+                float rootY = SnapPx(trail.HairNodes[0].Y - trail.Y + center);
                 for (int i = 0; i < trail.HairCount; i++)
                 {
                     float scale = HairSegmentScale(i, trail.HairCount);
-                    float pieceW = SnapEven(10f * scale * Math.Abs(trail.ScaleX));
-                    float pieceH = SnapEven(10f * scale);
+                    float pieceW = 10f * scale * Math.Abs(trail.ScaleX);
+                    float pieceH = 10f * scale;
                     var tex = i == 0 ? bangs : blob;
-                    float x = SnapPx(trail.HairNodes[i].X - trail.X + center) - pieceW / 2f;
-                    float y = SnapPx(trail.HairNodes[i].Y - trail.Y + center) - pieceH / 2f;
+                    float x = rootX + trail.HairNodes[i].X - trail.HairNodes[0].X - pieceW / 2f;
+                    float y = rootY + trail.HairNodes[i].Y - trail.HairNodes[0].Y - pieceH / 2f;
                     DrawTintedSafe(g, tex, Color.Black, x - 1, y, pieceW, pieceH);
                     DrawTintedSafe(g, tex, Color.Black, x + 1, y, pieceW, pieceH);
                     DrawTintedSafe(g, tex, Color.Black, x, y - 1, pieceW, pieceH);
@@ -857,12 +866,12 @@ namespace DeskMadeline
                 for (int i = trail.HairCount - 1; i >= 0; i--)
                 {
                     float scale = HairSegmentScale(i, trail.HairCount);
-                    float pieceW = SnapEven(10f * scale * Math.Abs(trail.ScaleX));
-                    float pieceH = SnapEven(10f * scale);
+                    float pieceW = 10f * scale * Math.Abs(trail.ScaleX);
+                    float pieceH = 10f * scale;
                     var tex = i == 0 ? bangs : blob;
                     DrawTintedSafe(g, tex, trail.HairColor,
-                        SnapPx(trail.HairNodes[i].X - trail.X + center) - pieceW / 2f,
-                        SnapPx(trail.HairNodes[i].Y - trail.Y + center) - pieceH / 2f,
+                        rootX + trail.HairNodes[i].X - trail.HairNodes[0].X - pieceW / 2f,
+                        rootY + trail.HairNodes[i].Y - trail.HairNodes[0].Y - pieceH / 2f,
                         pieceW, pieceH);
                 }
             }
@@ -1223,6 +1232,7 @@ namespace DeskMadeline
             // a shared seam stays open while offset/non-overlapping portions are walls.
             int virtualLeft = int.MaxValue, virtualRight = int.MinValue;
             var screenRects = new List<Win32.RECT>();
+            monitorGameBounds.Clear();
             foreach (var screen in Screen.AllScreens)
             {
                 var bounds = screen.Bounds;
@@ -1231,6 +1241,9 @@ namespace DeskMadeline
                     Left = bounds.Left, Top = bounds.Top,
                     Right = bounds.Right, Bottom = bounds.Bottom
                 });
+                monitorGameBounds.Add(new RectangleF(
+                    bounds.Left / s, bounds.Top / s,
+                    bounds.Width / s, bounds.Height / s));
                 virtualLeft = Math.Min(virtualLeft, bounds.Left);
                 virtualRight = Math.Max(virtualRight, bounds.Right);
             }
@@ -1239,27 +1252,42 @@ namespace DeskMadeline
             {
                 var outsideEdges = new[]
                 {
-                    new Win32.RECT { Left = r.Left, Top = r.Top - edgeDepth, Right = r.Right, Bottom = r.Top },
-                    new Win32.RECT { Left = r.Left, Top = r.Bottom, Right = r.Right, Bottom = r.Bottom + edgeDepth },
-                    new Win32.RECT { Left = r.Left - edgeDepth, Top = r.Top, Right = r.Left, Bottom = r.Bottom },
-                    new Win32.RECT { Left = r.Right, Top = r.Top, Right = r.Right + edgeDepth, Bottom = r.Bottom }
+                    new KeyValuePair<bool, Win32.RECT>(false,
+                        new Win32.RECT { Left = r.Left, Top = r.Top - edgeDepth, Right = r.Right, Bottom = r.Top }),
+                    new KeyValuePair<bool, Win32.RECT>(false,
+                        new Win32.RECT { Left = r.Left, Top = r.Bottom, Right = r.Right, Bottom = r.Bottom + edgeDepth }),
+                    new KeyValuePair<bool, Win32.RECT>(true,
+                        new Win32.RECT { Left = r.Left - edgeDepth, Top = r.Top, Right = r.Left, Bottom = r.Bottom }),
+                    new KeyValuePair<bool, Win32.RECT>(true,
+                        new Win32.RECT { Left = r.Right, Top = r.Top, Right = r.Right + edgeDepth, Bottom = r.Bottom })
                 };
                 foreach (var edge in outsideEdges)
-                    foreach (var p in SubtractRects(edge, screenRects))
+                {
+                    if (edge.Key ? (edgeWrapMode & 1) != 0 : (edgeWrapMode & 2) != 0) continue;
+                    foreach (var p in SubtractRects(edge.Value, screenRects))
                         solids.Add(new Solid
                         {
                             Id = FloorId,
                             L = p.Left / s, T = p.Top / s,
                             R = p.Right / s, B = p.Bottom / s
                         });
+                }
             }
 
             // Screen 返回的边界在 PerMonitorV2 下与 DWM 一样都是物理像素。
             // 从实际显示器并集计算左右极值，避免 SystemInformation 的 DPI 虚拟化。
             if (virtualLeft != int.MaxValue)
             {
-                player.MinX = virtualLeft / s;
-                player.MaxX = virtualRight / s;
+                if ((edgeWrapMode & 1) != 0)
+                {
+                    player.MinX = -100000f;
+                    player.MaxX = 100000f;
+                }
+                else
+                {
+                    player.MinX = virtualLeft / s;
+                    player.MaxX = virtualRight / s;
+                }
             }
 
             // 搭乘：所站窗口移动时跟随
@@ -1275,6 +1303,67 @@ namespace DeskMadeline
             lastRects.Clear();
             foreach (var kv in cur) lastRects[kv.Key] = kv.Value;
             player.Solids = solids;
+        }
+
+        void ApplyEdgeWrap(PointF previous)
+        {
+            if (edgeWrapMode == 0 || player.IsDead || player.IsRespawning ||
+                player.BeingDragged || monitorGameBounds.Count == 0) return;
+
+            RectangleF source = RectangleF.Empty;
+            foreach (RectangleF monitor in monitorGameBounds)
+                if (previous.X >= monitor.Left && previous.X <= monitor.Right &&
+                    previous.Y >= monitor.Top && previous.Y <= monitor.Bottom)
+                {
+                    source = monitor;
+                    break;
+                }
+            if (source.IsEmpty) return;
+
+            bool OnAnyMonitor(float x, float y)
+            {
+                foreach (RectangleF monitor in monitorGameBounds)
+                    if (x >= monitor.Left && x < monitor.Right &&
+                        y >= monitor.Top && y < monitor.Bottom) return true;
+                return false;
+            }
+
+            float offsetX = 0f, offsetY = 0f;
+            float halfWidth = 4f;
+            float hitHeight = player.CurrentHitHeight;
+            if ((edgeWrapMode & 1) != 0)
+            {
+                float sampleY = Math.Max(source.Top, Math.Min(source.Bottom - 0.01f, player.Pos.Y - hitHeight * 0.5f));
+                if (player.Speed.X < 0f && player.Pos.X - halfWidth <= source.Left &&
+                    !OnAnyMonitor(source.Left - 0.01f, sampleY))
+                {
+                    float overshoot = source.Left - (player.Pos.X - halfWidth);
+                    offsetX = source.Right - halfWidth - overshoot - player.Pos.X;
+                }
+                else if (player.Speed.X > 0f && player.Pos.X + halfWidth >= source.Right &&
+                    !OnAnyMonitor(source.Right + 0.01f, sampleY))
+                {
+                    float overshoot = player.Pos.X + halfWidth - source.Right;
+                    offsetX = source.Left + halfWidth + overshoot - player.Pos.X;
+                }
+            }
+            if ((edgeWrapMode & 2) != 0)
+            {
+                float sampleX = Math.Max(source.Left, Math.Min(source.Right - 0.01f, player.Pos.X));
+                if (player.Speed.Y < 0f && player.Pos.Y - hitHeight <= source.Top &&
+                    !OnAnyMonitor(sampleX, source.Top - 0.01f))
+                {
+                    float overshoot = source.Top - (player.Pos.Y - hitHeight);
+                    offsetY = source.Bottom - overshoot - player.Pos.Y;
+                }
+                else if (player.Speed.Y > 0f && player.Pos.Y >= source.Bottom &&
+                    !OnAnyMonitor(sampleX, source.Bottom + 0.01f))
+                {
+                    float overshoot = player.Pos.Y - source.Bottom;
+                    offsetY = source.Top + hitHeight + overshoot - player.Pos.Y;
+                }
+            }
+            player.WrapBy(offsetX, offsetY);
         }
 
         /// <summary>窗口四条空心边框（物理像素坐标），厚度 WindowBorderPx。</summary>
@@ -1629,18 +1718,20 @@ namespace DeskMadeline
             // ×整数倍放大 = 整数物理像素，避免亚像素模糊）
             int hairCount = hair.ActiveCount;
             Span<PointF> pt = stackalloc PointF[PlayerHairSim.MaxCount];
+            float rootScreenX = SnapPx(hair.Nodes[0].X - camX);
+            float rootScreenY = SnapPx(hair.Nodes[0].Y - camY);
             for (int i = 0; i < hairCount; i++)
                 pt[i] = new PointF(
-                    SnapPx(hair.Nodes[i].X - camX),
-                    SnapPx(hair.Nodes[i].Y - camY));
+                    rootScreenX + hair.Nodes[i].X - hair.Nodes[0].X,
+                    rootScreenY + hair.Nodes[i].Y - hair.Nodes[0].Y);
 
             // 黑色描边（原作：±1px 四方向）
             for (int i = 0; i < hairCount; i++)
             {
                 float sc = HairSegmentScale(i, hairCount);
                 var tex = i == 0 ? bangs : blob;
-                float w = SnapEven(10 * sc * Math.Abs(player.SpriteScaleX));
-                float h = SnapEven(10 * sc);
+                float w = 10f * sc * Math.Abs(player.SpriteScaleX);
+                float h = 10f * sc;
                 DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2 - 1, pt[i].Y - h / 2, w, h);
                 DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2 + 1, pt[i].Y - h / 2, w, h);
                 DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2, pt[i].Y - h / 2 - 1, w, h);
@@ -1651,8 +1742,8 @@ namespace DeskMadeline
             {
                 float sc = HairSegmentScale(i, hairCount);
                 var tex = i == 0 ? bangs : blob;
-                float w = SnapEven(10 * sc * Math.Abs(player.SpriteScaleX));
-                float h = SnapEven(10 * sc);
+                float w = 10f * sc * Math.Abs(player.SpriteScaleX);
+                float h = 10f * sc;
                 DrawTintedSafe(g, tex, color, pt[i].X - w / 2, pt[i].Y - h / 2, w, h);
             }
         }
@@ -1837,6 +1928,8 @@ namespace DeskMadeline
             settings.SpeedometerMode = speedometerMode;
             settings.HitboxesEnabled = hitboxesEnabled;
             settings.DreamBlockMode = dreamBlockMode;
+            settings.RespawnReversalEnabled = player.RespawnReversalEnabled;
+            settings.EdgeWrapMode = edgeWrapMode;
             settings.Save();
         }
 
@@ -2133,6 +2226,15 @@ namespace DeskMadeline
             { Checked = player.FreezeFramesEnabled };
             menu.Items.Add(freezeItem);
 
+            var respawnReversalItem = new ToolStripMenuItem(
+                T("Respawn reversal animation", "重生逆向动画"), null, (sender, __) =>
+            {
+                player.RespawnReversalEnabled = !player.RespawnReversalEnabled;
+                ((ToolStripMenuItem)sender).Checked = player.RespawnReversalEnabled;
+                SaveSettings();
+            }) { Checked = player.RespawnReversalEnabled };
+            menu.Items.Add(respawnReversalItem);
+
             var dreamItem = new ToolStripMenuItem(T("Dream Block windows", "梦境方块窗口"), null, (sender, __) =>
             {
                 dreamBlockMode = !dreamBlockMode;
@@ -2141,6 +2243,33 @@ namespace DeskMadeline
                 SaveSettings();
             }) { Checked = dreamBlockMode };
             menu.Items.Add(dreamItem);
+
+            var edgeWrapItem = new ToolStripMenuItem(T("Infinite screen edges", "无限屏幕边缘"));
+            foreach (var option in new[]
+            {
+                new KeyValuePair<int, string>(0, T("Off", "关闭")),
+                new KeyValuePair<int, string>(1, T("Horizontal", "水平")),
+                new KeyValuePair<int, string>(2, T("Vertical", "垂直")),
+                new KeyValuePair<int, string>(3, T("Both", "水平和垂直"))
+            })
+            {
+                int mode = option.Key;
+                var choice = new ToolStripMenuItem(option.Value)
+                {
+                    Checked = edgeWrapMode == mode,
+                    Tag = mode
+                };
+                choice.Click += (_, __) =>
+                {
+                    edgeWrapMode = mode;
+                    pollCounter = 999;
+                    SaveSettings();
+                    foreach (ToolStripMenuItem item in edgeWrapItem.DropDownItems)
+                        item.Checked = (int)item.Tag == mode;
+                };
+                edgeWrapItem.DropDownItems.Add(choice);
+            }
+            menu.Items.Add(edgeWrapItem);
 
             var overlaysItem = new ToolStripMenuItem(T("Extra overlays", "额外叠加层"));
             var speedometerItem = new ToolStripMenuItem(T("Speedometer", "速度计"));

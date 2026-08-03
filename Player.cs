@@ -117,6 +117,7 @@ namespace DeskMadeline
         public float Stamina = ClimbMaxStamina;
         public bool InfiniteStamina;
         public bool FreezeFramesEnabled = true;
+        public bool RespawnReversalEnabled;
         public bool onGround;
         public IntPtr GroundId;
         public PointF DashDir;
@@ -151,6 +152,7 @@ namespace DeskMadeline
         public bool IsFrozen => freezeTimer > 0f || dashAimPending;
         public bool IsDashAttacking => DashAttacking;
         public bool IsDead { get; private set; }
+        public float CurrentHitHeight => HitH;
         public float DeathPercent { get; private set; }
         public PointF DeathPosition { get; private set; }
         public Color DeathColor { get; private set; }
@@ -620,6 +622,7 @@ namespace DeskMadeline
             Pos = pos;
             deathRespawnPos = pos;
             Speed = new PointF(0, 0);
+            SpriteScaleX = SpriteScaleY = 1f;
             State = StNormal;
             Dashes = DashCapacity;
             Stamina = ClimbMaxStamina;
@@ -691,6 +694,7 @@ namespace DeskMadeline
         {
             PointF target = deathRespawnPos;
             ResetTo(target);
+            if (!RespawnReversalEnabled) return;
             State = StIntroRespawn;
             respawnTimer = 0f;
             // Reload creates a new Player directly at the respawn point. Its
@@ -702,6 +706,15 @@ namespace DeskMadeline
                 ? (PetWindow.Instance?.ResolveHairColor(2, TwoDashesHairColor) ?? TwoDashesHairColor)
                 : (PetWindow.Instance?.ResolveHairColor(1, NormalHairColor) ?? NormalHairColor);
             HairColor = RespawnColor;
+        }
+
+        public void WrapBy(float x, float y)
+        {
+            if (x == 0f && y == 0f) return;
+            Pos = new PointF(Pos.X + x, Pos.Y + y);
+            Hair.MoveBy(x, y);
+            if (Holding != null)
+                Holding.Carry(new PointF(Holding.Pos.X + x, Holding.Pos.Y + y));
         }
 
         bool CanDash => (dashBufferTimer > 0 || crouchDashBufferTimer > 0) &&
@@ -1963,6 +1976,12 @@ namespace DeskMadeline
         {
             started = false;
             AfterUpdate(0, anchor, facing, false);
+        }
+
+        public void MoveBy(float x, float y)
+        {
+            for (int i = 0; i < ActiveCount; i++)
+                Nodes[i] = new PointF(Nodes[i].X + x, Nodes[i].Y + y);
         }
     }
 }
