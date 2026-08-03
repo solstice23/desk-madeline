@@ -154,8 +154,6 @@ namespace DeskMadeline
         {
             lastSolids = solids;
             if (cannotHoldTimer > 0f) cannotHoldTimer -= dt;
-            if (noGravityTimer > 0f) noGravityTimer -= dt;
-            if (highFrictionTimer > 0f) highFrictionTimer -= dt;
 
             if (BeingDragged)
             {
@@ -205,6 +203,7 @@ namespace DeskMadeline
             else
             {
                 MovementSoundActive = false;
+                if (highFrictionTimer > 0f) highFrictionTimer -= dt;
                 Rotation = Approach(Rotation, 0f, (float)Math.PI * dt);
                 ScaleX = Approach(ScaleX, 1f, 2f * dt);
                 ScaleY = Approach(ScaleY, 1f, 2f * dt);
@@ -221,20 +220,29 @@ namespace DeskMadeline
                 }
                 else
                 {
-                    float friction = highFrictionTimer > 0f ? 10f : 40f;
+                    float friction = Speed.Y < 0f ? 40f : highFrictionTimer > 0f ? 10f : 40f;
                     Speed.X = Approach(Speed.X, 0f, friction * dt);
                     if (noGravityTimer <= 0f)
                     {
                         float gravity = Speed.Y >= -30f ? 100f : 200f;
                         Speed.Y = Approach(Speed.Y, 30f, gravity * dt);
                     }
+                    else noGravityTimer -= dt;
                 }
 
                 MoveH(Speed.X * dt, solids);
                 MoveV(Speed.Y * dt, solids);
                 float half = Width / 2f;
-                if (Pos.X < minX + half) { Pos.X = minX + half; Speed.X = Math.Abs(Speed.X); }
-                else if (Pos.X > maxX - half) { Pos.X = maxX - half; Speed.X = -Math.Abs(Speed.X); }
+                if (Pos.X < minX + half)
+                {
+                    Pos.X = minX + half;
+                    OnCollideH();
+                }
+                else if (Pos.X > maxX - half)
+                {
+                    Pos.X = maxX - half;
+                    OnCollideH();
+                }
             }
 
             UpdateAnimation(dt);
@@ -252,11 +260,7 @@ namespace DeskMadeline
                 if (BlocksMove(Pos.X + sign, Pos.Y, solids))
                 {
                     counter.X = 0f;
-                    SoundEvents.Enqueue(new PlayerSoundEvent(Speed.X < 0f
-                        ? "event:/new_content/game/10_farewell/glider_wallbounce_left"
-                        : "event:/new_content/game/10_farewell/glider_wallbounce_right"));
-                    Speed.X *= -1f;
-                    ScaleX = 0.8f; ScaleY = 1.2f;
+                    OnCollideH();
                     return;
                 }
                 Pos.X += sign;
@@ -276,18 +280,34 @@ namespace DeskMadeline
                 if (BlocksMove(Pos.X, Pos.Y + sign, solids))
                 {
                     counter.Y = 0f;
-                    if (Math.Abs(Speed.Y) > 8f)
-                    {
-                        ScaleX = 1.2f; ScaleY = 0.8f;
-                        SoundEvents.Enqueue(new PlayerSoundEvent(
-                            "event:/new_content/game/10_farewell/glider_land"));
-                    }
-                    Speed.Y = Speed.Y < 0f ? Speed.Y * -0.5f : 0f;
+                    OnCollideV();
                     return;
                 }
                 Pos.Y += sign;
                 move -= sign;
             }
+        }
+
+        void OnCollideH()
+        {
+            SoundEvents.Enqueue(new PlayerSoundEvent(Speed.X < 0f
+                ? "event:/new_content/game/10_farewell/glider_wallbounce_left"
+                : "event:/new_content/game/10_farewell/glider_wallbounce_right"));
+            Speed.X *= -1f;
+            ScaleX = 0.8f;
+            ScaleY = 1.2f;
+        }
+
+        void OnCollideV()
+        {
+            if (Math.Abs(Speed.Y) > 8f)
+            {
+                ScaleX = 1.2f;
+                ScaleY = 0.8f;
+                SoundEvents.Enqueue(new PlayerSoundEvent(
+                    "event:/new_content/game/10_farewell/glider_land"));
+            }
+            Speed.Y = Speed.Y < 0f ? Speed.Y * -0.5f : 0f;
         }
 
         void SetAnimation(string id, bool restart = false)

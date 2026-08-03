@@ -685,7 +685,8 @@ namespace DeskMadeline
             if (wallSliding)
             {
                 soundEffects.StartLoop("wallslide", "event:/char/madeline/wallslide");
-                soundEffects.SetLoopParameter("wallslide", "surface_index", -1f);
+                soundEffects.SetLoopParameter("wallslide", "surface_index",
+                    player.WallSurfaceSoundIndex(player.Facing));
             }
             else soundEffects.StopLoop("wallslide");
         }
@@ -703,9 +704,11 @@ namespace DeskMadeline
                 (id == "runStumble" && frame == 6) || (id == "flip" && frame == 4) ||
                 (id == "push" && (frame == 8 || frame == 15));
             if (footstep)
-                soundEffects.Play("event:/char/madeline/footstep", "surface_index", -1f);
+                soundEffects.Play("event:/char/madeline/footstep", "surface_index",
+                    player.GroundSurfaceSoundIndex);
             else if (id == "climb" && frame == 5)
-                soundEffects.Play("event:/char/madeline/handhold", "surface_index", -1f);
+                soundEffects.Play("event:/char/madeline/handhold", "surface_index",
+                    player.WallSurfaceSoundIndex(player.Facing));
             else if (introWakeUp && id == "wakeUp" && frame == 19)
                 soundEffects.Play("event:/char/madeline/campfire_stand");
         }

@@ -175,6 +175,21 @@ namespace DeskMadeline
         public PointF RespawnEffectPosition { get; private set; }
         public Color RespawnColor { get; private set; }
         public readonly Queue<PlayerSoundEvent> SoundEvents = new Queue<PlayerSoundEvent>();
+        public const int NormalSurfaceSoundIndex = 8;  // Platform.cs default (brick)
+        public const int DreamSurfaceSoundIndex = 12; // active DreamBlock
+
+        public int GroundSurfaceSoundIndex => SurfaceSoundIndexAt(Pos.X, Pos.Y + 1f);
+        public int WallSurfaceSoundIndex(int direction)
+            => SurfaceSoundIndexAt(Pos.X + direction * 3f, Pos.Y);
+
+        int SurfaceSoundIndexAt(float x, float y)
+        {
+            HitboxAt(x, y, out float l, out float t, out float r, out float b);
+            foreach (Solid solid in Solids)
+                if (Overlap(l, t, r, b, solid))
+                    return solid.Dream ? DreamSurfaceSoundIndex : NormalSurfaceSoundIndex;
+            return NormalSurfaceSoundIndex;
+        }
 
         void PlaySound(string path, string parameter = null, float value = 0f)
             => SoundEvents.Enqueue(new PlayerSoundEvent(path, parameter, value));
@@ -227,6 +242,7 @@ namespace DeskMadeline
         int observedIdleLoopCount;
         float highestAirY;
         float landingStumbleTimer;
+        float playFootstepOnLand;
         float sweatJumpTimer;
         float minHoldTimer;
         float pickupTimer;
@@ -620,11 +636,12 @@ namespace DeskMadeline
                     float amount = Math.Min(Speed.Y / FastMaxFall, 1f);
                     SpriteScaleX = 1f + 0.6f * amount;
                     SpriteScaleY = 1f - 0.6f * amount;
-                    if (Speed.Y >= 80f)
-                    {
-                        LandingEffectCount++;
-                        PlaySound("event:/char/madeline/landing", "surface_index", -1f);
-                    }
+                    PlaySound(playFootstepOnLand > 0f
+                        ? "event:/char/madeline/footstep"
+                        : "event:/char/madeline/landing", "surface_index",
+                        GroundSurfaceSoundIndex);
+                    if (Speed.Y >= 80f) LandingEffectCount++;
+                    playFootstepOnLand = 0f;
                     if (highestAirY < Pos.Y - 50f && Speed.Y >= MaxFall && Math.Abs(Speed.X) >= MaxRun)
                         landingStumbleTimer = 0.7f;
                 }
@@ -738,6 +755,7 @@ namespace DeskMadeline
             observedIdleLoopCount = 0;
             highestAirY = pos.Y;
             landingStumbleTimer = 0f;
+            playFootstepOnLand = 0f;
             SweatAnimId = "idle";
             sweatJumpTimer = 0f;
             minHoldTimer = 0f;
@@ -906,6 +924,7 @@ namespace DeskMadeline
             if (onGround) highestAirY = Pos.Y;
             else highestAirY = Math.Min(highestAirY, Pos.Y);
             if (landingStumbleTimer > 0f) landingStumbleTimer -= dt;
+            if (playFootstepOnLand > 0f) playFootstepOnLand -= dt;
 
             if (onGround)
             {
@@ -1442,6 +1461,8 @@ namespace DeskMadeline
             LastWallJumpDirection = dir;
             WallJumpEffectCount++;
             SpriteScaleX = 0.6f; SpriteScaleY = 1.4f;
+            PlaySound("event:/char/madeline/landing", "surface_index",
+                WallSurfaceSoundIndex(-dir));
             PlaySound(dir < 0
                 ? "event:/char/madeline/jump_wall_right"
                 : "event:/char/madeline/jump_wall_left");
@@ -1518,7 +1539,8 @@ namespace DeskMadeline
                 if (CollideAt(Pos.X + Facing, Pos.Y)) break;
                 Pos.X += Facing;
             }
-            PlaySound("event:/char/madeline/grab", "surface_index", -1f);
+            PlaySound("event:/char/madeline/grab", "surface_index",
+                WallSurfaceSoundIndex(Facing));
         }
 
         void EnterNormal()
@@ -1744,9 +1766,11 @@ namespace DeskMadeline
             Speed.Y = Math.Min(Speed.Y, ClimbHopY);
             hopWaitX = Facing;
             hopWaitXSpeed = ClimbHopX * Facing;
+            playFootstepOnLand = 0.5f;
             forceMoveX = 0;                // 原作 forceMoveX = 0
             forceMoveXTimer = 0.2f;        // 0.2s 内不受方向键影响
             fastJump = false;
+            PlaySound("event:/char/madeline/climb_ledge");
         }
 
         void MoveVExactLocal(int n) => MoveVExact(n);
