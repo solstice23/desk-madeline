@@ -139,6 +139,10 @@ namespace DeskMadeline
         Glider draggedGlider;
         PointF gliderDragOffset, gliderCursorVelocity;
         Point lastGliderCursor;
+        Seeker draggedSeeker;
+        PointF seekerDragOffset, seekerCursorVelocity;
+        Point lastSeekerCursor;
+        bool seekerRespawnDormant, observedPlayerRespawning;
 
         sealed class GliderStampCache
         {
@@ -576,6 +580,7 @@ namespace DeskMadeline
                 {
                     Seeker seeker = pendingSeekerRemovals.Dequeue();
                     if (!seekers.Remove(seeker)) continue;
+                    if (draggedSeeker == seeker) draggedSeeker = null;
                     soundEffects.StopLoop(seeker);
                     if (seekerStampCache.TryGetValue(seeker, out GliderStampCache cache))
                     {
@@ -654,6 +659,22 @@ namespace DeskMadeline
             UpdateSoundEffects(wasState);
             if (!wasDeadOrRespawning) ApplyEdgeWrap(beforeUpdatePosition);
 
+            bool playerRespawningNow = player.IsRespawning;
+            if (playerRespawningNow && !observedPlayerRespawning)
+            {
+                // Level.Reload recreates room entities in Celeste. Menu-spawned
+                // desktop entities have no map loader, so reset them explicitly.
+                seekerRespawnDormant = true;
+                draggedSeeker = null;
+                foreach (Seeker seeker in seekers)
+                    seeker.ResetForRoomReload(player.Center);
+            }
+            observedPlayerRespawning = playerRespawningNow;
+            bool anyInput = input.MoveX != 0 || input.MoveY != 0 || input.JumpHeld ||
+                input.GrabHeld || input.DashPressed || input.ElytraHeld || dragging;
+            if (seekerRespawnDormant && !playerRespawningNow && anyInput)
+                seekerRespawnDormant = false;
+
             // A frame that began frozen only advances the raw freeze countdown.
             if (frozenAtStart)
             {
@@ -717,7 +738,8 @@ namespace DeskMadeline
             var seekerCamera = new RectangleF(player.Pos.X - 160f, player.Pos.Y - 90f, 320f, 180f);
             foreach (Seeker seeker in seekers)
             {
-                seeker.Update(dt, player, player.Solids, seekerWorldBounds, seekerCamera);
+                if (seekerRespawnDormant) seeker.UpdateDormant(dt);
+                else seeker.Update(dt, player, player.Solids, seekerWorldBounds, seekerCamera);
                 while (seeker.SoundEvents.Count > 0)
                 {
                     PlayerSoundEvent sound = seeker.SoundEvents.Dequeue();
@@ -1312,7 +1334,7 @@ namespace DeskMadeline
             // GetAsyncKeyState is global. By default it is gated to this pet's
             // focus; the explicit menu opt-in permits reading it while unfocused.
             // No hook is installed and keys are never swallowed from other apps.
-            if (!InputEnabled || dragging || draggedGlider != null ||
+            if (!InputEnabled || dragging || draggedGlider != null || draggedSeeker != null ||
                 (!InputWhenUnfocused && !IsPetInputWindow(Win32.GetForegroundWindow())))
             {
                 prevJump = prevDash = prevCrouchDash = false;
@@ -1385,6 +1407,41 @@ namespace DeskMadeline
                     window.Dispose();
                 }
             }));
+        }
+
+        internal void BeginSeekerDrag(Seeker seeker)
+        {
+            Point cursor = Cursor.Position;
+            seeker.BeginDrag();
+            draggedSeeker = seeker;
+            seekerDragOffset = new PointF(cursor.X / (float)GameScale - seeker.Pos.X,
+                cursor.Y / (float)GameScale - seeker.Pos.Y);
+            lastSeekerCursor = cursor;
+            seekerCursorVelocity = PointF.Empty;
+        }
+
+        internal void ContinueSeekerDrag(Seeker seeker)
+        {
+            if (draggedSeeker != seeker) return;
+            Point cursor = Cursor.Position;
+            const float dt = 1f / 60f;
+            seekerCursorVelocity = new PointF(
+                seekerCursorVelocity.X * .7f + (cursor.X - lastSeekerCursor.X) / GameScale / dt * .3f,
+                seekerCursorVelocity.Y * .7f + (cursor.Y - lastSeekerCursor.Y) / GameScale / dt * .3f);
+            lastSeekerCursor = cursor;
+            seeker.DragTo(new PointF(cursor.X / (float)GameScale - seekerDragOffset.X,
+                cursor.Y / (float)GameScale - seekerDragOffset.Y));
+        }
+
+        internal void EndSeekerDrag(Seeker seeker)
+        {
+            if (draggedSeeker != seeker) return;
+            float vx = seekerCursorVelocity.X * .6f, vy = seekerCursorVelocity.Y * .6f;
+            float length = (float)Math.Sqrt(vx * vx + vy * vy);
+            if (length > 400f) { vx *= 400f / length; vy *= 400f / length; }
+            if (length < 30f) vx = vy = 0f;
+            seeker.EndDrag(new PointF(vx, vy));
+            draggedSeeker = null;
         }
 
         void EnsureGliderWindows()

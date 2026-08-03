@@ -41,6 +41,7 @@ namespace DeskMadeline
         public readonly Queue<SeekerParticleEvent> ParticleEvents = new Queue<SeekerParticleEvent>();
         public readonly List<SeekerTrail> Trails = new List<SeekerTrail>();
         public bool Removed { get; private set; }
+        public bool BeingDragged { get; private set; }
 
         readonly Animator animator;
         readonly Random random = new Random();
@@ -56,10 +57,11 @@ namespace DeskMadeline
         readonly List<PointF> path = new List<PointF>();
         int pathIndex;
         bool lastPathFound;
+        PointF roomSpawnPosition;
 
         public Seeker(PointF position)
         {
-            Pos = position;
+            Pos = roomSpawnPosition = position;
             animator = new Animator(BuildAnimations());
             animator.Play("idle", true);
         }
@@ -211,6 +213,64 @@ namespace DeskMadeline
         void SnapFacing(float dir) { if (dir != 0f) spriteFacing = facing = Math.Sign(dir); }
         void StartWiggler() { wigglerCounter = 1f; wigglerSine = 0f; }
 
+        public void BeginDrag()
+        {
+            BeingDragged = true;
+            Speed = counter = PointF.Empty;
+            ResetStateAt(Pos, null, updateRoomSpawn: false);
+        }
+
+        public void DragTo(PointF position)
+        {
+            if (!BeingDragged) return;
+            Pos = position;
+            counter = PointF.Empty;
+        }
+
+        public void EndDrag(PointF velocity)
+        {
+            if (!BeingDragged) return;
+            BeingDragged = false;
+            roomSpawnPosition = Pos;
+            Speed = velocity;
+        }
+
+        public void ResetForRoomReload(PointF playerCenter)
+        {
+            BeingDragged = false;
+            ResetStateAt(roomSpawnPosition, playerCenter, updateRoomSpawn: false);
+        }
+
+        void ResetStateAt(PointF position, PointF? playerCenter, bool updateRoomSpawn)
+        {
+            Pos = position;
+            if (updateRoomSpawn) roomSpawnPosition = position;
+            Speed = counter = PointF.Empty;
+            State = StIdle;
+            stateTimer = spottedLoseTimer = spottedTurnDelay = attackSpeed = 0f;
+            attackWindUp = strongSkid = spotted = canSeePlayer = lastPathFound = false;
+            lastSpottedAt = lastPathTo = PointF.Empty;
+            path.Clear(); pathIndex = 0;
+            ScaleX = ScaleY = 1f;
+            wigglerCounter = shakerTimer = shockwaveTimer = 0f;
+            Shake = PointF.Empty; ShockwaveFrameId = null; nextSprite = null;
+            regenStage = 0;
+            foreach (SeekerTrail trail in Trails) trail.Stamp?.Dispose();
+            Trails.Clear();
+            ParticleEvents.Clear();
+            SoundEvents.Clear();
+            if (playerCenter.HasValue && playerCenter.Value.X != Pos.X)
+                SnapFacing(Math.Sign(playerCenter.Value.X - Pos.X));
+            animator.Play("idle", true);
+        }
+
+        public void UpdateDormant(float dt)
+        {
+            if (BeingDragged) return;
+            animator.Play("idle");
+            animator.Update(dt);
+        }
+
         public void Update(float dt, Player player, IList<Solid> solids, RectangleF worldBounds, RectangleF camera)
         {
             if (Removed) return;
@@ -221,6 +281,13 @@ namespace DeskMadeline
             }
             previousSceneTime = sceneTime;
             sceneTime += dt;
+            if (BeingDragged)
+            {
+                Speed = counter = PointF.Empty;
+                animator.Play("idle");
+                animator.Update(dt);
+                return;
+            }
             ScaleX = Approach(ScaleX, 1f, 2f * dt); ScaleY = Approach(ScaleY, 1f, 2f * dt);
             idleX += (float)Math.PI * 2f * .5f * dt; idleY += (float)Math.PI * 2f * .7f * dt;
             if (wigglerCounter > 0f) { wigglerSine += (float)Math.PI * 4f * dt; wigglerCounter = Math.Max(0f, wigglerCounter - dt / .8f); }
@@ -240,6 +307,10 @@ namespace DeskMadeline
                 lastPathTo = lastSpottedAt; pathIndex = 0;
                 lastPathFound = DesktopPathfinder.Find(path, Pos, FollowTarget, solids, worldBounds);
             }
+
+            // PlayerCollider components are added before StateMachine in the
+            // original constructor, so contacts use the pre-state-update pose.
+            CheckPlayer(player);
 
             switch (State)
             {
@@ -283,7 +354,6 @@ namespace DeskMadeline
             if (Pos.Y - 3 < worldBounds.Top - 8 && Speed.Y < 0f) { Pos.Y = worldBounds.Top - 5; CollideV(); }
             else if (Pos.Y + 3 > worldBounds.Bottom && Speed.Y > 0f) { Pos.Y = worldBounds.Bottom - 3; CollideV(); }
 
-            CheckPlayer(player);
         }
 
         bool OnInterval(float interval)

@@ -271,7 +271,11 @@ namespace DeskMadeline
             RefillDash();
             Stamina = ClimbMaxStamina;
             dashCooldownTimer = .2f;
+            bool beginsLaunchState = State != StLaunch;
             State = StLaunch;
+            // LaunchBegin sets vanilla's `launched` flag, which emits SpeedRing
+            // every 0.15s while speed stays >= 140, for at most 0.5s.
+            if (beginsLaunchState) LaunchCount++;
             ExplodeLaunchAngle = (float)Math.Atan2(Speed.Y, Speed.X);
             ExplodeLaunchSequenceCount++;
             return vector;

@@ -38,5 +38,23 @@ namespace DeskMadeline
                 return cp;
             }
         }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button == MouseButtons.Left) ownerWindow.BeginSeekerDrag(Seeker);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if ((e.Button & MouseButtons.Left) != 0) ownerWindow.ContinueSeekerDrag(Seeker);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button == MouseButtons.Left) ownerWindow.EndSeekerDrag(Seeker);
+        }
     }
 }
