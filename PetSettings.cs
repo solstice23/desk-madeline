@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 
 namespace DeskMadeline
@@ -16,6 +17,12 @@ namespace DeskMadeline
         public int DashMode = 1;
         public string Language;
         public string Skin = "default";
+        public bool CatTailEnabled;
+        public bool CatBangsEnabled;
+        public bool CustomHairColorsEnabled;
+        public int HairColor0 = 0x44B7FF;
+        public int HairColor1 = 0xAC3232;
+        public int HairColor2 = 0xFF6DEF;
 
         readonly string path;
 
@@ -47,6 +54,12 @@ namespace DeskMadeline
                 if (values.TryGetValue("Language", out string language) &&
                     (language == "en" || language == "zh")) result.Language = language;
                 if (values.TryGetValue("Skin", out string skin) && skin.Length > 0) result.Skin = skin;
+                ReadBool(values, "CatTailEnabled", ref result.CatTailEnabled);
+                ReadBool(values, "CatBangsEnabled", ref result.CatBangsEnabled);
+                ReadBool(values, "CustomHairColorsEnabled", ref result.CustomHairColorsEnabled);
+                ReadColor(values, "HairColor0", ref result.HairColor0);
+                ReadColor(values, "HairColor1", ref result.HairColor1);
+                ReadColor(values, "HairColor2", ref result.HairColor2);
             }
             catch { }
             return result;
@@ -55,6 +68,14 @@ namespace DeskMadeline
         static void ReadBool(Dictionary<string, string> values, string key, ref bool target)
         {
             if (values.TryGetValue(key, out string text) && bool.TryParse(text, out bool value)) target = value;
+        }
+
+        static void ReadColor(Dictionary<string, string> values, string key, ref int target)
+        {
+            if (!values.TryGetValue(key, out string text)) return;
+            text = text.Trim().TrimStart('#');
+            if (text.Length == 6 && int.TryParse(text, NumberStyles.HexNumber,
+                CultureInfo.InvariantCulture, out int value)) target = value;
         }
 
         public void Save()
@@ -72,7 +93,13 @@ namespace DeskMadeline
                     "InfiniteStamina=" + InfiniteStamina,
                     "DashMode=" + DashMode,
                     "Language=" + (Language ?? ""),
-                    "Skin=" + (Skin ?? "default")
+                    "Skin=" + (Skin ?? "default"),
+                    "CatTailEnabled=" + CatTailEnabled,
+                    "CatBangsEnabled=" + CatBangsEnabled,
+                    "CustomHairColorsEnabled=" + CustomHairColorsEnabled,
+                    "HairColor0=#" + HairColor0.ToString("X6", CultureInfo.InvariantCulture),
+                    "HairColor1=#" + HairColor1.ToString("X6", CultureInfo.InvariantCulture),
+                    "HairColor2=#" + HairColor2.ToString("X6", CultureInfo.InvariantCulture)
                 });
             }
             catch { }

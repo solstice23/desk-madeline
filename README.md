@@ -66,6 +66,10 @@ The right-click menu's **Skin** submenu supports complete Skin Mod Helper and Sk
 
 The loader follows Skin Mod Helper's source behavior: legacy `SkinId` paths, Plus `Player_List` + `Character_ID`, sprite paths from `Graphics/Sprites.xml`, vanilla fallback for omitted frames/hair/bangs, and legacy per-dash hair colors. The checked-in `example_skins` packages are discovered automatically by local development builds but are not copied into release output.
 
+Code-only cosmetics are separate from selectable skins. The **Cosmetics** submenu provides independent Cateline-style **Cat tail** and **Cat bangs** toggles, so either feature can be combined with any sprite skin. **Hair colors** provides a universal, persisted no-dash / one-dash / two-dash palette override; this can reproduce Mikuline's green hair without tying the behavior to a particular package name. Everest DLLs such as Foxeline are not executed by the desktop pet.
+
+仅由代码实现的装饰与可选择皮肤相互独立。「装饰」子菜单提供 Cateline 风格的「猫尾」和「猫耳刘海」开关，两项均可与任意精灵皮肤组合使用。「头发颜色」可全局覆盖并保存无冲刺／一次冲刺／两次冲刺的颜色，因此无需识别特定包名也可设为 Mikuline 的绿色。桌宠不会执行 Foxeline 等 Everest DLL。
+
 ## 实现要点
 
 - **GPU 合成**：1x 游戏像素缓冲上传至 Direct2D/Direct3D 11，并按绝对物理桌面坐标画进固定的虚拟桌面交换链；宿主 HWND 和 DirectComposition visual 都不随角色移动。

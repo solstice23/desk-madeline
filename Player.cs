@@ -562,16 +562,16 @@ namespace DeskMadeline
             }
             else if (Dashes >= 2)
             {
-                HairColor = PetWindow.Instance?.skinManager.ResolveHairColor(2, TwoDashesHairColor) ?? TwoDashesHairColor;
+                HairColor = PetWindow.Instance?.ResolveHairColor(2, TwoDashesHairColor) ?? TwoDashesHairColor;
             }
             else if (Dashes > 0 || DashCapacity == 0)
             {
-                HairColor = PetWindow.Instance?.skinManager.ResolveHairColor(1, NormalHairColor) ?? NormalHairColor;
+                HairColor = PetWindow.Instance?.ResolveHairColor(1, NormalHairColor) ?? NormalHairColor;
             }
             else
             {
                 // 没 Dash 时渐变到蓝色（6/s）
-                Color target = PetWindow.Instance?.skinManager.ResolveHairColor(0, UsedHairColor) ?? UsedHairColor;
+                Color target = PetWindow.Instance?.ResolveHairColor(0, UsedHairColor) ?? UsedHairColor;
                 float k = Math.Min(1f, 6f * dt);
                 HairColor = Color.FromArgb(
                     (int)(HairColor.R + (target.R - HairColor.R) * k),
@@ -1170,6 +1170,7 @@ namespace DeskMadeline
         const float WaveSpeed = 4f;
         public readonly PointF[] Nodes = new PointF[MaxCount];
         float wave, time;
+        public float Wave => wave;
         bool started;
 
         static PointF Approach(PointF val, PointF target, float maxMove)

@@ -93,6 +93,11 @@ namespace DeskMadeline
         float dashVisualTimer = -1f;
         int dashTrailStage;
         bool english = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "zh";
+        const int CatTailCount = 8;
+        readonly PointF[] catTailNodes = new PointF[CatTailCount];
+        readonly Color[] customHairColors = new Color[3];
+        bool catTailStarted;
+        bool catTailEnabled, catBangsEnabled, customHairColorsEnabled;
 
         struct WaveRing
         {
@@ -106,6 +111,7 @@ namespace DeskMadeline
             public string FrameId, BangsId;
             public Color Tint, HairColor;
             public PointF[] HairNodes;
+            public PointF[] CatTailNodes;
             public Bitmap Mask;
         }
 
@@ -125,6 +131,12 @@ namespace DeskMadeline
             InputEnabled = settings.InputEnabled;
             AlwaysOnTop = settings.AlwaysOnTop;
             ParticlesEnabled = settings.ParticlesEnabled;
+            catTailEnabled = settings.CatTailEnabled;
+            catBangsEnabled = settings.CatBangsEnabled;
+            customHairColorsEnabled = settings.CustomHairColorsEnabled;
+            customHairColors[0] = Rgb(settings.HairColor0);
+            customHairColors[1] = Rgb(settings.HairColor1);
+            customHairColors[2] = Rgb(settings.HairColor2);
             player.SetFreezeFramesEnabled(settings.FreezeFramesEnabled);
             player.InfiniteStamina = settings.InfiniteStamina;
             player.SetDashMode(settings.DashMode);
@@ -469,7 +481,62 @@ namespace DeskMadeline
             observedSweatAnimSequenceCount = player.SweatAnimSequenceCount;
             sweatAnimator.Play(player.SweatAnimId, restartSweat);
             sweatAnimator.Update(dt);
+            UpdateCatTail(dt);
             UpdateDashCoreVisuals(dt);
+        }
+
+        static Color Rgb(int value) => Color.FromArgb((value >> 16) & 255, (value >> 8) & 255, value & 255);
+        static int RgbValue(Color value) => (value.R << 16) | (value.G << 8) | value.B;
+
+        internal Color ResolveHairColor(int dashes, Color fallback)
+        {
+            if (customHairColorsEnabled) return customHairColors[Math.Max(0, Math.Min(2, dashes))];
+            return skinManager.ResolveHairColor(dashes, fallback);
+        }
+
+        static PointF Approach(PointF value, PointF target, float maxMove)
+        {
+            float dx = target.X - value.X, dy = target.Y - value.Y;
+            float length = (float)Math.Sqrt(dx * dx + dy * dy);
+            if (length <= maxMove || length == 0f) return target;
+            return new PointF(value.X + dx / length * maxMove, value.Y + dy / length * maxMove);
+        }
+
+        void UpdateCatTail(float dt)
+        {
+            if (!catTailEnabled) { catTailStarted = false; return; }
+            float hx = 0f, hy = 0f;
+            if (HairMeta.TryGet(player.CurrentFrameId, out var hm)) { hx = hm.Offset.X; hy = hm.Offset.Y; }
+            var root = new PointF(player.Pos.X + hx * player.Facing,
+                player.Pos.Y - 2f * player.SpriteScaleY + hy);
+            if (!catTailStarted)
+            {
+                for (int i = 0; i < CatTailCount; i++) catTailNodes[i] = root;
+                catTailStarted = true;
+            }
+            catTailNodes[0] = root;
+            float amount = 1.5f;
+            var step = new PointF(0f, -1f);
+            var target = new PointF(root.X - player.Facing * amount * 2f + step.X, root.Y + step.Y);
+            PointF previous = root;
+            for (int i = 1; i < CatTailCount; i++)
+            {
+                if (i == CatTailCount / 2)
+                {
+                    float sine = (float)Math.Sin(player.Hair.Wave);
+                    step = new PointF(0f, -1f + 0.5f * sine);
+                    amount = 1.5f + 0.5f * sine;
+                }
+                float speed = (1f - (float)i / CatTailCount * 0.5f) * 32f;
+                catTailNodes[i] = Approach(catTailNodes[i], target, speed * dt);
+                float dx = catTailNodes[i].X - previous.X, dy = catTailNodes[i].Y - previous.Y;
+                float distance = (float)Math.Sqrt(dx * dx + dy * dy);
+                if (distance > 2f)
+                    catTailNodes[i] = new PointF(previous.X + dx / distance * 2f, previous.Y + dy / distance * 2f);
+                target = new PointF(catTailNodes[i].X - player.Facing * amount + step.X,
+                    catTailNodes[i].Y + step.Y);
+                previous = catTailNodes[i];
+            }
         }
 
         void UpdateDashCoreVisuals(float dt)
@@ -545,6 +612,13 @@ namespace DeskMadeline
             string bangsId = "bangs00";
             if (HairMeta.TryGet(frameId, out var hm) && hm.Bangs >= 0 && hm.Bangs < HairMeta.BangsFrames.Length)
                 bangsId = HairMeta.BangsFrames[hm.Bangs];
+            if (catBangsEnabled) bangsId = "catbangs" + bangsId.Substring(bangsId.Length - 2);
+            PointF[] tailNodes = null;
+            if (catTailEnabled)
+            {
+                tailNodes = new PointF[CatTailCount];
+                Array.Copy(catTailNodes, tailNodes, CatTailCount);
+            }
             var trail = new DashTrail
             {
                 X = player.Pos.X,
@@ -556,6 +630,7 @@ namespace DeskMadeline
                 BangsId = bangsId,
                 HairCount = count,
                 HairNodes = nodes,
+                CatTailNodes = tailNodes,
                 HairColor = player.HairColor,
                 // Player.GetTrailColor(wasDashB): second-charge dash -> red; otherwise blue.
                 Tint = player.LastDashWasTwo ? Player.NormalHairColor : Player.UsedHairColor
@@ -583,6 +658,20 @@ namespace DeskMadeline
             bool flip = trail.Facing < 0;
             var blob = Sprites.Get("hair00", false);
             var bangs = Sprites.Get(trail.BangsId, flip);
+            if (blob != null && trail.CatTailNodes != null)
+            {
+                for (int i = 0; i < trail.CatTailNodes.Length; i++)
+                {
+                    float x = SnapPx(trail.CatTailNodes[i].X - trail.X + center);
+                    float y = SnapPx(trail.CatTailNodes[i].Y - trail.Y + center);
+                    float outlineSize = 4f;
+                    DrawTintedSafe(g, blob, Color.Black, x - outlineSize / 2f - 1, y - outlineSize / 2f, outlineSize, outlineSize);
+                    DrawTintedSafe(g, blob, Color.Black, x - outlineSize / 2f + 1, y - outlineSize / 2f, outlineSize, outlineSize);
+                    DrawTintedSafe(g, blob, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f - 1, outlineSize, outlineSize);
+                    DrawTintedSafe(g, blob, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f + 1, outlineSize, outlineSize);
+                    DrawTintedSafe(g, blob, trail.HairColor, x - 1.5f, y - 1.5f, 3f, 3f);
+                }
+            }
             if (blob != null && bangs != null)
             {
                 // Hair.Render includes its four-direction black outline. The max-blend
@@ -971,7 +1060,10 @@ namespace DeskMadeline
                 // 头发画在身体后面（先画头发，再画身体覆盖）。
                 // wakeUp 帧自带完整头发（蜷着睡觉），不再叠加模拟头发
                 if (animator.CurrentId != "wakeUp")
+                {
+                    DrawCatTail(g, camX, camY);
                     DrawHair(g, camX, camY);
+                }
                 DrawBody(g, bodyAnchorX, bodyAnchorY);
                 DrawSweat(g, bodyAnchorX, bodyAnchorY);
 
@@ -1096,6 +1188,7 @@ namespace DeskMadeline
                 bangsIdx = hm.Bangs;
             if (bangsIdx >= 0 && bangsIdx < HairMeta.BangsFrames.Length)
                 bangsId = HairMeta.BangsFrames[bangsIdx];
+            if (catBangsEnabled) bangsId = "catbangs" + bangsId.Substring(bangsId.Length - 2);
             var bangs = Sprites.Get(bangsId, flip);
             if (blob == null || bangs == null) return;
 
@@ -1128,6 +1221,24 @@ namespace DeskMadeline
                 float w = SnapEven(10 * sc * Math.Abs(player.SpriteScaleX));
                 float h = SnapEven(10 * sc);
                 DrawTintedSafe(g, tex, color, pt[i].X - w / 2, pt[i].Y - h / 2, w, h);
+            }
+        }
+
+        void DrawCatTail(Graphics g, float camX, float camY)
+        {
+            if (!catTailEnabled || !catTailStarted) return;
+            var texture = Sprites.Get("hair00", false);
+            if (texture == null) return;
+            for (int i = 0; i < CatTailCount; i++)
+            {
+                float x = SnapPx(catTailNodes[i].X - camX);
+                float y = SnapPx(catTailNodes[i].Y - camY);
+                const float outlineSize = 4f;
+                DrawTintedSafe(g, texture, Color.Black, x - outlineSize / 2f - 1, y - outlineSize / 2f, outlineSize, outlineSize);
+                DrawTintedSafe(g, texture, Color.Black, x - outlineSize / 2f + 1, y - outlineSize / 2f, outlineSize, outlineSize);
+                DrawTintedSafe(g, texture, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f - 1, outlineSize, outlineSize);
+                DrawTintedSafe(g, texture, Color.Black, x - outlineSize / 2f, y - outlineSize / 2f + 1, outlineSize, outlineSize);
+                DrawTintedSafe(g, texture, player.HairColor, x - 1.5f, y - 1.5f, 3f, 3f);
             }
         }
 
@@ -1211,6 +1322,12 @@ namespace DeskMadeline
             settings.DashMode = player.DashMode;
             settings.Language = english ? "en" : "zh";
             settings.Skin = skinManager.Active?.Id ?? SkinManager.DefaultId;
+            settings.CatTailEnabled = catTailEnabled;
+            settings.CatBangsEnabled = catBangsEnabled;
+            settings.CustomHairColorsEnabled = customHairColorsEnabled;
+            settings.HairColor0 = RgbValue(customHairColors[0]);
+            settings.HairColor1 = RgbValue(customHairColors[1]);
+            settings.HairColor2 = RgbValue(customHairColors[2]);
             settings.Save();
         }
 
@@ -1334,6 +1451,77 @@ namespace DeskMadeline
             AddSkinChoice(SkinManager.DefaultId, T("Default Madeline", "默认玛德琳"));
             foreach (var skin in skinManager.Skins) AddSkinChoice(skin.Id, skin.DisplayName);
             menu.Items.Add(skinItem);
+
+            var cosmeticsItem = new ToolStripMenuItem(T("Cosmetics", "装饰"));
+            var catTailItem = new ToolStripMenuItem(T("Cat tail", "猫尾")) { Checked = catTailEnabled };
+            catTailItem.Click += (_, __) =>
+            {
+                catTailEnabled = !catTailEnabled;
+                catTailItem.Checked = catTailEnabled;
+                catTailStarted = false;
+                SaveSettings();
+            };
+            cosmeticsItem.DropDownItems.Add(catTailItem);
+            var catBangsItem = new ToolStripMenuItem(T("Cat bangs", "猫耳刘海")) { Checked = catBangsEnabled };
+            catBangsItem.Click += (_, __) =>
+            {
+                catBangsEnabled = !catBangsEnabled;
+                catBangsItem.Checked = catBangsEnabled;
+                SaveSettings();
+            };
+            cosmeticsItem.DropDownItems.Add(catBangsItem);
+            menu.Items.Add(cosmeticsItem);
+
+            var hairColorsItem = new ToolStripMenuItem(T("Hair colors", "头发颜色"));
+            var hairColorsEnabledItem = new ToolStripMenuItem(T("Use custom colors", "使用自定义颜色"))
+                { Checked = customHairColorsEnabled };
+            hairColorsEnabledItem.Click += (_, __) =>
+            {
+                customHairColorsEnabled = !customHairColorsEnabled;
+                hairColorsEnabledItem.Checked = customHairColorsEnabled;
+                SaveSettings();
+            };
+            hairColorsItem.DropDownItems.Add(hairColorsEnabledItem);
+            hairColorsItem.DropDownItems.Add(new ToolStripSeparator());
+            string[] colorNames = { T("No dashes", "无冲刺"), T("One dash", "一次冲刺"), T("Two dashes", "两次冲刺") };
+            var colorItems = new ToolStripMenuItem[3];
+            void RefreshColorLabels()
+            {
+                for (int i = 0; i < colorItems.Length; i++)
+                    colorItems[i].Text = colorNames[i] + ": #" + RgbValue(customHairColors[i]).ToString("X6");
+            }
+            for (int i = 0; i < 3; i++)
+            {
+                int index = i;
+                colorItems[i] = new ToolStripMenuItem();
+                colorItems[i].Click += (_, __) =>
+                {
+                    using var dialog = new ColorDialog
+                    {
+                        Color = customHairColors[index],
+                        FullOpen = true,
+                        AnyColor = true
+                    };
+                    if (dialog.ShowDialog(this) == DialogResult.OK)
+                    {
+                        customHairColors[index] = dialog.Color;
+                        RefreshColorLabels();
+                        SaveSettings();
+                    }
+                };
+                hairColorsItem.DropDownItems.Add(colorItems[i]);
+            }
+            RefreshColorLabels();
+            hairColorsItem.DropDownItems.Add(new ToolStripSeparator());
+            hairColorsItem.DropDownItems.Add(new ToolStripMenuItem(T("Reset Celeste colors", "恢复原版颜色"), null, (_, __) =>
+            {
+                customHairColors[0] = Player.UsedHairColor;
+                customHairColors[1] = Player.NormalHairColor;
+                customHairColors[2] = Player.TwoDashesHairColor;
+                RefreshColorLabels();
+                SaveSettings();
+            }));
+            menu.Items.Add(hairColorsItem);
 
             var scaleItem = new ToolStripMenuItem(T("Scale (nearest-neighbor)", "缩放（等比放大）"));
             foreach (var v in new[] { 2, 3, 4, 5, 6, 8 })
