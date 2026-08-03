@@ -225,6 +225,7 @@ namespace DeskMadeline
         float deathTimer;
         float respawnTimer;
         PointF respawnEffectStart;
+        PointF respawnTarget;
 
         // 保留速度（cornerboost）：撞墙瞬间保存水平速度，时限内墙不再阻挡则返还
         float wallSpeedRetained;
@@ -696,6 +697,11 @@ namespace DeskMadeline
             State = StIntroRespawn;
             respawnTimer = 0f;
             respawnEffectStart = effectStart;
+            respawnTarget = target;
+            // The desktop camera follows Player.Pos. Keep it on the reverse
+            // DeathEffect while it crosses monitors so the 160px source surface
+            // cannot clip the effect and make its reappearance look like a teleport.
+            Pos = new PointF(effectStart.X, effectStart.Y + 5f);
             RespawnEffectPosition = effectStart;
             RespawnPercent = 1f;
             RespawnColor = DashCapacity > 1
@@ -734,15 +740,18 @@ namespace DeskMadeline
                 respawnTimer += dt;
                 float progress = Math.Min(1f, respawnTimer / 0.6f);
                 RespawnEffectPosition = new PointF(
-                    respawnEffectStart.X + (Pos.X - respawnEffectStart.X) * progress,
-                    respawnEffectStart.Y + (Pos.Y - 5f - respawnEffectStart.Y) * progress);
+                    respawnEffectStart.X + (respawnTarget.X - respawnEffectStart.X) * progress,
+                    respawnEffectStart.Y + (respawnTarget.Y - 5f - respawnEffectStart.Y) * progress);
+                Pos = new PointF(RespawnEffectPosition.X, RespawnEffectPosition.Y + 5f);
                 RespawnPercent = 1f - progress;
                 if (progress >= 1f)
                 {
+                    Pos = respawnTarget;
                     State = StNormal;
                     SpriteScaleX = 1.5f;
                     SpriteScaleY = 0.5f;
                     RespawnPercent = 0f;
+                    Hair.Reset(new PointF(Pos.X, Pos.Y - 9f), Facing);
                 }
                 return;
             }
