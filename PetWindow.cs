@@ -1652,7 +1652,8 @@ namespace DeskMadeline
             {
                 var choice = new ToolStripMenuItem(label)
                 {
-                    Checked = (skinManager.Active?.Id ?? SkinManager.DefaultId).Equals(id, StringComparison.OrdinalIgnoreCase),
+                    Checked = (pendingSkinId ?? skinManager.Active?.Id ?? SkinManager.DefaultId)
+                        .Equals(id, StringComparison.OrdinalIgnoreCase),
                     Tag = id
                 };
                 choice.Click += (_, __) =>
@@ -1667,6 +1668,24 @@ namespace DeskMadeline
             AddSkinChoice(SkinManager.DefaultId, T("Default Madeline", "默认玛德琳"));
             foreach (var skin in skinManager.Skins) AddSkinChoice(skin.Id, skin.DisplayName);
             skinItem.DropDownItems.Add(new ToolStripSeparator());
+            skinItem.DropDownItems.Add(new ToolStripMenuItem(T("Refresh skins", "刷新皮肤"), null, (_, __) =>
+            {
+                // Re-scan archives and reload the selected skin as well.  Reloading
+                // matters when an existing zip was replaced, not just when a new one
+                // was added.  Rebuild after the click unwinds so WinForms is not asked
+                // to dispose the menu currently dispatching this event.
+                string activeId = skinManager.Active?.Id ?? SkinManager.DefaultId;
+                skinManager.Discover();
+                pendingSkinId = skinManager.Find(activeId)?.Id ?? SkinManager.DefaultId;
+                Log("skins refreshed: " + skinManager.Skins.Count);
+                BeginInvoke(new Action(() =>
+                {
+                    var old = trayMenu;
+                    trayMenu = BuildMenu();
+                    tray.ContextMenuStrip = trayMenu;
+                    old?.Dispose();
+                }));
+            }));
             skinItem.DropDownItems.Add(new ToolStripMenuItem(T("Open skins folder", "打开皮肤文件夹"), null, (_, __) =>
             {
                 string skinsDirectory = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "skins");
