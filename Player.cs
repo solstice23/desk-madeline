@@ -200,6 +200,9 @@ namespace DeskMadeline
         float jumpBufferTimer;
         float dashBufferTimer;
         float crouchDashBufferTimer;
+        bool jumpBufferFresh;
+        bool dashBufferFresh;
+        bool crouchDashBufferFresh;
         bool dashStartedOnGround;
         PointF beforeDashSpeed;
         PointF pendingDashDir;
@@ -220,8 +223,6 @@ namespace DeskMadeline
         PointF pickupCurveBegin, pickupCurveControl;
         float dreamDashCanEndTimer;
         float dreamDashAnimTimer, dreamDashOutTimer;
-        float dreamGroundedDashGraceTimer;
-        bool dashStartedWithDreamGrace;
         float throwAnimTimer;
         float gliderBoostTimer;
         PointF gliderBoostDir;
@@ -270,6 +271,13 @@ namespace DeskMadeline
         static float Approach(float val, float target, float maxMove)
             => val > target ? Math.Max(val - maxMove, target) : Math.Min(val + maxMove, target);
         static int Sign(float v) => v > 0 ? 1 : v < 0 ? -1 : 0;
+
+        static void AdvanceBuffer(ref float timer, ref bool fresh, float dt)
+        {
+            if (timer <= 0f) { fresh = false; return; }
+            if (fresh) fresh = false;
+            else timer -= dt;
+        }
 
         // ===== 碰撞 =====
         float HitH => Ducking ? 6f : 11f;
@@ -631,16 +639,32 @@ namespace DeskMadeline
         }
 
         // ===== 输入缓冲 =====
-        public void BufferJump() => jumpBufferTimer = 0.1f; // 6 帧预输入（原作 0.1s）
+        public void BufferJump()
+        {
+            jumpBufferTimer = 0.1f;
+            jumpBufferFresh = true;
+        }
         public void BufferDash(bool crouchDash = false)
         {
-            if (crouchDash) crouchDashBufferTimer = 0.08f;
-            else dashBufferTimer = 0.08f;
+            if (crouchDash)
+            {
+                crouchDashBufferTimer = 0.08f;
+                crouchDashBufferFresh = true;
+            }
+            else
+            {
+                dashBufferTimer = 0.08f;
+                dashBufferFresh = true;
+            }
         }
         public bool HasJumpBuffer => jumpBufferTimer > 0;
         public bool HasDashBuffer => dashBufferTimer > 0 || crouchDashBufferTimer > 0;
-        void ConsumeJump() => jumpBufferTimer = 0;
-        void ConsumeDash() { dashBufferTimer = 0; crouchDashBufferTimer = 0; }
+        void ConsumeJump() { jumpBufferTimer = 0; jumpBufferFresh = false; }
+        void ConsumeDash()
+        {
+            dashBufferTimer = crouchDashBufferTimer = 0;
+            dashBufferFresh = crouchDashBufferFresh = false;
+        }
 
         /// <summary>重置到指定位置：清空速度/状态/冲刺/体力/计时器，头发复位。</summary>
         public void ResetTo(PointF pos)
@@ -664,6 +688,7 @@ namespace DeskMadeline
             jumpBufferTimer = 0;
             dashBufferTimer = 0;
             crouchDashBufferTimer = 0;
+            jumpBufferFresh = dashBufferFresh = crouchDashBufferFresh = false;
             dashCooldownTimer = 0;
             dashRefillCooldownTimer = 0;
             dashAttackTimer = 0;
@@ -703,8 +728,6 @@ namespace DeskMadeline
             pickupCurveBegin = pickupCurveControl = PointF.Empty;
             dreamDashCanEndTimer = 0f;
             dreamDashAnimTimer = dreamDashOutTimer = 0f;
-            dreamGroundedDashGraceTimer = 0f;
-            dashStartedWithDreamGrace = false;
             throwAnimTimer = 0f;
             gliderBoostTimer = 0f;
             gliderBoostDir = PointF.Empty;
@@ -809,6 +832,10 @@ namespace DeskMadeline
             if (freezeTimer > 0)
             {
                 freezeTimer -= dt;
+                // Input still updates during Celeste.Freeze with DeltaTime == 0.
+                // A press made during the freeze is no longer "new" when the
+                // first non-frozen frame advances its buffer timer.
+                jumpBufferFresh = dashBufferFresh = crouchDashBufferFresh = false;
                 return;
             }
 
@@ -830,9 +857,9 @@ namespace DeskMadeline
                 wallSlideTimer = Math.Max(0f, wallSlideTimer - dt);
                 wallSlideDir = 0;
             }
-            if (jumpBufferTimer > 0) jumpBufferTimer -= dt;
-            if (dashBufferTimer > 0) dashBufferTimer -= dt;
-            if (crouchDashBufferTimer > 0) crouchDashBufferTimer -= dt;
+            AdvanceBuffer(ref jumpBufferTimer, ref jumpBufferFresh, dt);
+            AdvanceBuffer(ref dashBufferTimer, ref dashBufferFresh, dt);
+            AdvanceBuffer(ref crouchDashBufferTimer, ref crouchDashBufferFresh, dt);
             if (dashCooldownTimer > 0) dashCooldownTimer -= dt;
             bool dashRefillReady = dashRefillCooldownTimer <= 0f;
             if (!dashRefillReady) dashRefillCooldownTimer -= dt;
@@ -850,7 +877,6 @@ namespace DeskMadeline
             if (minHoldTimer > 0f) minHoldTimer -= dt;
             if (dreamDashAnimTimer > 0f) dreamDashAnimTimer -= dt;
             if (dreamDashOutTimer > 0f) dreamDashOutTimer -= dt;
-            if (dreamGroundedDashGraceTimer > 0f) dreamGroundedDashGraceTimer -= dt;
             if (throwAnimTimer > 0f) throwAnimTimer -= dt;
 
             onGround = !BeingDragged && CheckGround();
@@ -1698,8 +1724,6 @@ namespace DeskMadeline
             sweatJumpTimer = 0f;
             DashSequenceCount++;
             dashStartedOnGround = onGround;
-            dashStartedWithDreamGrace = dreamGroundedDashGraceTimer > 0f;
-            dreamGroundedDashGraceTimer = 0f;
             dashCooldownTimer = DashCooldown;
             dashRefillCooldownTimer = DashRefillCooldown;
             dashAttackTimer = DashAttackTime;
@@ -1741,7 +1765,7 @@ namespace DeskMadeline
             Speed = speed;
 
             // 地面斜下冲 → 蹲冲（1.2x，原作同款）
-            if ((dashStartedOnGround || dashStartedWithDreamGrace) &&
+            if (dashStartedOnGround &&
                 DashDir.X != 0 && DashDir.Y > 0 && Speed.Y > 0 &&
                 !DreamAt(Pos.X, Pos.Y + 1f))
             {
@@ -1882,7 +1906,6 @@ namespace DeskMadeline
                 }
             }
             jumpGraceTimer = Math.Abs(DashDir.X) > 0.01f ? JumpGraceTime : 0f;
-            dreamGroundedDashGraceTimer = Math.Abs(DashDir.X) > 0.01f ? JumpGraceTime : 0f;
             RefillDash();
             Stamina = ClimbMaxStamina;
             dreamDashOutTimer = 0.16f;
