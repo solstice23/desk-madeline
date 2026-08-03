@@ -21,6 +21,7 @@ namespace DeskMadeline
         // ===== 可调参数 =====
         public int GameScale = 6;               // 整数倍放大（原作 1080p 为 6x）
         public bool InputEnabled = true;
+        public bool InputWhenUnfocused;
         public bool AlwaysOnTop = true;
         public static PetWindow Instance;
 
@@ -47,6 +48,7 @@ namespace DeskMadeline
         volatile bool running;
         int pendingScale = -1;
         volatile string pendingSkinId;
+        int pendingGliderSpawns;
         bool introWakeUp = true;   // 启动时先播"醒来"动画（wakeUp 00-14），播完切 idle
 
         // 渲染
@@ -108,6 +110,7 @@ namespace DeskMadeline
         int speedometerMode;
         bool hitboxesEnabled;
         readonly Bitmap[] picoDigits = new Bitmap[10];
+        readonly List<Glider> gliders = new List<Glider>();
 
         struct WaveRing
         {
@@ -139,6 +142,7 @@ namespace DeskMadeline
             virtualDesktop = GetVirtualDesktopBounds();
             GameScale = settings.Scale;
             InputEnabled = settings.InputEnabled;
+            InputWhenUnfocused = settings.InputWhenUnfocused;
             AlwaysOnTop = settings.AlwaysOnTop;
             ParticlesEnabled = settings.ParticlesEnabled;
             catTailEnabled = settings.CatTailEnabled;
@@ -152,6 +156,7 @@ namespace DeskMadeline
             player.SetFreezeFramesEnabled(settings.FreezeFramesEnabled);
             player.InfiniteStamina = settings.InfiniteStamina;
             player.SetDashMode(settings.DashMode);
+            player.Gliders = gliders;
             if (settings.Language == "en") english = true;
             else if (settings.Language == "zh") english = false;
             bindings = new KeyBindings(System.IO.Path.Combine(
@@ -325,6 +330,10 @@ namespace DeskMadeline
             Add("runSlow", Sprites.Seq("runSlow", 0, 11), 0.07f, false);
             if (d.TryGetValue("runSlow", out var runSlowAnim)) runSlowAnim.Goto = "runFast";
             Add("runFast", Sprites.Seq("runFast", 0, 11), 0.05f, true);
+            Add("idle_carry", Sprites.Seq("idle_carry", 0, 8), 0.1f, true);
+            Add("runSlow_carry", Sprites.Seq("run_carry", 0, 11), 0.07f, true);
+            Add("jumpSlow_carry", Sprites.Seq("jump_carry", 0, 1), 0.1f, true);
+            Add("fallSlow_carry", Sprites.Seq("jump_carry", 2, 3), 0.1f, false);
             var stumble = new List<string> { "runStumble10", "runStumble11" };
             stumble.AddRange(Sprites.Seq("runStumble", 0, 11));
             Add("runStumble", stumble.ToArray(), 0.05f, false);
@@ -439,6 +448,15 @@ namespace DeskMadeline
                 Log("skin -> " + (skin?.DisplayName ?? "default"));
             }
 
+            int spawnCount = Interlocked.Exchange(ref pendingGliderSpawns, 0);
+            for (int i = 0; i < spawnCount; i++)
+            {
+                // Spawn just above and in front of Madeline, as a normal unheld
+                // Glider actor rather than placing it directly in her pickup box.
+                gliders.Add(new Glider(new PointF(
+                    player.Pos.X + player.Facing * (18f + i * 5f), player.Pos.Y - 16f)));
+            }
+
             // 应用待定的缩放变更
             if (pendingScale > 0)
             {
@@ -536,6 +554,9 @@ namespace DeskMadeline
                 UpdateDashCoreVisuals(0f);
                 return;
             }
+
+            foreach (Glider glider in gliders)
+                glider.Update(dt, input, player.Solids, player.MinX, player.MaxX);
 
             UpdateWavedashWaves(dt);
 
@@ -991,9 +1012,10 @@ namespace DeskMadeline
         PetInput SampleInput()
         {
             var input = new PetInput();
-            // GetAsyncKeyState 本身是全局的，因此必须显式按前台窗口门控。
-            // 失焦时仅忽略输入，不安装全局 hook，也不吞掉其他程序的按键。
-            if (!InputEnabled || dragging || Win32.GetForegroundWindow() != Handle)
+            // GetAsyncKeyState is global. By default it is gated to this pet's
+            // focus; the explicit menu opt-in permits reading it while unfocused.
+            // No hook is installed and keys are never swallowed from other apps.
+            if (!InputEnabled || dragging || (!InputWhenUnfocused && Win32.GetForegroundWindow() != Handle))
             {
                 prevJump = prevDash = prevCrouchDash = false;
                 return input;
@@ -1195,6 +1217,7 @@ namespace DeskMadeline
                 float bodyAnchorY = player.Pos.Y - camY;
 
                 DrawWavedashWaves(g, camX, camY);
+                DrawGliders(g, camX, camY);
 
                 // 头发画在身体后面（先画头发，再画身体覆盖）。
                 // wakeUp 帧自带完整头发（蜷着睡觉），不再叠加模拟头发
@@ -1259,6 +1282,27 @@ namespace DeskMadeline
                 g.RotateTransform(slash.Angle * 180f / (float)Math.PI);
             g.DrawImage(tex, -12, -4, 24, 8);
             g.Restore(state);
+        }
+
+        void DrawGliders(Graphics g, float camX, float camY)
+        {
+            foreach (Glider glider in gliders)
+            {
+                Bitmap frame = Sprites.Get(glider.FrameId, false);
+                if (frame == null) continue;
+                var state = g.Save();
+                g.TranslateTransform(SnapPx(glider.Pos.X - camX), SnapPx(glider.Pos.Y - camY));
+                g.RotateTransform(glider.Rotation * 180f / (float)Math.PI);
+                float w = 48f * glider.ScaleX, h = 48f * glider.ScaleY;
+                float x = -w / 2f, y = -h / 2f;
+                // Glider.Render calls DrawSimpleOutline before drawing the sprite.
+                Sprites.DrawSilhouette(g, frame, Color.Black, x - 1f, y, w, h);
+                Sprites.DrawSilhouette(g, frame, Color.Black, x + 1f, y, w, h);
+                Sprites.DrawSilhouette(g, frame, Color.Black, x, y - 1f, w, h);
+                Sprites.DrawSilhouette(g, frame, Color.Black, x, y + 1f, w, h);
+                g.DrawImage(frame, x, y, w, h);
+                g.Restore(state);
+            }
         }
 
         void DrawBody(Graphics g, float anchorX, float anchorY)
@@ -1528,6 +1572,7 @@ namespace DeskMadeline
         {
             settings.Scale = pendingScale > 0 ? pendingScale : GameScale;
             settings.InputEnabled = InputEnabled;
+            settings.InputWhenUnfocused = InputWhenUnfocused;
             settings.AlwaysOnTop = AlwaysOnTop;
             settings.ParticlesEnabled = ParticlesEnabled;
             settings.FreezeFramesEnabled = player.FreezeFramesEnabled;
@@ -1792,10 +1837,18 @@ namespace DeskMadeline
             menu.Items.Add(scaleItem);
 
             ToolStripMenuItem inputItem = null;
-            inputItem = new ToolStripMenuItem(T("Keyboard controls while focused", "聚焦时响应键盘"), null, (_, __) =>
+            inputItem = new ToolStripMenuItem(T("Keyboard controls", "键盘控制"), null, (_, __) =>
             { InputEnabled = !InputEnabled; inputItem.Checked = InputEnabled; SaveSettings(); })
             { Checked = InputEnabled };
             menu.Items.Add(inputItem);
+            ToolStripMenuItem unfocusedInputItem = null;
+            unfocusedInputItem = new ToolStripMenuItem(T("Respond while unfocused", "失焦时也响应输入"), null, (_, __) =>
+            {
+                InputWhenUnfocused = !InputWhenUnfocused;
+                unfocusedInputItem.Checked = InputWhenUnfocused;
+                SaveSettings();
+            }) { Checked = InputWhenUnfocused };
+            menu.Items.Add(unfocusedInputItem);
             menu.Items.Add(BuildBindingsMenu());
 
             ToolStripMenuItem topItem = null;
@@ -1908,12 +1961,14 @@ namespace DeskMadeline
                 animator.Play("wakeUp", true);
             }));
             menu.Items.Add(new ToolStripMenuItem(T("Reset position", "重置位置"), null, (_, __) => ResetPosition()));
+            menu.Items.Add(new ToolStripMenuItem(T("Spawn jellyfish", "生成水母"), null, (_, __) =>
+                Interlocked.Increment(ref pendingGliderSpawns)));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem(T("Controls", "操作说明"), null, (_, __) =>
                 MessageBox.Show(
                     T(
-                        "Click Madeline first to focus her; she ignores keys while another app is focused.\nKeys can be changed under Key bindings (three slots per action). Crouch Dash is separate and unbound by default.\n\nMove: Arrow keys / A D\nJump: C (coyote time + variable height)\nDash: X (8 directions; refills on landing)\nClimb: Hold Grab against a wall (uses stamina)\n\nTech:\n· Super: press Jump during a grounded dash\n· Hyper: down-diagonal grounded dash, then Jump\n· Wavedash/Ultra: down-diagonal air dash, then Jump on landing\n· Cornerboost: Grab + wall-jump within 0.06s after hitting a wall\n· Left-drag Madeline to throw her\n\nWindows are hollow platforms: stand on borders or climb their sides.",
-                        "先点击玛德琳取得键盘焦点；切换到其他程序后她会忽略按键。\n可在“按键绑定”中修改按键（每项三栏）。蹲冲为独立按键，默认未绑定。\n\n移动：方向键 / AD\n跳跃：C（土狼时间+可变跳高）\n冲刺：X（8方向，着地恢复）\n攀爬：对准墙按住抓取（消耗体力）\n\n技巧：\n· Super：地面冲刺中按跳跃\n· Hyper：地面斜下冲后按跳跃\n· Wavedash/Ultra：空中斜下冲，落地时按跳跃\n· Cornerboost：冲刺撞墙后 0.06s 内抓墙+蹬墙跳\n· 左键拖着玛德琳甩出去\n\n窗口是空心平台：可站边框、爬侧边。"),
+                        "Click Madeline first to focus her, or enable Respond while unfocused. Keys can be changed under Key bindings (three slots per action). Crouch Dash is separate and unbound by default.\n\nMove: Arrow keys / A D\nJump: C (coyote time + variable height)\nDash: X (8 directions; refills on landing)\nClimb / carry: Hold Grab against a wall or near a jellyfish\n\nTech:\n· Super: press Jump during a grounded dash\n· Hyper: down-diagonal grounded dash, then Jump\n· Wavedash/Ultra: down-diagonal air dash, then Jump on landing\n· Cornerboost: Grab + wall-jump within 0.06s after hitting a wall\n· Left-drag Madeline to throw her\n\nWindows are hollow platforms: stand on borders or climb their sides.",
+                        "先点击玛德琳取得键盘焦点，或启用“失焦时也响应输入”。可在“按键绑定”中修改按键（每项三栏）。蹲冲为独立按键，默认未绑定。\n\n移动：方向键 / AD\n跳跃：C（土狼时间+可变跳高）\n冲刺：X（8方向，着地恢复）\n攀爬/携带：对准墙或靠近水母时按住抓取\n\n技巧：\n· Super：地面冲刺中按跳跃\n· Hyper：地面斜下冲后按跳跃\n· Wavedash/Ultra：空中斜下冲，落地时按跳跃\n· Cornerboost：冲刺撞墙后 0.06s 内抓墙+蹬墙跳\n· 左键拖着玛德琳甩出去\n\n窗口是空心平台：可站边框、爬侧边。"),
                     T("Desk Madeline", "玛德琳桌宠"), MessageBoxButtons.OK, MessageBoxIcon.Information)));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem(T("Exit", "退出"), null, (_, __) => ExitApp()));

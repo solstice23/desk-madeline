@@ -212,6 +212,17 @@ namespace DeskMadeline
         {
             if (frameId != null && Overrides.TryGetValue(frameId, out meta)) return true;
             if (frameId != null && Offsets.TryGetValue(frameId, out meta)) return true;
+            // Carry sheets use the same head poses as their non-carry counterparts.
+            // This fallback keeps hair anchored for base and partially implemented
+            // skins without requiring duplicate metadata for every carry frame.
+            if (frameId != null)
+            {
+                string fallback = null;
+                if (frameId.StartsWith("idle_carry")) fallback = "idle" + frameId.Substring("idle_carry".Length);
+                else if (frameId.StartsWith("run_carry")) fallback = "runFast" + frameId.Substring("run_carry".Length);
+                else if (frameId.StartsWith("jump_carry")) fallback = "jumpSlow" + frameId.Substring("jump_carry".Length);
+                if (fallback != null && Offsets.TryGetValue(fallback, out meta)) return true;
+            }
             meta = default; return false;
         }
 

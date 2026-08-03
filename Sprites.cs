@@ -121,6 +121,8 @@ namespace DeskMadeline
                     .FirstOrDefault(d => Path.GetFileName(d).Equals("sweat", StringComparison.OrdinalIgnoreCase));
                 if (sweat != null) LoadDirectory(sweat, "sweat");
             }
+            string glider = Path.Combine(Path.GetDirectoryName(dir), "glider");
+            if (Directory.Exists(glider)) LoadDirectory(glider, "glider/");
         }
 
         static void LoadDirectory(string dir, string idPrefix)

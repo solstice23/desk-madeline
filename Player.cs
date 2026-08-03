@@ -98,6 +98,9 @@ namespace DeskMadeline
         public bool onGround;
         public IntPtr GroundId;
         public PointF DashDir;
+        public IList<Glider> Gliders;
+        public Glider Holding { get; private set; }
+        public bool IsHoldingGlider => Holding != null;
 
         // 表现
         public float SpriteScaleX = 1f, SpriteScaleY = 1f;
@@ -172,6 +175,7 @@ namespace DeskMadeline
         float highestAirY;
         float landingStumbleTimer;
         float sweatJumpTimer;
+        float minHoldTimer;
 
         // 保留速度（cornerboost）：撞墙瞬间保存水平速度，时限内墙不再阻挡则返还
         float wallSpeedRetained;
@@ -437,6 +441,11 @@ namespace DeskMadeline
         /// <summary>重置到指定位置：清空速度/状态/冲刺/体力/计时器，头发复位。</summary>
         public void ResetTo(PointF pos)
         {
+            if (Holding != null)
+            {
+                Holding.Release(PointF.Empty);
+                Holding = null;
+            }
             Pos = pos;
             Speed = new PointF(0, 0);
             State = StNormal;
@@ -481,6 +490,7 @@ namespace DeskMadeline
             landingStumbleTimer = 0f;
             SweatAnimId = "idle";
             sweatJumpTimer = 0f;
+            minHoldTimer = 0f;
             counter.X = counter.Y = 0;
             Hair.Reset(new PointF(Pos.X, Pos.Y - 9), Facing);
         }
@@ -543,6 +553,7 @@ namespace DeskMadeline
                 sweatJumpTimer -= dt;
                 if (sweatJumpTimer <= 0f) SweatAnimId = "idle";
             }
+            if (minHoldTimer > 0f) minHoldTimer -= dt;
 
             onGround = !BeingDragged && CheckGround();
 
@@ -642,6 +653,9 @@ namespace DeskMadeline
                 MoveH(Speed.X * dt);
                 MoveV(Speed.Y * dt);
 
+                if (Holding != null)
+                    Holding.Carry(new PointF(Pos.X, Pos.Y - 12f));
+
                 // 屏幕左右边界
                 if (Pos.X < MinX + 4) { Pos.X = MinX + 4; if (Speed.X < 0) Speed.X = 0; }
                 if (Pos.X > MaxX - 4) { Pos.X = MaxX - 4; if (Speed.X > 0) Speed.X = 0; }
@@ -696,8 +710,16 @@ namespace DeskMadeline
         // ===== 普通状态 =====
         void NormalUpdate(float dt, PetInput input)
         {
+            if (Holding == null && input.GrabHeld && !IsTired && !Ducking && TryPickupGlider())
+            {
+                // Vanilla briefly enters its pickup state.  The pet has no cutscene
+                // state, so it keeps the same motion and begins carrying immediately.
+                Ducking = false;
+            }
+
             // 抓墙进入攀爬
-            if (input.GrabHeld && !IsTired && !Ducking && Speed.Y >= 0 && Sign(Speed.X) != -Facing)
+            if (Holding == null && input.GrabHeld && !IsTired && !Ducking &&
+                Speed.Y >= 0 && Sign(Speed.X) != -Facing)
             {
                 if (ClimbCheck(Facing))
                 {
@@ -721,8 +743,25 @@ namespace DeskMadeline
             }
             if (CanDash) { State = StartDash(input); return; }
 
+            if (Holding != null && !input.GrabHeld && minHoldTimer <= 0f)
+            {
+                if (input.MoveY == 1) DropGlider();
+                else ThrowGlider();
+            }
+
             // 蹲下 / 起身
-            if (Ducking)
+            if (Holding != null)
+            {
+                if (!Ducking && onGround && input.MoveY == 1 && Speed.Y >= 0f)
+                {
+                    DropGlider();
+                    Ducking = true;
+                    SpriteScaleX = 1.4f; SpriteScaleY = 0.6f;
+                }
+                else if (onGround && Ducking && CanUnDuck)
+                    Ducking = false;
+            }
+            else if (Ducking)
             {
                 if (onGround && input.MoveY != 1 && CanUnDuck)
                 {
@@ -762,16 +801,26 @@ namespace DeskMadeline
             else
             {
                 float mult = onGround ? 1f : AirMult;
-                if (Math.Abs(Speed.X) > MaxRun && Sign(Speed.X) == moveX)
-                    Speed.X = Approach(Speed.X, MaxRun * moveX, RunReduce * mult * dt);
+                float maxRun = Holding != null && !onGround ? 108.00001f : MaxRun;
+                if (Holding != null && !onGround) mult *= 0.5f;
+                if (Math.Abs(Speed.X) > maxRun && Sign(Speed.X) == moveX)
+                    Speed.X = Approach(Speed.X, maxRun * moveX, RunReduce * mult * dt);
                 else
-                    Speed.X = Approach(Speed.X, MaxRun * moveX, RunAccel * mult * dt);
+                    Speed.X = Approach(Speed.X, maxRun * moveX, RunAccel * mult * dt);
             }
 
             // 最大下落速度
-            maxFall = (input.MoveY == 1 && Speed.Y >= MaxFall)
-                ? Approach(maxFall, FastMaxFall, FastMaxAccel * dt)
-                : Approach(maxFall, MaxFall, FastMaxAccel * dt);
+            if (Holding != null)
+            {
+                float gliderTarget = input.MoveY > 0 ? 120f : input.MoveY < 0 ? 24f : 40f;
+                maxFall = Approach(maxFall, gliderTarget, FastMaxAccel * dt);
+            }
+            else
+            {
+                maxFall = (input.MoveY == 1 && Speed.Y >= MaxFall)
+                    ? Approach(maxFall, FastMaxFall, FastMaxAccel * dt)
+                    : Approach(maxFall, MaxFall, FastMaxAccel * dt);
+            }
             // 快速下落拉伸（原作：Speed.Y > 200 → 渐变到 0.5x1.5）
             if (input.MoveY == 1 && Speed.Y >= MaxFall)
             {
@@ -788,7 +837,7 @@ namespace DeskMadeline
             {
                 float target = maxFall;
                 wallSlideDir = 0;
-                if ((moveX == Facing || (moveX == 0 && input.GrabHeld)) && input.MoveY != 1 &&
+                if (Holding == null && (moveX == Facing || (moveX == 0 && input.GrabHeld)) && input.MoveY != 1 &&
                     Speed.Y >= 0 && wallSlideTimer > 0 && CanUnDuck && CollideAt(Pos.X + Facing, Pos.Y))
                 {
                     Ducking = false;
@@ -803,6 +852,7 @@ namespace DeskMadeline
                     target = 160f + (20f - 160f) * (wallSlideTimer / WallSlideTime);
                 }
                 float gravMult = (Math.Abs(Speed.Y) < HalfGravThreshold && (input.JumpHeld || autoJump)) ? 0.5f : 1f;
+                if (Holding != null) gravMult *= 0.5f;
                 Speed.Y = Approach(Speed.Y, target, Gravity * gravMult * dt);
             }
             else wallSlideDir = 0;
@@ -834,6 +884,40 @@ namespace DeskMadeline
 
         }
 
+        bool TryPickupGlider()
+        {
+            if (Gliders == null) return false;
+            Glider nearest = null;
+            float nearestSq = float.MaxValue;
+            foreach (Glider glider in Gliders)
+            {
+                if (!glider.CanPickup(this)) continue;
+                float dx = glider.Pos.X - Pos.X, dy = glider.Pos.Y - Pos.Y;
+                float distanceSq = dx * dx + dy * dy;
+                if (distanceSq < nearestSq) { nearest = glider; nearestSq = distanceSq; }
+            }
+            if (nearest == null || !nearest.Pickup(this)) return false;
+            Holding = nearest;
+            minHoldTimer = 0.35f;
+            nearest.Carry(new PointF(Pos.X, Pos.Y - 12f));
+            return true;
+        }
+
+        void ThrowGlider()
+        {
+            if (Holding == null) return;
+            Holding.Release(new PointF(Facing, 0f));
+            Holding = null;
+            Speed.X -= 80f * Facing;
+        }
+
+        void DropGlider()
+        {
+            if (Holding == null) return;
+            Holding.Release(PointF.Empty);
+            Holding = null;
+        }
+
         float maxFall = MaxFall;
 
         void Jump(PetInput input, bool particles = true)
@@ -861,8 +945,8 @@ namespace DeskMadeline
             wallSlideTimer = WallSlideTime;
             wallBoostTimer = 0f;
             dashAttackTimer = 0f;  // 原作：super 跳清除冲刺攻击窗口
-            // Vanilla SuperJump always launches in Facing. Dash start already updates
-            // Facing from DashDir; holding the opposite direction does not reverse it.
+            // Vanilla SuperJump launches in Facing rather than DashDir. Facing can
+            // change during the dash, which is what enables reverse dash tech.
             int dir = Facing;
             Speed.X = SuperJumpH * dir;
             Speed.Y = JumpSpeed;
@@ -892,8 +976,11 @@ namespace DeskMadeline
             Speed.X = WallJumpHSpeed * dir;
             Speed.Y = JumpSpeed;
             varJumpSpeed = Speed.Y;
-            // 原作：只有按住方向键时才强制移动（无输入时蹬墙跳不强制方向偏移）
-            if (moveX != 0) { forceMoveX = dir; forceMoveXTimer = WallJumpForceTime; }
+            // A held glider always gets the longer 0.26s wall-jump steering lock.
+            // Without one, vanilla only applies the normal 0.16s lock when a
+            // horizontal direction was held on the jump frame.
+            if (Holding != null) { forceMoveX = dir; forceMoveXTimer = 0.26f; }
+            else if (moveX != 0) { forceMoveX = dir; forceMoveXTimer = WallJumpForceTime; }
             Facing = dir;
             LastWallJumpDirection = dir;
             WallJumpEffectCount++;
@@ -1012,7 +1099,11 @@ namespace DeskMadeline
                 if (input.MoveY == -1)
                 {
                     ty = ClimbUpSpeed;
-                    if (CollideAt(Pos.X, Pos.Y - 1) || SlipCheck(-1f))
+                    // Vanilla only combines SlipCheck(-1) with
+                    // ClimbHopBlockedCheck (carried strawberry seeds). The desktop
+                    // pet has no followers, so an exposed lip must proceed to the
+                    // normal SlipCheck below and ledge-hop instead of getting stuck.
+                    if (CollideAt(Pos.X, Pos.Y - 1))
                     {
                         if (Speed.Y < 0f) Speed.Y = 0f;
                         ty = 0f;
@@ -1153,6 +1244,10 @@ namespace DeskMadeline
         {
             dashTime -= dt;
 
+            if (Holding == null && (DashDir.X != 0f || DashDir.Y != 0f) &&
+                input.GrabHeld && !IsTired && CanUnDuck)
+                TryPickupGlider();
+
             // 跳跃打断冲刺 → Super / Hyper / Ultra / 蹬墙跳（原作 DashUpdate 中 jump 优先于一切）
             if (input.JumpPressed)
             {
@@ -1239,14 +1334,25 @@ namespace DeskMadeline
                 }
                 else if (Math.Abs(Speed.X) <= 25 && moveX == 0)
                 {
-                    bool noGroundAhead1 = !CollideAt(Pos.X + Facing, Pos.Y + 2);
-                    bool noGroundAhead4 = !CollideAt(Pos.X + Facing * 4, Pos.Y + 2);
-                    bool noGroundBehind1 = !CollideAt(Pos.X - Facing, Pos.Y + 2);
-                    bool noGroundBehind4 = !CollideAt(Pos.X - Facing * 4, Pos.Y + 2);
-                    if (noGroundAhead1 && noGroundAhead4) id = "edge";
-                    else if (noGroundBehind1 && noGroundBehind4) id = "edgeBack";
-                    else if (input.MoveY == -1) id = "lookUp";
-                    else id = "idle";
+                    if (Holding != null)
+                    {
+                        id = "idle_carry";
+                    }
+                    else
+                    {
+                        bool noGroundAhead1 = !CollideAt(Pos.X + Facing, Pos.Y + 2);
+                        bool noGroundAhead4 = !CollideAt(Pos.X + Facing * 4, Pos.Y + 2);
+                        bool noGroundBehind1 = !CollideAt(Pos.X - Facing, Pos.Y + 2);
+                        bool noGroundBehind4 = !CollideAt(Pos.X - Facing * 4, Pos.Y + 2);
+                        if (noGroundAhead1 && noGroundAhead4) id = "edge";
+                        else if (noGroundBehind1 && noGroundBehind4) id = "edgeBack";
+                        else if (input.MoveY == -1) id = "lookUp";
+                        else id = "idle";
+                    }
+                }
+                else if (Holding != null)
+                {
+                    id = "runSlow_carry";
                 }
                 else if (Sign(Speed.X) == -moveX && moveX != 0)
                 {
@@ -1267,12 +1373,14 @@ namespace DeskMadeline
             }
             else if (Speed.Y < 0)
             {
-                if (fastJump || Math.Abs(Speed.X) > 90) { fastJump = true; id = "jumpFast"; }
+                if (Holding != null) id = "jumpSlow_carry";
+                else if (fastJump || Math.Abs(Speed.X) > 90) { fastJump = true; id = "jumpFast"; }
                 else id = "jumpSlow";
             }
             else
             {
-                if (fastJump || Speed.Y >= MaxFall) { fastJump = true; id = "fallFast"; }
+                if (Holding != null) id = "fallSlow_carry";
+                else if (fastJump || Speed.Y >= MaxFall) { fastJump = true; id = "fallFast"; }
                 else id = "fallSlow";
             }
 

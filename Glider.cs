@@ -1,0 +1,237 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+
+namespace DeskMadeline
+{
+    /// <summary>
+    /// Farewell jellyfish (Celeste's Glider): an 8x10 holdable actor with the
+    /// original free-flight gravity, wall bounce, throw force and slow-fall rules.
+    /// Coordinates use the same bottom-center convention as Player.
+    /// </summary>
+    public sealed class Glider
+    {
+        const float Width = 8f;
+        const float Height = 10f;
+
+        public PointF Pos;
+        public PointF Speed;
+        public Player Holder { get; private set; }
+        public bool IsHeld => Holder != null;
+        public string FrameId { get; private set; } = "glider/idle0";
+        public float Rotation { get; private set; }
+        public float ScaleX { get; private set; } = 1f;
+        public float ScaleY { get; private set; } = 1f;
+
+        float animTimer;
+        int animFrame;
+        string anim = "idle";
+        float noGravityTimer;
+        float highFrictionTimer;
+        float cannotHoldTimer;
+        PointF counter;
+
+        public Glider(PointF position) => Pos = position;
+
+        static float Approach(float value, float target, float amount)
+            => value > target ? Math.Max(target, value - amount) : Math.Min(target, value + amount);
+
+        static bool Overlap(float l, float t, float r, float b, in Solid solid)
+            => l < solid.R && r > solid.L && t < solid.B && b > solid.T;
+
+        static void Bounds(float x, float y, out float l, out float t, out float r, out float b)
+        {
+            l = x - Width / 2f;
+            r = x + Width / 2f;
+            t = y - Height;
+            b = y;
+        }
+
+        bool CollidesAt(float x, float y, IList<Solid> solids)
+        {
+            Bounds(x, y, out float l, out float t, out float r, out float b);
+            foreach (Solid solid in solids)
+                if (Overlap(l, t, r, b, solid)) return true;
+            return false;
+        }
+
+        bool BlocksMove(float x, float y, IList<Solid> solids)
+        {
+            Bounds(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
+            Bounds(x, y, out float l, out float t, out float r, out float b);
+            foreach (Solid solid in solids)
+                if (Overlap(l, t, r, b, solid) && !Overlap(l0, t0, r0, b0, solid)) return true;
+            return false;
+        }
+
+        public bool CanPickup(Player player)
+        {
+            if (IsHeld || cannotHoldTimer > 0f) return false;
+            // Holdable.PickupCollider is 20x22 at (-10,-16).
+            float l = Pos.X - 10f, r = Pos.X + 10f, t = Pos.Y - 16f, b = Pos.Y + 6f;
+            float ph = player.Ducking ? 6f : 11f;
+            return player.Pos.X - 4f < r && player.Pos.X + 4f > l &&
+                   player.Pos.Y - ph < b && player.Pos.Y > t;
+        }
+
+        public bool Pickup(Player player)
+        {
+            if (!CanPickup(player)) return false;
+            Holder = player;
+            Speed = PointF.Empty;
+            highFrictionTimer = 0.5f;
+            SetAnimation("held", true);
+            return true;
+        }
+
+        public void Carry(PointF position)
+        {
+            Pos = position;
+            counter = PointF.Empty;
+        }
+
+        public void Release(PointF force)
+        {
+            Holder = null;
+            noGravityTimer = 0.1f;
+            cannotHoldTimer = 0.3f;
+            force.Y *= 0.5f;
+            if (force.X != 0f && force.Y == 0f) force.Y = -0.4f;
+            Speed = new PointF(force.X * 100f, force.Y * 100f);
+            SetAnimation("idle", true);
+        }
+
+        public void Update(float dt, PetInput input, IList<Solid> solids, float minX, float maxX)
+        {
+            if (cannotHoldTimer > 0f) cannotHoldTimer -= dt;
+            if (noGravityTimer > 0f) noGravityTimer -= dt;
+            if (highFrictionTimer > 0f) highFrictionTimer -= dt;
+
+            if (IsHeld)
+            {
+                Player player = Holder;
+                float maxAngle = player.onGround ? 0.6981317f : 1.0471976f;
+                float targetRotation = Math.Max(-maxAngle, Math.Min(maxAngle,
+                    -player.Speed.X / 300f * maxAngle));
+                Rotation = Approach(Rotation, targetRotation, (float)Math.PI * dt);
+
+                bool open = !player.onGround && player.Speed.Y > 20f;
+                SetAnimation(open ? "fall" : "held");
+                float targetX = 1f, targetY = 1f;
+                if (open && input.MoveY > 0) { targetX = 0.7f; targetY = 1.4f; }
+                else if (open && input.MoveY < 0) { targetX = 1.2f; targetY = 0.8f; }
+                ScaleX = Approach(ScaleX, targetX, 2f * dt);
+                ScaleY = Approach(ScaleY, targetY, 2f * dt);
+            }
+            else
+            {
+                Rotation = Approach(Rotation, 0f, (float)Math.PI * dt);
+                ScaleX = Approach(ScaleX, 1f, 2f * dt);
+                ScaleY = Approach(ScaleY, 1f, 2f * dt);
+                SetAnimation("idle");
+
+                bool onGround = !CollidesAt(Pos.X, Pos.Y, solids) && CollidesAt(Pos.X, Pos.Y + 1f, solids);
+                if (onGround)
+                {
+                    Speed.X = Approach(Speed.X, 0f, 800f * dt);
+                }
+                else
+                {
+                    float friction = highFrictionTimer > 0f ? 10f : 40f;
+                    Speed.X = Approach(Speed.X, 0f, friction * dt);
+                    if (noGravityTimer <= 0f)
+                    {
+                        float gravity = Speed.Y >= -30f ? 100f : 200f;
+                        Speed.Y = Approach(Speed.Y, 30f, gravity * dt);
+                    }
+                }
+
+                MoveH(Speed.X * dt, solids);
+                MoveV(Speed.Y * dt, solids);
+                float half = Width / 2f;
+                if (Pos.X < minX + half) { Pos.X = minX + half; Speed.X = Math.Abs(Speed.X); }
+                else if (Pos.X > maxX - half) { Pos.X = maxX - half; Speed.X = -Math.Abs(Speed.X); }
+            }
+
+            UpdateAnimation(dt);
+        }
+
+        void MoveH(float amount, IList<Solid> solids)
+        {
+            counter.X += amount;
+            int move = (int)Math.Round(counter.X, MidpointRounding.ToEven);
+            if (move == 0) return;
+            counter.X -= move;
+            int sign = Math.Sign(move);
+            while (move != 0)
+            {
+                if (BlocksMove(Pos.X + sign, Pos.Y, solids))
+                {
+                    counter.X = 0f;
+                    Speed.X *= -1f;
+                    ScaleX = 0.8f; ScaleY = 1.2f;
+                    return;
+                }
+                Pos.X += sign;
+                move -= sign;
+            }
+        }
+
+        void MoveV(float amount, IList<Solid> solids)
+        {
+            counter.Y += amount;
+            int move = (int)Math.Round(counter.Y, MidpointRounding.ToEven);
+            if (move == 0) return;
+            counter.Y -= move;
+            int sign = Math.Sign(move);
+            while (move != 0)
+            {
+                if (BlocksMove(Pos.X, Pos.Y + sign, solids))
+                {
+                    counter.Y = 0f;
+                    if (Math.Abs(Speed.Y) > 8f) { ScaleX = 1.2f; ScaleY = 0.8f; }
+                    Speed.Y = Speed.Y < 0f ? Speed.Y * -0.5f : 0f;
+                    return;
+                }
+                Pos.Y += sign;
+                move -= sign;
+            }
+        }
+
+        void SetAnimation(string id, bool restart = false)
+        {
+            if (!restart && anim == id) return;
+            anim = id;
+            animFrame = 0;
+            animTimer = 0f;
+        }
+
+        void UpdateAnimation(float dt)
+        {
+            animTimer += dt;
+            if (anim == "held")
+            {
+                FrameId = "glider/held0";
+                return;
+            }
+            if (anim == "fall")
+            {
+                if (animTimer >= 0.1f)
+                {
+                    animTimer -= 0.1f;
+                    animFrame++;
+                }
+                FrameId = animFrame < 3
+                    ? "glider/fall" + animFrame
+                    : "glider/fallLoop" + ((animFrame - 3) % 2);
+                return;
+            }
+            if (animTimer >= 0.1f)
+            {
+                animTimer -= 0.1f;
+                animFrame = (animFrame + 1) % 10;
+            }
+            FrameId = "glider/idle" + animFrame;
+        }
+    }
+}

@@ -45,10 +45,12 @@ bin\Release\net8.0-windows\DeskMadeline.exe
 | 方向键 / WASD | 移动 |
 | C | 跳跃（土狼时间 + 可变跳高） |
 | X | 冲刺（8 方向，着地恢复） |
-| Z / V / 左 Shift | 攀爬（贴墙按住，消耗体力） |
+| Z / V / 左 Shift | 攀爬；靠近水母时拾取，松开投掷 |
 | 自定义（默认未绑定） | 蹲冲（独立 8 方向瞄准） |
 | 左键拖拽 | 抓住玛德琳甩出去 |
 | 右键 | 托盘菜单（缩放 2x-8x、响应键盘、置顶、重置位置） |
+
+右键菜单的「生成水母」会在玛德琳前上方放置一只 Farewell 水母。携带时具有原版慢落／方向控制，按下抓取键捡起，松开抓取键投掷，按住下再松开则放下。「失焦时也响应输入」可选择让桌宠在其他程序位于前台时继续读取绑定按键；该选项默认关闭且不会吞掉其他程序的输入。
 
 **技巧（原作全套）**：Super / Hyper / Ultra / Wavedash / 蹬墙跳 / 反向超冲，以及 **Cornerboost**——冲刺撞墙后 0.06s 内抓墙+蹬墙跳，越过墙顶即保留冲刺速度（保留速度机制移植自原作 `wallSpeedRetained`）。
 
@@ -60,9 +62,9 @@ bin\Release\net8.0-windows\DeskMadeline.exe
 
 ## Skins / 皮肤
 
-The right-click menu's **Skin** submenu supports complete Skin Mod Helper and Skin Mod Helper Plus packages, plus classic direct `characters/player` replacements. Put either the original mod `.zip` or an unpacked mod directory under `skins` beside `DeskMadeline.exe`, then restart the pet. ZIPs are read into a validated local cache; an enclosing folder inside the archive is fine. The selected skin is remembered in `settings.txt`; **Default Madeline** switches back to the built-in art.
+The right-click menu's **Skin** submenu supports complete Skin Mod Helper and Skin Mod Helper Plus packages, plus classic direct `characters/player` replacements. Put either the original mod `.zip` or an unpacked mod directory under `skins` beside `DeskMadeline.exe`, then choose **Skin → Refresh skins**. ZIPs are read into a validated local cache; an enclosing folder inside the archive is fine. The selected skin is remembered in `settings.txt`; **Default Madeline** switches back to the built-in art.
 
-右键菜单的「皮肤」子菜单支持完整的 Skin Mod Helper / Skin Mod Helper Plus 皮肤包，也支持传统的 `characters/player` 直接替换包。把原始 mod `.zip` 或解压后的 mod 文件夹放进 exe 同目录的 `skins` 文件夹，然后重启桌宠。ZIP 会解压到经过路径和体积检查的本地缓存，压缩包内多套一层文件夹也没问题。选择会保存进 `settings.txt`；选「默认玛德琳」可恢复内置贴图。
+右键菜单的「皮肤」子菜单支持完整的 Skin Mod Helper / Skin Mod Helper Plus 皮肤包，也支持传统的 `characters/player` 直接替换包。把原始 mod `.zip` 或解压后的 mod 文件夹放进 exe 同目录的 `skins` 文件夹，然后选择「皮肤 → 刷新皮肤」。ZIP 会解压到经过路径和体积检查的本地缓存，压缩包内多套一层文件夹也没问题。选择会保存进 `settings.txt`；选「默认玛德琳」可恢复内置贴图。
 
 The loader follows Skin Mod Helper's source behavior: legacy `SkinId` paths, Plus `Player_List` + `Character_ID`, sprite paths from `Graphics/Sprites.xml`, vanilla fallback for omitted frames/hair/bangs, and legacy per-dash hair colors. The checked-in `example_skins` packages are discovered automatically by local development builds but are not copied into release output.
 
