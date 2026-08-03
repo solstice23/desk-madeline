@@ -223,6 +223,7 @@ namespace DeskMadeline
         PointF pickupCurveBegin, pickupCurveControl;
         float dreamDashCanEndTimer;
         float dreamDashAnimTimer, dreamDashOutTimer;
+        float dreamTechGraceTimer;
         float throwAnimTimer;
         float gliderBoostTimer;
         PointF gliderBoostDir;
@@ -500,6 +501,7 @@ namespace DeskMadeline
             State = StDreamDash;
             dreamDashCanEndTimer = 0.1f;
             dreamDashAnimTimer = 0.16f;
+            dreamTechGraceTimer = 0f;
             Speed = new PointF(DashDir.X * DashSpeed, DashDir.Y * DashSpeed);
             Stamina = ClimbMaxStamina;
             dashAttackTimer = 0f;
@@ -728,6 +730,7 @@ namespace DeskMadeline
             pickupCurveBegin = pickupCurveControl = PointF.Empty;
             dreamDashCanEndTimer = 0f;
             dreamDashAnimTimer = dreamDashOutTimer = 0f;
+            dreamTechGraceTimer = 0f;
             throwAnimTimer = 0f;
             gliderBoostTimer = 0f;
             gliderBoostDir = PointF.Empty;
@@ -877,6 +880,7 @@ namespace DeskMadeline
             if (minHoldTimer > 0f) minHoldTimer -= dt;
             if (dreamDashAnimTimer > 0f) dreamDashAnimTimer -= dt;
             if (dreamDashOutTimer > 0f) dreamDashOutTimer -= dt;
+            if (dreamTechGraceTimer > 0f) dreamTechGraceTimer -= dt;
             if (throwAnimTimer > 0f) throwAnimTimer -= dt;
 
             onGround = !BeingDragged && CheckGround();
@@ -887,6 +891,7 @@ namespace DeskMadeline
 
             if (onGround)
             {
+                dreamTechGraceTimer = 0f;
                 Stamina = ClimbMaxStamina;
                 wallSlideTimer = WallSlideTime;  // 原作：着地即重置滑墙时间
                 if (State != StClimb) autoJump = false;
@@ -1263,7 +1268,7 @@ namespace DeskMadeline
             // 跳跃
             if (input.JumpPressed)
             {
-                if (jumpGraceTimer > 0) Jump(input);
+                if (jumpGraceTimer > 0 || dreamTechGraceTimer > 0) Jump(input);
                 else if (CanUnDuck && WallJumpCheck(1))
                 {
                     if (Holding == null && Facing == 1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
@@ -1338,6 +1343,7 @@ namespace DeskMadeline
             ConsumeJump();
             autoJump = false;
             jumpGraceTimer = 0;
+            dreamTechGraceTimer = 0f;
             varJumpTimer = VarJumpTime;
             wallSlideTimer = WallSlideTime;
             wallBoostTimer = 0f;
@@ -1356,6 +1362,7 @@ namespace DeskMadeline
             ConsumeJump();
             autoJump = false;
             jumpGraceTimer = 0;
+            dreamTechGraceTimer = 0f;
             varJumpTimer = VarJumpTime;
             wallSlideTimer = WallSlideTime;
             wallBoostTimer = 0f;
@@ -1784,11 +1791,24 @@ namespace DeskMadeline
                 input.GrabHeld && !IsTired && CanUnDuck && TryPickupGlider())
                 return;
 
+            // A down-diagonal dash buffered across a horizontal DreamBlock exit
+            // remains diagonal. If jump is then pressed during the dream coyote
+            // window, it cancels into the corresponding hyper at that moment;
+            // do not flatten the dash early when no jump was requested.
+            if (input.JumpPressed && dreamTechGraceTimer > 0f &&
+                DashDir.X != 0f && DashDir.Y > 0f)
+            {
+                DashDir = new PointF(Sign(DashDir.X), 0f);
+                Speed.Y = 0f;
+                Ducking = true;
+            }
+
             // 跳跃打断冲刺 → Super / Hyper / Ultra / 蹬墙跳（原作 DashUpdate 中 jump 优先于一切）
             if (input.JumpPressed)
             {
                 // 地面/水平冲刺中跳 → 超级跳：super=260；蹲冲=hyper=325；落地瞬间=ultra
-                if (Math.Abs(DashDir.Y) < 0.1f && jumpGraceTimer > 0 && CanUnDuck)
+                if (Math.Abs(DashDir.Y) < 0.1f &&
+                    (jumpGraceTimer > 0 || dreamTechGraceTimer > 0) && CanUnDuck)
                 {
                     SuperJump();
                     EnterNormal();
@@ -1906,6 +1926,7 @@ namespace DeskMadeline
                 }
             }
             jumpGraceTimer = Math.Abs(DashDir.X) > 0.01f ? JumpGraceTime : 0f;
+            dreamTechGraceTimer = Math.Abs(DashDir.X) > 0.01f ? JumpGraceTime : 0f;
             RefillDash();
             Stamina = ClimbMaxStamina;
             dreamDashOutTimer = 0.16f;
