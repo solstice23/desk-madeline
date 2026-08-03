@@ -33,6 +33,7 @@ namespace DeskMadeline
         const double FixedDt = 1.0 / 60.0;
         static readonly IntPtr FloorId = new IntPtr(-991);
         const int WindowBorderPx = 8;           // 窗口空心边框厚度（物理像素）
+        const float EdgeWrapMargin = 12f;       // let the sprite clear the display before wrapping
 
         readonly Player player = new Player();
         readonly KeyBindings bindings;
@@ -1318,7 +1319,24 @@ namespace DeskMadeline
                     source = monitor;
                     break;
                 }
-            if (source.IsEmpty) return;
+            if (source.IsEmpty)
+            {
+                float nearestDistance = float.MaxValue;
+                foreach (RectangleF monitor in monitorGameBounds)
+                {
+                    float nearestX = Math.Max(monitor.Left, Math.Min(monitor.Right, previous.X));
+                    float nearestY = Math.Max(monitor.Top, Math.Min(monitor.Bottom, previous.Y));
+                    float dx = previous.X - nearestX, dy = previous.Y - nearestY;
+                    float distance = dx * dx + dy * dy;
+                    if (distance < nearestDistance)
+                    {
+                        nearestDistance = distance;
+                        source = monitor;
+                    }
+                }
+                float reach = EdgeWrapMargin + 8f;
+                if (nearestDistance > reach * reach) return;
+            }
 
             bool OnAnyMonitor(float x, float y)
             {
@@ -1329,38 +1347,37 @@ namespace DeskMadeline
             }
 
             float offsetX = 0f, offsetY = 0f;
-            float halfWidth = 4f;
-            float hitHeight = player.CurrentHitHeight;
             if ((edgeWrapMode & 1) != 0)
             {
-                float sampleY = Math.Max(source.Top, Math.Min(source.Bottom - 0.01f, player.Pos.Y - hitHeight * 0.5f));
-                if (player.Speed.X < 0f && player.Pos.X - halfWidth <= source.Left &&
+                float sampleY = Math.Max(source.Top, Math.Min(source.Bottom - 0.01f,
+                    player.Pos.Y - player.CurrentHitHeight * 0.5f));
+                if (player.Speed.X < 0f && player.Pos.X <= source.Left - EdgeWrapMargin &&
                     !OnAnyMonitor(source.Left - 0.01f, sampleY))
                 {
-                    float overshoot = source.Left - (player.Pos.X - halfWidth);
-                    offsetX = source.Right - halfWidth - overshoot - player.Pos.X;
+                    float overshoot = source.Left - EdgeWrapMargin - player.Pos.X;
+                    offsetX = source.Right + EdgeWrapMargin - overshoot - player.Pos.X;
                 }
-                else if (player.Speed.X > 0f && player.Pos.X + halfWidth >= source.Right &&
+                else if (player.Speed.X > 0f && player.Pos.X >= source.Right + EdgeWrapMargin &&
                     !OnAnyMonitor(source.Right + 0.01f, sampleY))
                 {
-                    float overshoot = player.Pos.X + halfWidth - source.Right;
-                    offsetX = source.Left + halfWidth + overshoot - player.Pos.X;
+                    float overshoot = player.Pos.X - source.Right - EdgeWrapMargin;
+                    offsetX = source.Left - EdgeWrapMargin + overshoot - player.Pos.X;
                 }
             }
             if ((edgeWrapMode & 2) != 0)
             {
                 float sampleX = Math.Max(source.Left, Math.Min(source.Right - 0.01f, player.Pos.X));
-                if (player.Speed.Y < 0f && player.Pos.Y - hitHeight <= source.Top &&
+                if (player.Speed.Y < 0f && player.Pos.Y <= source.Top - EdgeWrapMargin &&
                     !OnAnyMonitor(sampleX, source.Top - 0.01f))
                 {
-                    float overshoot = source.Top - (player.Pos.Y - hitHeight);
-                    offsetY = source.Bottom - overshoot - player.Pos.Y;
+                    float overshoot = source.Top - EdgeWrapMargin - player.Pos.Y;
+                    offsetY = source.Bottom + EdgeWrapMargin - overshoot - player.Pos.Y;
                 }
-                else if (player.Speed.Y > 0f && player.Pos.Y >= source.Bottom &&
+                else if (player.Speed.Y > 0f && player.Pos.Y >= source.Bottom + EdgeWrapMargin &&
                     !OnAnyMonitor(sampleX, source.Bottom + 0.01f))
                 {
-                    float overshoot = player.Pos.Y - source.Bottom;
-                    offsetY = source.Top + hitHeight + overshoot - player.Pos.Y;
+                    float overshoot = player.Pos.Y - source.Bottom - EdgeWrapMargin;
+                    offsetY = source.Top - EdgeWrapMargin + overshoot - player.Pos.Y;
                 }
             }
             player.WrapBy(offsetX, offsetY);

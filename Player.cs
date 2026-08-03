@@ -226,6 +226,9 @@ namespace DeskMadeline
         PointF deathRespawnPos;
         float deathTimer;
         float respawnTimer;
+        bool respawnTravels;
+        PointF respawnEffectStart;
+        PointF respawnTarget;
 
         // 保留速度（cornerboost）：撞墙瞬间保存水平速度，时限内墙不再阻挡则返还
         float wallSpeedRetained;
@@ -692,15 +695,21 @@ namespace DeskMadeline
 
         void BeginRespawn()
         {
+            PointF effectStart = DeathPosition;
             PointF target = deathRespawnPos;
             ResetTo(target);
-            if (!RespawnReversalEnabled) return;
+            respawnTravels = RespawnReversalEnabled;
             State = StIntroRespawn;
             respawnTimer = 0f;
-            // Reload creates a new Player directly at the respawn point. Its
-            // IntroRespawn DeathEffect contracts in place; the old death position
-            // is not transferred into the new room as a movement tween.
-            RespawnEffectPosition = new PointF(target.X, target.Y - 5f);
+            respawnEffectStart = effectStart;
+            respawnTarget = target;
+            if (respawnTravels)
+            {
+                Pos = new PointF(effectStart.X, effectStart.Y + 5f);
+                RespawnEffectPosition = effectStart;
+            }
+            else
+                RespawnEffectPosition = new PointF(target.X, target.Y - 5f);
             RespawnPercent = 1f;
             RespawnColor = DashCapacity > 1
                 ? (PetWindow.Instance?.ResolveHairColor(2, TwoDashesHairColor) ?? TwoDashesHairColor)
@@ -746,9 +755,17 @@ namespace DeskMadeline
                 // newly loaded player's position for 0.6 seconds.
                 respawnTimer += dt;
                 float progress = Math.Min(1f, respawnTimer / 0.6f);
+                if (respawnTravels)
+                {
+                    RespawnEffectPosition = new PointF(
+                        respawnEffectStart.X + (respawnTarget.X - respawnEffectStart.X) * progress,
+                        respawnEffectStart.Y + (respawnTarget.Y - 5f - respawnEffectStart.Y) * progress);
+                    Pos = new PointF(RespawnEffectPosition.X, RespawnEffectPosition.Y + 5f);
+                }
                 RespawnPercent = 1f - progress;
                 if (progress >= 1f)
                 {
+                    Pos = respawnTarget;
                     State = StNormal;
                     SpriteScaleX = 1.5f;
                     SpriteScaleY = 0.5f;
