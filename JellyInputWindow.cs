@@ -33,7 +33,9 @@ namespace DeskMadeline
                 const int WS_EX_TOOLWINDOW = 0x80, WS_EX_TOPMOST = 0x8;
                 var cp = base.CreateParams;
                 cp.ExStyle |= WS_EX_TOOLWINDOW;
-                if (ownerWindow.AlwaysOnTop) cp.ExStyle |= WS_EX_TOPMOST;
+                // CreateParams is queried by the Form base constructor before our
+                // constructor body assigns ownerWindow.
+                if (ownerWindow?.AlwaysOnTop ?? true) cp.ExStyle |= WS_EX_TOPMOST;
                 return cp;
             }
         }

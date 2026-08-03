@@ -150,6 +150,11 @@ namespace DeskMadeline
         public bool IsHitStopped => freezeTimer > 0f;
         public bool IsFrozen => freezeTimer > 0f || dashAimPending;
         public bool IsDashAttacking => DashAttacking;
+        public bool IsDead { get; private set; }
+        public float DeathPercent { get; private set; }
+        public PointF DeathPosition { get; private set; }
+        public Color DeathColor { get; private set; }
+        public int DeathSequenceCount { get; private set; }
 
         public void SetFreezeFramesEnabled(bool enabled)
         {
@@ -200,10 +205,16 @@ namespace DeskMadeline
         float minHoldTimer;
         float pickupTimer;
         PointF pickupStoredSpeed;
+        float pickupStoredVarJump;
         PointF pickupCurveBegin, pickupCurveControl;
         float dreamDashCanEndTimer;
         float dreamDashAnimTimer, dreamDashOutTimer;
         float throwAnimTimer;
+        float gliderBoostTimer;
+        PointF gliderBoostDir;
+        PointF dreamDashEntryPos;
+        PointF deathRespawnPos;
+        float deathTimer;
 
         // 保留速度（cornerboost）：撞墙瞬间保存水平速度，时限内墙不再阻挡则返还
         float wallSpeedRetained;
@@ -347,12 +358,6 @@ namespace DeskMadeline
                 }
                 if (blocked)
                 {
-                    if (TryEnterDreamDash(Pos.X + sign, Pos.Y, sign, 0))
-                    {
-                        Pos.X += sign;
-                        n -= sign;
-                        continue;
-                    }
                     counter.X = 0;
                     if (notifyCollision) OnCollideH(sign);
                     return; // Actor.MoveH discards the blocked movement remainder.
@@ -382,12 +387,6 @@ namespace DeskMadeline
                 }
                 if (blocked)
                 {
-                    if (TryEnterDreamDash(Pos.X, Pos.Y + sign, 0, sign))
-                    {
-                        Pos.Y += sign;
-                        n -= sign;
-                        continue;
-                    }
                     counter.Y = 0;
                     if (notifyCollision) OnCollideV(sign);
                     return; // Actor.MoveV discards the blocked movement remainder.
@@ -399,14 +398,54 @@ namespace DeskMadeline
 
         bool TryEnterDreamDash(float x, float y, int axisX, int axisY)
         {
-            if (State != StDash || !DashAttacking || !DreamAt(x, y)) return false;
+            // DreamDashCheck is keyed to DashAttacking, not StDash.  Pickup can
+            // return to Normal while the 0.3s attack window is still active; that
+            // is the vanilla interaction that makes jelly smuggling possible.
+            if (!DashAttacking || !DreamAt(x, y)) return false;
             if ((axisX != 0 && Sign(DashDir.X) != axisX) ||
                 (axisY != 0 && Sign(DashDir.Y) != axisY)) return false;
+
+            // DreamDashCheck excludes the DreamBlock itself when checking for a
+            // second Solid and performs a perpendicular 1..4px corner correction.
+            if (NonDreamAt(x, y))
+            {
+                float perpendicularX = Math.Abs(axisY);
+                float perpendicularY = Math.Abs(axisX);
+                float otherSpeed = axisX != 0 ? Speed.Y : Speed.X;
+                bool corrected = false;
+                if (otherSpeed <= 0f)
+                    for (int i = -1; i >= -4; i--)
+                    {
+                        float cx = x + perpendicularX * i, cy = y + perpendicularY * i;
+                        if (!NonDreamAt(cx, cy))
+                        {
+                            Pos = new PointF(Pos.X + perpendicularX * i, Pos.Y + perpendicularY * i);
+                            corrected = true;
+                            break;
+                        }
+                    }
+                if (!corrected && otherSpeed >= 0f)
+                    for (int i = 1; i <= 4; i++)
+                    {
+                        float cx = x + perpendicularX * i, cy = y + perpendicularY * i;
+                        if (!NonDreamAt(cx, cy))
+                        {
+                            Pos = new PointF(Pos.X + perpendicularX * i, Pos.Y + perpendicularY * i);
+                            corrected = true;
+                            break;
+                        }
+                    }
+                if (!corrected) return false;
+            }
+
+            dreamDashEntryPos = Pos;
             State = StDreamDash;
             dreamDashCanEndTimer = 0.1f;
             dreamDashAnimTimer = 0.16f;
             Speed = new PointF(DashDir.X * DashSpeed, DashDir.Y * DashSpeed);
             Stamina = ClimbMaxStamina;
+            dashAttackTimer = 0f;
+            gliderBoostTimer = 0f;
             return true;
         }
 
@@ -438,6 +477,7 @@ namespace DeskMadeline
                     }
                 }
             }
+            if (TryEnterDreamDash(Pos.X + sign, Pos.Y, sign, 0)) return true;
             if (wallSpeedRetentionTimer <= 0f)
             {
                 wallSpeedRetained = Speed.X;
@@ -445,6 +485,7 @@ namespace DeskMadeline
             }
             Speed.X = 0;
             dashAttackTimer = 0f;
+            gliderBoostTimer = 0f;
             return false;
         }
 
@@ -462,6 +503,7 @@ namespace DeskMadeline
                         for (int n = 1; n <= DashCornerCorrection; n++)
                             if (!CheckGroundAt(Pos.X + n, Pos.Y)) { MoveHExact(n, false); MoveVExact(1, false); return true; }
                 }
+                if (TryEnterDreamDash(Pos.X, Pos.Y + sign, 0, sign)) return true;
                 // 斜下冲刺落地 → wavedash / 凌波微步：转为蹲姿地面冲刺（原作状态无关，条件同款）
                 // 落地瞬间按 C → hyper 325 弹射；这就是「空中斜下冲 + 落地跳」的核心
                 if (DashDir.X != 0 && DashDir.Y > 0 && Speed.Y > 0)
@@ -484,6 +526,7 @@ namespace DeskMadeline
                 // Vanilla's vertical collision callback clears DashAttacking after
                 // processing the landing (unless corner correction returned early).
                 dashAttackTimer = 0f;
+                gliderBoostTimer = 0f;
                 Speed.Y = 0;
                 return false;
             }
@@ -500,7 +543,9 @@ namespace DeskMadeline
                     for (int i = 1; i <= upCorner; i++)
                         if (!CollideAt(Pos.X + i, Pos.Y - 1))
                         { Pos.X += i; Pos.Y -= 1; return true; }
+                if (TryEnterDreamDash(Pos.X, Pos.Y + sign, 0, sign)) return true;
                 Speed.Y = 0;
+                gliderBoostTimer = 0f;
                 // 原作：撞天花板取消可变跳高（防止撞头后仍保持低重力弧线）
                 if (varJumpTimer < 0.15f) varJumpTimer = 0;
                 return false;
@@ -528,6 +573,7 @@ namespace DeskMadeline
                 Holding = null;
             }
             Pos = pos;
+            deathRespawnPos = pos;
             Speed = new PointF(0, 0);
             State = StNormal;
             Dashes = DashCapacity;
@@ -574,10 +620,18 @@ namespace DeskMadeline
             minHoldTimer = 0f;
             pickupTimer = 0f;
             pickupStoredSpeed = PointF.Empty;
+            pickupStoredVarJump = 0f;
             pickupCurveBegin = pickupCurveControl = PointF.Empty;
             dreamDashCanEndTimer = 0f;
             dreamDashAnimTimer = dreamDashOutTimer = 0f;
             throwAnimTimer = 0f;
+            gliderBoostTimer = 0f;
+            gliderBoostDir = PointF.Empty;
+            dreamDashEntryPos = pos;
+            deathTimer = 0f;
+            IsDead = false;
+            DeathPercent = 0f;
+            DeathPosition = pos;
             counter.X = counter.Y = 0;
             Hair.Reset(new PointF(Pos.X, Pos.Y - 9), Facing);
         }
@@ -596,6 +650,13 @@ namespace DeskMadeline
         // ===== 主更新 =====
         public void Update(float dt, PetInput input)
         {
+            if (IsDead)
+            {
+                deathTimer += dt;
+                DeathPercent = Math.Min(1f, deathTimer / 0.834f);
+                if (deathTimer >= 0.834f) ResetTo(deathRespawnPos);
+                return;
+            }
             if (InfiniteStamina) Stamina = ClimbMaxStamina;
 
             // Celeste.Freeze halts Player.Update. Only advance the raw freeze here;
@@ -633,6 +694,7 @@ namespace DeskMadeline
             if (InfiniteDash && dashRefillReady && Dashes < DashCapacity)
                 RefillDash();
             if (dashAttackTimer > 0) dashAttackTimer -= dt;
+            if (gliderBoostTimer > 0f) gliderBoostTimer -= dt;
             if (hairFlashTimer > 0) hairFlashTimer -= dt;  // 头发闪白计时
             if (varJumpTimer > 0) varJumpTimer -= dt;
             if (sweatJumpTimer > 0f)
@@ -700,6 +762,7 @@ namespace DeskMadeline
 
             if (!BeingDragged)
             {
+                bool pickupCompletedThisFrame = false;
                 if (State == StPickup)
                 {
                     pickupTimer -= dt;
@@ -719,10 +782,28 @@ namespace DeskMadeline
                     {
                         Speed = pickupStoredSpeed;
                         Speed.Y = Math.Min(Speed.Y, 0f);
+                        varJumpTimer = pickupStoredVarJump;
+                        if (Holding != null)
+                        {
+                            if (gliderBoostTimer > 0f && gliderBoostDir.Y < 0f)
+                            {
+                                gliderBoostTimer = 0f;
+                                Speed.Y = Math.Min(Speed.Y, -DashSpeed * Math.Abs(gliderBoostDir.Y));
+                            }
+                            else if (Speed.Y < 0f)
+                                Speed.Y = Math.Min(Speed.Y, JumpSpeed);
+                        }
                         EnterNormal();
+                        pickupCompletedThisFrame = true;
                     }
                 }
-                else
+                if (State != StPickup)
+                {
+                // StateMachine's pickup coroutine completes during base.Update in
+                // vanilla. Actor movement then runs later in that same frame, but
+                // NormalUpdate does not. That one frame is what preserves the last
+                // dash-attack leniency needed for dream smuggling.
+                if (!pickupCompletedThisFrame)
                 {
                 // Celeste updates retained wall speed before its StateMachine
                 // component.  This ordering matters for corner boosts: the
@@ -752,7 +833,6 @@ namespace DeskMadeline
                     }
                 }
 
-                int stateBeforeUpdate = State;
                 switch (State)
                 {
                     case StNormal: NormalUpdate(dt, input); break;
@@ -765,12 +845,15 @@ namespace DeskMadeline
                 // space is available (except during climb).
                 if (Speed.Y > 0f && CanUnDuck && !onGround && jumpGraceTimer <= 0f && State != StClimb)
                     Ducking = false;
-
-                if (stateBeforeUpdate != StDreamDash || State == StDreamDash)
-                {
-                    MoveH(Speed.X * dt);
-                    MoveV(Speed.Y * dt);
                 }
+
+                // Player.orig_Update tests the current state separately before
+                // each axis. Exiting DreamDash therefore gets normal movement in
+                // the exit frame, while entering it on H suppresses the V move.
+                if (State != StDreamDash && !IsDead)
+                    MoveH(Speed.X * dt);
+                if (State != StDreamDash && !IsDead)
+                    MoveV(Speed.Y * dt);
 
                 if (Holding != null)
                     Holding.Carry(new PointF(Pos.X, Pos.Y - 12f +
@@ -1020,6 +1103,7 @@ namespace DeskMadeline
             Holding = nearest;
             minHoldTimer = 0.35f;
             pickupStoredSpeed = Speed;
+            pickupStoredVarJump = varJumpTimer;
             Speed = PointF.Empty;
             pickupTimer = 0.16f;
             pickupCurveBegin = new PointF(nearest.Pos.X - Pos.X, nearest.Pos.Y - Pos.Y);
@@ -1065,6 +1149,7 @@ namespace DeskMadeline
             wallSlideTimer = WallSlideTime;
             wallBoostTimer = 0f;
             dashAttackTimer = 0f;  // 原作：跳跃清除冲刺攻击窗口
+            gliderBoostTimer = 0f;
             Speed.X += JumpHBoost * moveX;
             Speed.Y = JumpSpeed;
             varJumpSpeed = Speed.Y;
@@ -1074,6 +1159,7 @@ namespace DeskMadeline
 
         void SuperJump()
         {
+            bool wasDucking = Ducking;
             ConsumeJump();
             autoJump = false;
             jumpGraceTimer = 0;
@@ -1093,6 +1179,10 @@ namespace DeskMadeline
                 Speed.Y *= DuckSuperJumpYMult;
             }
             varJumpSpeed = Speed.Y;
+            gliderBoostTimer = 0.55f;
+            gliderBoostDir = wasDucking
+                ? new PointF(0.8314696f * Facing, -0.5555702f)
+                : new PointF(0.7071068f * Facing, -0.7071068f);
             Facing = dir;
             LaunchCount++;
             JumpEffectCount++;
@@ -1109,6 +1199,7 @@ namespace DeskMadeline
             wallSlideTimer = WallSlideTime;
             wallBoostTimer = 0f;
             dashAttackTimer = 0f;  // 原作：蹬墙跳清除冲刺攻击窗口
+            gliderBoostTimer = 0f;
             Speed.X = WallJumpHSpeed * dir;
             Speed.Y = JumpSpeed;
             varJumpSpeed = Speed.Y;
@@ -1132,6 +1223,8 @@ namespace DeskMadeline
             jumpGraceTimer = 0;
             varJumpTimer = SuperWallJumpVarTime;
             dashAttackTimer = 0f;
+            gliderBoostTimer = 0.55f;
+            gliderBoostDir = new PointF(0f, -1f);
             wallSlideTimer = WallSlideTime;
             wallBoostTimer = 0f;
             Speed.X = SuperWallJumpH * dir;
@@ -1334,6 +1427,7 @@ namespace DeskMadeline
             dashCooldownTimer = DashCooldown;
             dashRefillCooldownTimer = DashRefillCooldown;
             dashAttackTimer = DashAttackTime;
+            gliderBoostTimer = 0.55f;
             wallSlideTimer = WallSlideTime;
             freezeTimer = FreezeFramesEnabled ? 0.05f : 0f; // 原作 Freeze(0.05)
             beforeDashSpeed = Speed;
@@ -1367,10 +1461,12 @@ namespace DeskMadeline
                 speed.X = beforeDashSpeed.X;
 
             DashDir = dir;
+            gliderBoostDir = dir;
             Speed = speed;
 
             // 地面斜下冲 → 蹲冲（1.2x，原作同款）
-            if (dashStartedOnGround && DashDir.X != 0 && DashDir.Y > 0 && Speed.Y > 0)
+            if (dashStartedOnGround && DashDir.X != 0 && DashDir.Y > 0 && Speed.Y > 0 &&
+                !DreamAt(Pos.X, Pos.Y + 1f))
             {
                 DashDir = new PointF(Sign(DashDir.X), 0);
                 Speed = new PointF(Speed.X * 1.2f, 0);
@@ -1436,6 +1532,10 @@ namespace DeskMadeline
         // restores the resources the original DreamDashEnd restores.
         void DreamDashUpdate(float dt, PetInput input)
         {
+            // Vanilla calls NaiveMove before testing the new overlap.  Keeping this
+            // order is frame-critical for dream jumps, double jumps and dream tech.
+            MoveH(Speed.X * dt);
+            MoveV(Speed.Y * dt);
             dreamDashCanEndTimer -= dt;
             if (DreamAt(Pos.X, Pos.Y) || dreamDashCanEndTimer > 0f) return;
 
@@ -1449,27 +1549,74 @@ namespace DeskMadeline
                 for (int sy = -1; sy <= 1; sy += 2)
                 {
                     PointF candidate = new PointF(original.X + x * sx, original.Y + y * sy);
-                    if (!NonDreamAt(candidate.X, candidate.Y)) { Pos = candidate; corrected = true; break; }
+                    // DreamDashedIntoSolid checks every Solid, including the
+                    // DreamBlock we just left.  A wiggle back into it is not a
+                    // valid escape from the wall.
+                    if (!CollideAt(candidate.X, candidate.Y)) { Pos = candidate; corrected = true; break; }
                 }
                 if (!corrected)
                 {
                     Pos = original;
-                    Speed = new PointF(-Speed.X, -Speed.Y);
-                    dreamDashCanEndTimer = 0.1f;
+                    DieFromDreamDash();
                     return;
                 }
             }
 
+            bool enterClimb = false;
             if (input.JumpPressed && Math.Abs(DashDir.X) > 0.01f)
                 Jump(input);
             else
+            {
                 autoJump = true;
+                // DreamDashUpdate's vanilla exit correction and Dream Grab.
+                // The 5px move puts Madeline back against the face she exited,
+                // then Grab + opposite movement can transition directly to Climb.
+                if (DashDir.Y >= 0f || Math.Abs(DashDir.X) > 0.01f)
+                {
+                    if (DashDir.X > 0f && CollideAt(Pos.X - 5f, Pos.Y))
+                        MoveHExact(-5, false);
+                    else if (DashDir.X < 0f && CollideAt(Pos.X + 5f, Pos.Y))
+                        MoveHExact(5, false);
+                    bool wallLeft = ClimbCheck(-1);
+                    bool wallRight = ClimbCheck(1);
+                    if (Holding == null && input.GrabHeld &&
+                        ((moveX == 1 && wallRight) || (moveX == -1 && wallLeft)))
+                    {
+                        Facing = moveX;
+                        enterClimb = true;
+                    }
+                }
+            }
             jumpGraceTimer = Math.Abs(DashDir.X) > 0.01f ? JumpGraceTime : 0f;
             RefillDash();
             Stamina = ClimbMaxStamina;
             dreamDashOutTimer = 0.16f;
             freezeTimer = FreezeFramesEnabled ? 0.05f : 0f;
-            EnterNormal();
+            if (enterClimb)
+            {
+                EnterClimb();
+                State = StClimb;
+            }
+            else
+                EnterNormal();
+        }
+
+        void DieFromDreamDash()
+        {
+            if (IsDead) return;
+            if (Holding != null) DropGlider();
+            IsDead = true;
+            DeathSequenceCount++;
+            DeathColor = HairColor;
+            DeathPosition = new PointF(Pos.X, Pos.Y - 5f);
+            DeathPercent = 0f;
+            deathTimer = 0f;
+            deathRespawnPos = dreamDashEntryPos;
+            Speed = PointF.Empty;
+            counter = PointF.Empty;
+            dashAimPending = false;
+            freezeTimer = 0f;
+            State = StFrozen;
         }
 
         // ===== 动画选择（移植 orig_UpdateSprite）=====

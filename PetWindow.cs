@@ -585,7 +585,7 @@ namespace DeskMadeline
             UpdateWavedashWaves(dt);
 
             // 离开屏幕很远自动重置（防"无限下落"/被甩出虚拟屏幕）
-            if (!introWakeUp) CheckAutoReset();
+            if (!introWakeUp && !player.IsDead) CheckAutoReset();
 
             // 粒子（走路/落地/跳跃/冲刺）+ 冲刺斩击计时
             if (ParticlesEnabled)
@@ -1343,15 +1343,22 @@ namespace DeskMadeline
 
                 DrawWavedashWaves(g, camX, camY);
 
-                // 头发画在身体后面（先画头发，再画身体覆盖）。
-                // wakeUp 帧自带完整头发（蜷着睡觉），不再叠加模拟头发
-                if (animator.CurrentId != "wakeUp")
+                if (player.IsDead)
                 {
-                    DrawCatTail(g, camX, camY);
-                    DrawHair(g, camX, camY);
+                    DrawDeathEffect(g, camX, camY);
                 }
-                DrawBody(g, bodyAnchorX, bodyAnchorY);
-                DrawSweat(g, bodyAnchorX, bodyAnchorY);
+                else
+                {
+                    // 头发画在身体后面（先画头发，再画身体覆盖）。
+                    // wakeUp 帧自带完整头发（蜷着睡觉），不再叠加模拟头发
+                    if (animator.CurrentId != "wakeUp")
+                    {
+                        DrawCatTail(g, camX, camY);
+                        DrawHair(g, camX, camY);
+                    }
+                    DrawBody(g, bodyAnchorX, bodyAnchorY);
+                    DrawSweat(g, bodyAnchorX, bodyAnchorY);
+                }
 
                 if (ParticlesEnabled) particles.Draw(g, camX, camY);
                 // SlashFx 与 TrailManager 是核心冲刺表现，不受粒子开关控制。
@@ -1437,7 +1444,10 @@ namespace DeskMadeline
                 g.TranslateTransform(SnapPx(glider.Pos.X - camX), SnapPx(glider.Pos.Y - camY));
                 g.RotateTransform(glider.Rotation * 180f / (float)Math.PI);
                 float w = 48f * glider.ScaleX, h = 48f * glider.ScaleY;
-                float x = -w / 2f, y = -h / 2f;
+                // Vanilla Sprites.xml: <Justify x="0.5" y="0.58"/>.
+                // Rotation and scale are around that origin, not the frame center.
+                float x = -24f * glider.ScaleX;
+                float y = -27.84f * glider.ScaleY;
                 // Glider.Render calls DrawSimpleOutline before drawing the sprite.
                 Sprites.DrawSilhouette(g, frame, Color.Black, x - 1f, y, w, h);
                 Sprites.DrawSilhouette(g, frame, Color.Black, x + 1f, y, w, h);
@@ -1470,7 +1480,8 @@ namespace DeskMadeline
                 g.TranslateTransform(32f, 32f);
                 g.RotateTransform(rotation);
                 float w = 48f * glider.ScaleX, h = 48f * glider.ScaleY;
-                float x = -w / 2f, y = -h / 2f;
+                float x = -24f * glider.ScaleX;
+                float y = -27.84f * glider.ScaleY;
                 Sprites.DrawSilhouette(g, frame, Color.Black, x - 1f, y, w, h);
                 Sprites.DrawSilhouette(g, frame, Color.Black, x + 1f, y, w, h);
                 Sprites.DrawSilhouette(g, frame, Color.Black, x, y - 1f, w, h);
@@ -1509,6 +1520,41 @@ namespace DeskMadeline
                     Sprites.DrawTinted(g, frame, Color.Red, x, y, w, h);
                 else
                     g.DrawImage(frame, x, y, w, h);
+            }
+        }
+
+        void DrawDeathEffect(Graphics g, float camX, float camY)
+        {
+            Bitmap texture = Sprites.Get("hair00", false);
+            if (texture == null) return;
+            float ease = player.DeathPercent;
+            float cubeOut = 1f - (float)Math.Pow(1f - ease, 3f);
+            float radius = cubeOut * 24f;
+            float scale = ease < 0.5f
+                ? 0.5f + ease
+                : 1f - (float)Math.Pow((ease - 0.5f) * 2f, 3f);
+            Color color = ((int)Math.Floor(ease * 10f) & 1) == 0
+                ? player.DeathColor : Color.White;
+            float centerX = player.DeathPosition.X - camX;
+            float centerY = player.DeathPosition.Y - camY;
+            for (int i = 0; i < 8; i++)
+            {
+                float angle = ((float)i / 8f + ease * 0.25f) * (float)Math.PI * 2f;
+                float x = SnapPx(centerX + (float)Math.Cos(angle) * radius);
+                float y = SnapPx(centerY + (float)Math.Sin(angle) * radius);
+                float w = SnapEven(10f * scale), h = SnapEven(10f * scale);
+                Sprites.DrawTinted(g, texture, Color.Black, x - w / 2f - 1f, y - h / 2f, w, h);
+                Sprites.DrawTinted(g, texture, Color.Black, x - w / 2f + 1f, y - h / 2f, w, h);
+                Sprites.DrawTinted(g, texture, Color.Black, x - w / 2f, y - h / 2f - 1f, w, h);
+                Sprites.DrawTinted(g, texture, Color.Black, x - w / 2f, y - h / 2f + 1f, w, h);
+            }
+            for (int i = 0; i < 8; i++)
+            {
+                float angle = ((float)i / 8f + ease * 0.25f) * (float)Math.PI * 2f;
+                float x = SnapPx(centerX + (float)Math.Cos(angle) * radius);
+                float y = SnapPx(centerY + (float)Math.Sin(angle) * radius);
+                float w = SnapEven(10f * scale), h = SnapEven(10f * scale);
+                Sprites.DrawTinted(g, texture, color, x - w / 2f, y - h / 2f, w, h);
             }
         }
 

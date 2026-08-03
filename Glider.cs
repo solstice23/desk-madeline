@@ -257,9 +257,9 @@ namespace DeskMadeline
             }
             if (anim == "fall")
             {
-                if (animTimer >= 0.1f)
+                if (animTimer >= 0.06f)
                 {
-                    animTimer -= 0.1f;
+                    animTimer -= 0.06f;
                     animFrame++;
                 }
                 FrameId = animFrame < 3
