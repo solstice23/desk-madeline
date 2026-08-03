@@ -31,6 +31,7 @@ namespace DeskMadeline
         float highFrictionTimer;
         float cannotHoldTimer;
         PointF counter;
+        IList<Solid> lastSolids;
 
         public Glider(PointF position) => Pos = position;
 
@@ -91,8 +92,26 @@ namespace DeskMadeline
             counter = PointF.Empty;
         }
 
-        public void Release(PointF force)
+        public void Release(PointF force, IList<Solid> solids = null)
         {
+            solids ??= lastSolids;
+            // Holdable.Release first moves an overlapping throwable out of Solid.
+            // This is essential after dream smuggling: without it the jelly remains
+            // embedded in the DreamBlock and cannot meet the regrab collider.
+            if (solids != null && CollidesAt(Pos.X, Pos.Y, solids))
+            {
+                if (force.X != 0f)
+                {
+                    int direction = Math.Sign(force.X);
+                    for (int distance = 1; distance <= 10; distance++)
+                    {
+                        if (CollidesAt(Pos.X + direction * distance, Pos.Y, solids)) continue;
+                        Pos.X += direction * distance;
+                        break;
+                    }
+                }
+                while (CollidesAt(Pos.X, Pos.Y, solids)) Pos.Y += 1f;
+            }
             Holder = null;
             noGravityTimer = 0.1f;
             cannotHoldTimer = 0.3f;
@@ -130,6 +149,7 @@ namespace DeskMadeline
 
         public void Update(float dt, PetInput input, IList<Solid> solids, float minX, float maxX)
         {
+            lastSolids = solids;
             if (cannotHoldTimer > 0f) cannotHoldTimer -= dt;
             if (noGravityTimer > 0f) noGravityTimer -= dt;
             if (highFrictionTimer > 0f) highFrictionTimer -= dt;

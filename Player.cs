@@ -593,7 +593,7 @@ namespace DeskMadeline
         {
             if (Holding != null)
             {
-                Holding.Release(PointF.Empty);
+                Holding.Release(PointF.Empty, Solids);
                 Holding = null;
             }
             Pos = pos;
@@ -680,7 +680,9 @@ namespace DeskMadeline
             {
                 deathTimer += dt;
                 DeathPercent = Math.Min(1f, deathTimer / 0.834f);
-                if (deathTimer >= 0.834f) ResetTo(deathRespawnPos);
+                // PlayerDeadBody begins the room reload after 65% of DeathEffect's
+                // 0.834s duration; the remaining effect is covered by the wipe.
+                if (deathTimer >= 0.834f * 0.65f) ResetTo(deathRespawnPos);
                 return;
             }
             if (InfiniteStamina) Stamina = ClimbMaxStamina;
@@ -1148,7 +1150,7 @@ namespace DeskMadeline
         void ThrowGlider()
         {
             if (Holding == null) return;
-            Holding.Release(new PointF(Facing, 0f));
+            Holding.Release(new PointF(Facing, 0f), Solids);
             Holding = null;
             Speed.X -= 80f * Facing;
             throwAnimTimer = 0.24f;
@@ -1157,14 +1159,14 @@ namespace DeskMadeline
         void DropGlider()
         {
             if (Holding == null) return;
-            Holding.Release(PointF.Empty);
+            Holding.Release(PointF.Empty, Solids);
             Holding = null;
         }
 
         public void ReleaseGliderForDrag()
         {
             if (Holding == null) return;
-            Holding.Release(PointF.Empty);
+            Holding.Release(PointF.Empty, Solids);
             Holding = null;
             minHoldTimer = 0f;
             if (State == StPickup) EnterNormal();
@@ -1333,9 +1335,6 @@ namespace DeskMadeline
         // ===== 攀爬状态 =====
         void ClimbUpdate(float dt, PetInput input)
         {
-            // Holdable.Check forbids ClimbTrigger, and an externally picked-up
-            // holdable must also eject an already-climbing player immediately.
-            if (Holding != null) { SweatAnimId = "idle"; EnterNormal(); return; }
             climbNoMoveTimer -= dt;
             if (onGround) Stamina = ClimbMaxStamina;
 
@@ -1610,14 +1609,17 @@ namespace DeskMadeline
                 if (DashDir.Y >= 0f || Math.Abs(DashDir.X) > 0.01f)
                 {
                     int exitDirection = Sign(DashDir.X);
-                    if (Holding == null && input.GrabHeld && moveX == -exitDirection &&
+                    // DreamDashUpdate does not apply NormalUpdate's Holding == null
+                    // climb-entry guard. This exception is the vanilla Dream
+                    // Smuggle Grab and is what makes the later jelly regrab viable.
+                    if (input.GrabHeld && moveX == -exitDirection &&
                         TryGetDreamExitWall(exitDirection, out Solid wall))
                     {
                         Facing = moveX;
                         Pos.X = exitDirection > 0 ? wall.R + 4f : wall.L - 4f;
                         enterClimb = true;
                     }
-                    else if (Holding == null && input.GrabHeld && exitDirection == 0)
+                    else if (input.GrabHeld && exitDirection == 0)
                     {
                         bool wallLeft = ClimbCheck(-1);
                         bool wallRight = ClimbCheck(1);
