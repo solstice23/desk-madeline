@@ -1377,6 +1377,14 @@ namespace DeskMadeline
             if (State == StPickup) EnterNormal();
         }
 
+        public void ForgetGlider(Glider glider)
+        {
+            if (Holding != glider) return;
+            Holding = null;
+            minHoldTimer = 0f;
+            if (State == StPickup) EnterNormal();
+        }
+
         float maxFall = MaxFall;
 
         void Jump(PetInput input, bool particles = true)

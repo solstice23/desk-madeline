@@ -52,6 +52,7 @@ namespace DeskMadeline
         int pendingScale = -1;
         volatile string pendingSkinId;
         int pendingGliderSpawns;
+        readonly Queue<Glider> pendingGliderRemovals = new Queue<Glider>();
         bool introWakeUp = true;   // 启动时先播"醒来"动画（wakeUp 00-14），播完切 idle
 
         // 渲染
@@ -512,6 +513,23 @@ namespace DeskMadeline
             }
             if (spawnCount > 0 && IsHandleCreated)
                 BeginInvoke(new Action(EnsureGliderWindows));
+
+            lock (pendingGliderRemovals)
+            {
+                while (pendingGliderRemovals.Count > 0)
+                {
+                    Glider glider = pendingGliderRemovals.Dequeue();
+                    if (!gliders.Remove(glider)) continue;
+                    player.ForgetGlider(glider);
+                    if (draggedGlider == glider) draggedGlider = null;
+                    soundEffects.StopLoop(glider);
+                    if (gliderStampCache.TryGetValue(glider, out GliderStampCache cache))
+                    {
+                        cache.Bitmap?.Dispose();
+                        gliderStampCache.Remove(glider);
+                    }
+                }
+            }
 
             // 应用待定的缩放变更
             if (pendingScale > 0)
@@ -1248,6 +1266,26 @@ namespace DeskMadeline
                     window.Show();
                 }
             }
+        }
+
+        internal string Localize(string en, string zh) => T(en, zh);
+
+        internal void RequestGliderRemoval(Glider glider)
+        {
+            lock (pendingGliderRemovals)
+                pendingGliderRemovals.Enqueue(glider);
+
+            // Let the ToolStrip click finish before disposing its owner window.
+            BeginInvoke(new Action(() =>
+            {
+                lock (gliderWindowLock)
+                {
+                    if (!gliderWindows.TryGetValue(glider, out JellyInputWindow window)) return;
+                    gliderWindows.Remove(glider);
+                    window.Close();
+                    window.Dispose();
+                }
+            }));
         }
 
         internal void BeginGliderDrag(Glider glider)

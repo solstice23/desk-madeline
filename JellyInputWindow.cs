@@ -24,6 +24,12 @@ namespace DeskMadeline
             Opacity = 0.01;
             Size = new Size(1, 1);
             Location = new Point(-10000, -10000);
+
+            var menu = new ContextMenuStrip();
+            menu.Items.Add(new ToolStripMenuItem(
+                ownerWindow.Localize("Remove", "移除"), null,
+                (_, __) => ownerWindow.RequestGliderRemoval(Glider)));
+            ContextMenuStrip = menu;
         }
 
         protected override CreateParams CreateParams
