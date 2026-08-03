@@ -173,7 +173,14 @@ namespace DeskMadeline
                 Rotation = Approach(Rotation, targetRotation, (float)Math.PI * dt);
 
                 bool open = !player.onGround && player.Speed.Y > 20f;
-                SetAnimation(open ? "fall" : "held");
+                bool opening = open && anim != "fall" && anim != "fallLoop";
+                if (opening) SetAnimation("fall");
+                else if (!open) SetAnimation("held");
+                // Glider.PlayOpen sets this exact squash before easing back to one.
+                // Besides matching the animation, keeping it as one continuous
+                // fall -> fallLoop state avoids repeatedly restarting differently
+                // colored expansion frames while the holder is falling.
+                if (opening) { ScaleX = 1.5f; ScaleY = 0.6f; }
                 float targetX = 1f, targetY = 1f;
                 if (open && input.MoveY > 0) { targetX = 0.7f; targetY = 1.4f; }
                 else if (open && input.MoveY < 0) { targetX = 1.2f; targetY = 0.8f; }
@@ -282,9 +289,24 @@ namespace DeskMadeline
                     animTimer -= 0.06f;
                     animFrame++;
                 }
-                FrameId = animFrame < 3
-                    ? "glider/fall" + animFrame
-                    : "glider/fallLoop" + ((animFrame - 3) % 2);
+                if (animFrame < 3)
+                    FrameId = "glider/fall" + animFrame;
+                else
+                {
+                    anim = "fallLoop";
+                    animFrame = 0;
+                    FrameId = "glider/fallLoop0";
+                }
+                return;
+            }
+            if (anim == "fallLoop")
+            {
+                if (animTimer >= 0.06f)
+                {
+                    animTimer -= 0.06f;
+                    animFrame = (animFrame + 1) % 2;
+                }
+                FrameId = "glider/fallLoop" + animFrame;
                 return;
             }
             if (animTimer >= 0.1f)

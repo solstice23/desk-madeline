@@ -155,6 +155,10 @@ namespace DeskMadeline
         public PointF DeathPosition { get; private set; }
         public Color DeathColor { get; private set; }
         public int DeathSequenceCount { get; private set; }
+        public bool IsRespawning => State == StIntroRespawn;
+        public float RespawnPercent { get; private set; }
+        public PointF RespawnEffectPosition { get; private set; }
+        public Color RespawnColor { get; private set; }
 
         public void SetFreezeFramesEnabled(bool enabled)
         {
@@ -215,8 +219,12 @@ namespace DeskMadeline
         float gliderBoostTimer;
         PointF gliderBoostDir;
         PointF dreamDashEntryPos;
+        Solid dreamDashBlock;
+        bool hasDreamDashBlock;
         PointF deathRespawnPos;
         float deathTimer;
+        float respawnTimer;
+        PointF respawnEffectStart;
 
         // 保留速度（cornerboost）：撞墙瞬间保存水平速度，时限内墙不再阻挡则返还
         float wallSpeedRetained;
@@ -270,6 +278,19 @@ namespace DeskMadeline
             HitboxAt(x, y, out float l, out float t, out float r, out float b);
             foreach (var s in Solids)
                 if (s.Dream && Overlap(l, t, r, b, s)) return true;
+            return false;
+        }
+
+        bool TryGetDreamAt(float x, float y, out Solid dream)
+        {
+            HitboxAt(x, y, out float l, out float t, out float r, out float b);
+            foreach (var solid in Solids)
+                if (solid.Dream && Overlap(l, t, r, b, solid))
+                {
+                    dream = solid;
+                    return true;
+                }
+            dream = default;
             return false;
         }
 
@@ -441,6 +462,7 @@ namespace DeskMadeline
             }
 
             dreamDashEntryPos = Pos;
+            hasDreamDashBlock = TryGetDreamAt(x, y, out dreamDashBlock);
             State = StDreamDash;
             dreamDashCanEndTimer = 0.1f;
             dreamDashAnimTimer = 0.16f;
@@ -654,12 +676,32 @@ namespace DeskMadeline
             gliderBoostTimer = 0f;
             gliderBoostDir = PointF.Empty;
             dreamDashEntryPos = pos;
+            hasDreamDashBlock = false;
             deathTimer = 0f;
+            respawnTimer = 0f;
             IsDead = false;
             DeathPercent = 0f;
             DeathPosition = pos;
+            RespawnPercent = 0f;
+            RespawnEffectPosition = pos;
             counter.X = counter.Y = 0;
             Hair.Reset(new PointF(Pos.X, Pos.Y - 9), Facing);
+        }
+
+        void BeginRespawn()
+        {
+            PointF effectStart = DeathPosition;
+            PointF target = deathRespawnPos;
+            ResetTo(target);
+            State = StIntroRespawn;
+            respawnTimer = 0f;
+            respawnEffectStart = effectStart;
+            RespawnEffectPosition = effectStart;
+            RespawnPercent = 1f;
+            RespawnColor = DashCapacity > 1
+                ? (PetWindow.Instance?.ResolveHairColor(2, TwoDashesHairColor) ?? TwoDashesHairColor)
+                : (PetWindow.Instance?.ResolveHairColor(1, NormalHairColor) ?? NormalHairColor);
+            HairColor = RespawnColor;
         }
 
         bool CanDash => (dashBufferTimer > 0 || crouchDashBufferTimer > 0) &&
@@ -682,7 +724,26 @@ namespace DeskMadeline
                 DeathPercent = Math.Min(1f, deathTimer / 0.834f);
                 // PlayerDeadBody begins the room reload after 65% of DeathEffect's
                 // 0.834s duration; the remaining effect is covered by the wipe.
-                if (deathTimer >= 0.834f * 0.65f) ResetTo(deathRespawnPos);
+                if (deathTimer >= 0.834f * 0.65f) BeginRespawn();
+                return;
+            }
+            if (State == StIntroRespawn)
+            {
+                // Player.IntroRespawn is a 0.6 second linear tween of a reversed
+                // DeathEffect from the old death point to the new player center.
+                respawnTimer += dt;
+                float progress = Math.Min(1f, respawnTimer / 0.6f);
+                RespawnEffectPosition = new PointF(
+                    respawnEffectStart.X + (Pos.X - respawnEffectStart.X) * progress,
+                    respawnEffectStart.Y + (Pos.Y - 5f - respawnEffectStart.Y) * progress);
+                RespawnPercent = 1f - progress;
+                if (progress >= 1f)
+                {
+                    State = StNormal;
+                    SpriteScaleX = 1.5f;
+                    SpriteScaleY = 0.5f;
+                    RespawnPercent = 0f;
+                }
                 return;
             }
             if (InfiniteStamina) Stamina = ClimbMaxStamina;
@@ -1571,7 +1632,13 @@ namespace DeskMadeline
             MoveH(Speed.X * dt);
             MoveV(Speed.Y * dt);
             dreamDashCanEndTimer -= dt;
-            if (DreamAt(Pos.X, Pos.Y) || dreamDashCanEndTimer > 0f) return;
+            if (TryGetDreamAt(Pos.X, Pos.Y, out Solid currentDream))
+            {
+                dreamDashBlock = currentDream;
+                hasDreamDashBlock = true;
+                return;
+            }
+            if (dreamDashCanEndTimer > 0f) return;
 
             if (NonDreamAt(Pos.X, Pos.Y))
             {
@@ -1591,6 +1658,7 @@ namespace DeskMadeline
                 if (!corrected)
                 {
                     Pos = original;
+                    SnapDreamDeathToExitFace();
                     DieFromDreamDash();
                     return;
                 }
@@ -1644,6 +1712,18 @@ namespace DeskMadeline
             }
             else
                 EnterNormal();
+        }
+
+        void SnapDreamDeathToExitFace()
+        {
+            if (!hasDreamDashBlock) return;
+            // A desktop monitor edge cannot scroll into view like a Celeste room.
+            // Keep the death body's center on the last DreamBlock face instead of
+            // leaving it one full player collider beyond the physical display.
+            if (DashDir.X > 0f) Pos.X = dreamDashBlock.R - 4f;
+            else if (DashDir.X < 0f) Pos.X = dreamDashBlock.L + 4f;
+            if (DashDir.Y > 0f) Pos.Y = dreamDashBlock.B;
+            else if (DashDir.Y < 0f) Pos.Y = dreamDashBlock.T + HitH;
         }
 
         void DieFromDreamDash()

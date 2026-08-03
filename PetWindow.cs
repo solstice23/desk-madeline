@@ -1345,7 +1345,13 @@ namespace DeskMadeline
 
                 if (player.IsDead)
                 {
-                    DrawDeathEffect(g, camX, camY);
+                    DrawDeathEffect(g, camX, camY, player.DeathPosition,
+                        player.DeathColor, player.DeathPercent);
+                }
+                else if (player.IsRespawning)
+                {
+                    DrawDeathEffect(g, camX, camY, player.RespawnEffectPosition,
+                        player.RespawnColor, player.RespawnPercent);
                 }
                 else
                 {
@@ -1529,20 +1535,21 @@ namespace DeskMadeline
             }
         }
 
-        void DrawDeathEffect(Graphics g, float camX, float camY)
+        void DrawDeathEffect(Graphics g, float camX, float camY,
+            PointF effectPosition, Color effectColor, float effectPercent)
         {
             Bitmap texture = Sprites.Get("hair00", false);
             if (texture == null) return;
-            float ease = player.DeathPercent;
+            float ease = effectPercent;
             float cubeOut = 1f - (float)Math.Pow(1f - ease, 3f);
             float radius = cubeOut * 24f;
             float scale = ease < 0.5f
                 ? 0.5f + ease
                 : 1f - (float)Math.Pow((ease - 0.5f) * 2f, 3f);
             Color color = ((int)Math.Floor(ease * 10f) & 1) == 0
-                ? player.DeathColor : Color.White;
-            float centerX = player.DeathPosition.X - camX;
-            float centerY = player.DeathPosition.Y - camY;
+                ? effectColor : Color.White;
+            float centerX = effectPosition.X - camX;
+            float centerY = effectPosition.Y - camY;
             for (int i = 0; i < 8; i++)
             {
                 float angle = ((float)i / 8f + ease * 0.25f) * (float)Math.PI * 2f;
