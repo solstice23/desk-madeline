@@ -26,10 +26,8 @@ namespace DeskMadeline
         // Keep a fixed, wide 1x render footprint. At 768 game pixels the complete
         // one-second trail remains available even through fast ultras; GPU scaling
         // makes this much cheaper than the old full-size GDI canvas.
-        // Trail snapshots live for one second, so vertical dashes need substantially
-        // more history than the old +/-80px footprint allowed.
-        const int CanvasW = 1024, CanvasH = 512;
-        const float AnchorX = 512, AnchorY = 256; // 脚底锚点（画布内）
+        const int CanvasW = 1024, CanvasH = 160;
+        const float AnchorX = 512, AnchorY = 80; // 脚底锚点（画布内）
         const double FixedDt = 1.0 / 60.0;
         static readonly IntPtr FloorId = new IntPtr(-991);
         const int WindowBorderPx = 8;           // 窗口空心边框厚度（物理像素）
@@ -49,7 +47,7 @@ namespace DeskMadeline
 
         // 渲染
         Bitmap small;           // 1x 游戏像素缓冲（CanvasW × CanvasH），整数坐标绘制后整数倍放大
-        Bitmap trailSmall;      // world-locked trails, composited with an independent physical offset
+        readonly TrailStamp[] trailStamps = new TrailStamp[16];
         D3DPresenter presenter;
         CompositionHost compositionHost;
         readonly Rectangle virtualDesktop;
@@ -527,7 +525,7 @@ namespace DeskMadeline
             const int sizePx = 64;
             const float center = sizePx / 2f;
             var mask = new Bitmap(sizePx, sizePx, PixelFormat.Format32bppPArgb);
-            using var g = Graphics.FromImage(mask);
+            var g = Graphics.FromImage(mask);
             g.Clear(Color.Transparent);
             g.InterpolationMode = InterpolationMode.NearestNeighbor;
             g.PixelOffsetMode = PixelOffsetMode.Half;
@@ -575,7 +573,20 @@ namespace DeskMadeline
                     SnapPx(center - 32f * trail.ScaleY),
                     SnapPx(32f * trail.ScaleX), SnapPx(32f * trail.ScaleY));
             }
-            return mask;
+            g.Dispose();
+            // Store the final tinted stamp. Direct2D can now draw this immutable 64x64
+            // bitmap directly at its world coordinate with only an opacity change.
+            var tinted = new Bitmap(sizePx, sizePx, PixelFormat.Format32bppPArgb);
+            using (var tintGraphics = Graphics.FromImage(tinted))
+            {
+                tintGraphics.Clear(Color.Transparent);
+                tintGraphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+                tintGraphics.PixelOffsetMode = PixelOffsetMode.Half;
+                tintGraphics.SmoothingMode = SmoothingMode.None;
+                Sprites.DrawSilhouette(tintGraphics, mask, trail.Tint, 0, 0, sizePx, sizePx);
+            }
+            mask.Dispose();
+            return tinted;
         }
 
         // Celeste Player.Update + SpeedRing：Super/Hyper/Wavedash 起跳后，在速度保持
@@ -868,29 +879,12 @@ namespace DeskMadeline
             int s = GameScale;
             if (small == null)
                 small = new Bitmap(CanvasW, CanvasH, PixelFormat.Format32bppPArgb);
-            if (trailSmall == null)
-                trailSmall = new Bitmap(CanvasW, CanvasH, PixelFormat.Format32bppPArgb);
 
             // Calculate and quantize the camera once. Previously drawing and window
             // presentation recomputed it independently, then rounded in different
             // coordinate spaces; moving snapshots visibly oscillated by a pixel.
             float camX = ComputeCameraX();
             float camY = player.Pos.Y - AnchorY;
-            float trailCamX = (float)Math.Floor(camX);
-            float trailCamY = (float)Math.Floor(camY);
-
-            // World-fixed afterimages use their own snapped camera. The GPU shifts this
-            // layer by the exact physical remainder, preventing sawtooth jumps while
-            // the player visual moves smoothly in physical pixels.
-            using (var gt = Graphics.FromImage(trailSmall))
-            {
-                gt.Clear(Color.Transparent);
-                gt.InterpolationMode = InterpolationMode.NearestNeighbor;
-                gt.PixelOffsetMode = PixelOffsetMode.Half;
-                gt.SmoothingMode = SmoothingMode.None;
-                gt.CompositingQuality = CompositingQuality.HighSpeed;
-                DrawDashTrails(gt, trailCamX, trailCamY);
-            }
 
             // 1x 游戏像素缓冲：整数坐标直接落像素，杜绝亚像素偏移；之后整数倍最近邻放大
             using (var g = Graphics.FromImage(small))
@@ -920,9 +914,15 @@ namespace DeskMadeline
 
             int left = (int)Math.Round(camX * s);
             int top = (int)Math.Round(camY * s);
-            int trailLeft = (int)Math.Round(trailCamX * s);
-            int trailTop = (int)Math.Round(trailCamY * s);
-            presenter.Present(trailSmall, small, left, top, trailLeft, trailTop);
+            int trailCount = Math.Min(dashTrails.Count, trailStamps.Length);
+            for (int i = 0; i < trailCount; i++)
+            {
+                var trail = dashTrails[i];
+                float remain = 1f - trail.Age;
+                float opacity = 0.75f * remain * remain * remain;
+                trailStamps[i] = new TrailStamp(trail.Mask, trail.X, trail.Y, opacity);
+            }
+            presenter.Present(small, left, top, trailStamps, trailCount);
 
             // Only this tiny invisible input HWND moves. Rendering belongs to the fixed
             // click-through composition host, so window movement cannot shake pixels.
@@ -958,20 +958,6 @@ namespace DeskMadeline
                 g.RotateTransform(slash.Angle * 180f / (float)Math.PI);
             g.DrawImage(tex, -12, -4, 24, 8);
             g.Restore(state);
-        }
-
-        void DrawDashTrails(Graphics g, float camX, float camY)
-        {
-            foreach (var trail in dashTrails)
-            {
-                float remain = 1f - trail.Age;
-                float alpha = 0.75f * remain * remain * remain; // 0.75 * (1 - Ease.CubeOut(percent))
-                if (trail.Mask != null)
-                    Sprites.DrawSilhouette(g, trail.Mask, trail.Tint,
-                        SnapPx(trail.X - camX) - 32f,
-                        SnapPx(trail.Y - camY) - 32f,
-                        64f, 64f, alpha);
-            }
         }
 
         void DrawBody(Graphics g, float anchorX, float anchorY)

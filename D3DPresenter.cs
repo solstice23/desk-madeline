@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using SharpGen.Runtime;
@@ -15,6 +16,20 @@ using static Vortice.DirectComposition.DComp;
 
 namespace DeskMadeline
 {
+    readonly struct TrailStamp
+    {
+        public readonly Bitmap Bitmap;
+        public readonly float X, Y, Opacity;
+
+        public TrailStamp(Bitmap bitmap, float x, float y, float opacity)
+        {
+            Bitmap = bitmap;
+            X = x;
+            Y = y;
+            Opacity = opacity;
+        }
+    }
+
     /// <summary>
     /// Uploads 1x premultiplied game layers to Direct2D and draws them at absolute
     /// physical coordinates in a virtual-desktop-sized Direct3D 11 composition swap
@@ -41,7 +56,9 @@ namespace DeskMadeline
         IDXGISwapChain1 swapChain;
         ID2D1Bitmap1 targetBitmap;
         ID2D1Bitmap1 sourceBitmap;
-        ID2D1Bitmap1 trailBitmap;
+        readonly Dictionary<Bitmap, ID2D1Bitmap1> trailBitmaps = new Dictionary<Bitmap, ID2D1Bitmap1>();
+        readonly HashSet<Bitmap> liveTrailBitmaps = new HashSet<Bitmap>();
+        readonly List<Bitmap> deadTrailBitmaps = new List<Bitmap>();
 
         int scale;
         int targetWidth;
@@ -128,29 +145,61 @@ namespace DeskMadeline
             sourceBitmap = d2dContext.CreateBitmap(
                 new SizeI(sourceWidth, sourceHeight), IntPtr.Zero,
                 (uint)(sourceWidth * 4), sourceProps);
-            trailBitmap = d2dContext.CreateBitmap(
-                new SizeI(sourceWidth, sourceHeight), IntPtr.Zero,
-                (uint)(sourceWidth * 4), sourceProps);
             d2dContext.Target = targetBitmap;
             compositionVisual.SetContent(swapChain).CheckError();
             compositionDevice.Commit().CheckError();
         }
 
-        public void Present(Bitmap trails, Bitmap bitmap, int screenLeft, int screenTop,
-            int trailScreenLeft, int trailScreenTop)
+        public void Present(Bitmap bitmap, int screenLeft, int screenTop,
+            TrailStamp[] trails, int trailCount)
         {
-            Upload(trailBitmap, trails);
             Upload(sourceBitmap, bitmap);
+
+            // TrailManager snapshots are immutable. Upload each tiny 64x64 stamp once
+            // and keep it in GPU memory until that snapshot expires.
+            liveTrailBitmaps.Clear();
+            for (int i = 0; i < trailCount; i++)
+            {
+                Bitmap source = trails[i].Bitmap;
+                if (source == null) continue;
+                liveTrailBitmaps.Add(source);
+                if (!trailBitmaps.ContainsKey(source))
+                {
+                    var props = new BitmapProperties1(
+                        new Vortice.DCommon.PixelFormat(Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied),
+                        96, 96, BitmapOptions.None);
+                    var gpu = d2dContext.CreateBitmap(
+                        new SizeI(source.Width, source.Height), IntPtr.Zero,
+                        (uint)(source.Width * 4), props);
+                    Upload(gpu, source);
+                    trailBitmaps[source] = gpu;
+                }
+            }
+            deadTrailBitmaps.Clear();
+            foreach (var pair in trailBitmaps)
+                if (!liveTrailBitmaps.Contains(pair.Key)) deadTrailBitmaps.Add(pair.Key);
+            foreach (var dead in deadTrailBitmaps)
+            {
+                trailBitmaps[dead].Dispose();
+                trailBitmaps.Remove(dead);
+            }
 
             d2dContext.BeginDraw();
             d2dContext.Clear(new Color4(0, 0, 0, 0));
-            var trailDestination = new Vortice.RawRectF(
-                trailScreenLeft - virtualDesktop.Left,
-                trailScreenTop - virtualDesktop.Top,
-                trailScreenLeft - virtualDesktop.Left + visualWidth,
-                trailScreenTop - virtualDesktop.Top + visualHeight);
-            d2dContext.DrawBitmap(trailBitmap, trailDestination, 1f,
-                Vortice.Direct2D1.InterpolationMode.NearestNeighbor, null, null);
+            for (int i = 0; i < trailCount; i++)
+            {
+                var trail = trails[i];
+                if (trail.Bitmap == null || !trailBitmaps.TryGetValue(trail.Bitmap, out var gpu)) continue;
+                float width = trail.Bitmap.Width * scale;
+                float height = trail.Bitmap.Height * scale;
+                float centerX = (float)Math.Round(trail.X) * scale - virtualDesktop.Left;
+                float centerY = (float)Math.Round(trail.Y) * scale - virtualDesktop.Top;
+                var trailDestination = new Vortice.RawRectF(
+                    centerX - width / 2f, centerY - height / 2f,
+                    centerX + width / 2f, centerY + height / 2f);
+                d2dContext.DrawBitmap(gpu, trailDestination, trail.Opacity,
+                    Vortice.Direct2D1.InterpolationMode.NearestNeighbor, null, null);
+            }
             var destination = new Vortice.RawRectF(
                 screenLeft - virtualDesktop.Left,
                 screenTop - virtualDesktop.Top,
@@ -190,7 +239,8 @@ namespace DeskMadeline
         {
             d2dContext.Target = null;
             sourceBitmap?.Dispose(); sourceBitmap = null;
-            trailBitmap?.Dispose(); trailBitmap = null;
+            foreach (var trail in trailBitmaps.Values) trail.Dispose();
+            trailBitmaps.Clear();
             targetBitmap?.Dispose(); targetBitmap = null;
             swapChain?.Dispose(); swapChain = null;
         }
