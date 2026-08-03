@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Xml.Linq;
 
@@ -44,21 +45,107 @@ namespace DeskMadeline
                 if (!Directory.Exists(root)) continue;
                 foreach (string modDirectory in Directory.GetDirectories(root))
                 {
-                    string config = Path.Combine(modDirectory, "SkinModHelperConfig.yaml");
-                    if (!File.Exists(config)) continue;
+                    if (Path.GetFileName(modDirectory).StartsWith(".")) continue;
+                    RegisterPackages(modDirectory, Path.GetFileName(modDirectory), seen);
+                }
+                foreach (string archive in Directory.GetFiles(root, "*.zip"))
+                {
                     try
                     {
-                        var skin = Parse(modDirectory, config);
-                        if (skin != null && Directory.Exists(skin.PlayerDirectory) && seen.Add(skin.Id))
-                            Skins.Add(skin);
+                        string extracted = ExtractArchive(root, archive);
+                        RegisterPackages(extracted, "zip-" + Path.GetFileNameWithoutExtension(archive), seen);
                     }
                     catch (Exception ex)
                     {
-                        PetWindow.Log("skin ignored " + modDirectory + ": " + ex.Message);
+                        PetWindow.Log("skin zip ignored " + archive + ": " + ex.Message);
                     }
                 }
             }
             Skins.Sort((a, b) => StringComparer.CurrentCultureIgnoreCase.Compare(a.DisplayName, b.DisplayName));
+        }
+
+        void RegisterPackages(string container, string packageKey, HashSet<string> seen)
+        {
+            foreach (string modDirectory in FindPackageRoots(container))
+            {
+                try
+                {
+                    string config = Path.Combine(modDirectory, "SkinModHelperConfig.yaml");
+                    SkinDefinition skin = File.Exists(config)
+                        ? Parse(modDirectory, config, packageKey)
+                        : ParseDirectReplacement(modDirectory, packageKey);
+                    if (skin != null && Directory.Exists(skin.PlayerDirectory) && seen.Add(skin.Id))
+                        Skins.Add(skin);
+                }
+                catch (Exception ex)
+                {
+                    PetWindow.Log("skin ignored " + modDirectory + ": " + ex.Message);
+                }
+            }
+        }
+
+        static IEnumerable<string> FindPackageRoots(string container)
+        {
+            var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string ownConfig = Path.Combine(container, "SkinModHelperConfig.yaml");
+            string ownPlayer = Path.Combine(container, "Graphics", "Atlases", "Gameplay", "characters", "player");
+            if (File.Exists(ownConfig) || IsPlayerDirectory(ownPlayer)) roots.Add(container);
+
+            foreach (string config in Directory.GetFiles(container, "SkinModHelperConfig.yaml", SearchOption.AllDirectories))
+                roots.Add(Path.GetDirectoryName(config));
+            foreach (string player in Directory.GetDirectories(container, "player", SearchOption.AllDirectories))
+            {
+                string normalized = player.Replace('\\', '/');
+                if (!normalized.EndsWith("/Graphics/Atlases/Gameplay/characters/player", StringComparison.OrdinalIgnoreCase)) continue;
+                string modRoot = Path.GetFullPath(Path.Combine(player, "..", "..", "..", "..", ".."));
+                if (IsPlayerDirectory(player)) roots.Add(modRoot);
+            }
+            return roots;
+        }
+
+        static bool IsPlayerDirectory(string directory)
+            => Directory.Exists(directory) && File.Exists(Path.Combine(directory, "idle00.png"));
+
+        static string ExtractArchive(string root, string archivePath)
+        {
+            var info = new FileInfo(archivePath);
+            string safeName = new string(Path.GetFileNameWithoutExtension(archivePath)
+                .Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_').ToArray());
+            string cache = Path.Combine(root, ".desk-madeline-cache",
+                safeName + "_" + info.Length + "_" + info.LastWriteTimeUtc.Ticks);
+            string marker = Path.Combine(cache, ".complete");
+            if (File.Exists(marker)) return cache;
+
+            Directory.CreateDirectory(cache);
+            string cachePrefix = Path.GetFullPath(cache).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            long extractedBytes = 0;
+            int extractedFiles = 0;
+            using (ZipArchive archive = ZipFile.OpenRead(archivePath))
+            {
+                foreach (ZipArchiveEntry entry in archive.Entries)
+                {
+                    string name = entry.FullName.Replace('\\', '/').TrimStart('/');
+                    bool needed = name.Equals("SkinModHelperConfig.yaml", StringComparison.OrdinalIgnoreCase) ||
+                        name.EndsWith("/SkinModHelperConfig.yaml", StringComparison.OrdinalIgnoreCase) ||
+                        name.Equals("everest.yaml", StringComparison.OrdinalIgnoreCase) ||
+                        name.EndsWith("/everest.yaml", StringComparison.OrdinalIgnoreCase) ||
+                        name.StartsWith("Graphics/", StringComparison.OrdinalIgnoreCase) ||
+                        name.IndexOf("/Graphics/", StringComparison.OrdinalIgnoreCase) >= 0;
+                    if (!needed || name.EndsWith("/")) continue;
+                    if (++extractedFiles > 12000) throw new InvalidDataException("archive contains too many skin files");
+                    extractedBytes += entry.Length;
+                    if (entry.Length > 64L * 1024 * 1024 || extractedBytes > 256L * 1024 * 1024)
+                        throw new InvalidDataException("archive skin data is too large");
+
+                    string destination = Path.GetFullPath(Path.Combine(cache, name.Replace('/', Path.DirectorySeparatorChar)));
+                    if (!destination.StartsWith(cachePrefix, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("archive contains an unsafe path");
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                    entry.ExtractToFile(destination, true);
+                }
+            }
+            File.WriteAllText(marker, info.Name);
+            return cache;
         }
 
         IEnumerable<string> CandidateRoots()
@@ -85,12 +172,12 @@ namespace DeskMadeline
             return Active != null && Active.HairColors.TryGetValue(dashes, out Color color) ? color : fallback;
         }
 
-        SkinDefinition Parse(string modDirectory, string configPath)
+        SkinDefinition Parse(string modDirectory, string configPath, string packageKey)
         {
             string[] lines = File.ReadAllLines(configPath);
             string legacyId = Value(lines.FirstOrDefault(l => Key(l) == "SkinId"));
             if (!string.IsNullOrEmpty(legacyId))
-                return ParseLegacy(modDirectory, legacyId, lines);
+                return ParseLegacy(modDirectory, legacyId, lines, packageKey);
 
             var blocks = ParseBlocks(lines);
             Dictionary<string, string> selected = blocks.FirstOrDefault(b =>
@@ -105,16 +192,18 @@ namespace DeskMadeline
             if (string.IsNullOrEmpty(atlasPath)) return null;
 
             string skinName = selected.TryGetValue("SkinName", out string configuredName) ? configuredName : characterId;
-            return new SkinDefinition
+            var result = new SkinDefinition
             {
-                Id = Path.GetFileName(modDirectory) + ":" + skinName,
+                Id = packageKey + ":" + skinName,
                 DisplayName = FriendlyName(skinName),
                 PlayerDirectory = CombineAtlasPath(modDirectory, atlasPath),
                 SpriteXml = xml
             };
+            LoadHairColors(Path.Combine(result.PlayerDirectory, "skinConfig", "HairConfig.yaml"), result);
+            return result;
         }
 
-        SkinDefinition ParseLegacy(string modDirectory, string skinId, string[] lines)
+        SkinDefinition ParseLegacy(string modDirectory, string skinId, string[] lines, string packageKey)
         {
             string graphicsPath = skinId.Replace('_', Path.DirectorySeparatorChar);
             string xml = Path.Combine(modDirectory, "Graphics", graphicsPath, "Sprites.xml");
@@ -123,12 +212,45 @@ namespace DeskMadeline
             string atlasPath = NormalizePath((string)sprite.Attribute("path"));
             var result = new SkinDefinition
             {
-                Id = Path.GetFileName(modDirectory) + ":" + skinId,
+                Id = packageKey + ":" + skinId,
                 DisplayName = FriendlyName(skinId.Split('_').Last()),
                 PlayerDirectory = CombineAtlasPath(modDirectory, atlasPath),
                 SpriteXml = xml
             };
 
+            LoadHairColors(lines, result);
+            return result;
+        }
+
+        static SkinDefinition ParseDirectReplacement(string modDirectory, string packageKey)
+        {
+            string playerDirectory = Path.Combine(modDirectory, "Graphics", "Atlases", "Gameplay", "characters", "player");
+            if (!IsPlayerDirectory(playerDirectory)) return null;
+            string displayName = Path.GetFileName(modDirectory);
+            string manifest = Path.Combine(modDirectory, "everest.yaml");
+            if (File.Exists(manifest))
+            {
+                string nameLine = File.ReadLines(manifest).FirstOrDefault(l => Key(l) == "Name");
+                string configured = Value(nameLine);
+                if (!string.IsNullOrWhiteSpace(configured)) displayName = configured;
+            }
+            var result = new SkinDefinition
+            {
+                Id = packageKey + ":direct",
+                DisplayName = FriendlyName(displayName),
+                PlayerDirectory = playerDirectory
+            };
+            LoadHairColors(Path.Combine(playerDirectory, "skinConfig", "HairConfig.yaml"), result);
+            return result;
+        }
+
+        static void LoadHairColors(string path, SkinDefinition skin)
+        {
+            if (File.Exists(path)) LoadHairColors(File.ReadAllLines(path), skin);
+        }
+
+        static void LoadHairColors(IEnumerable<string> lines, SkinDefinition skin)
+        {
             int currentDashes = int.MinValue;
             foreach (string raw in lines)
             {
@@ -137,11 +259,10 @@ namespace DeskMadeline
                 if (key == "Dashes" && int.TryParse(value, out int dashes)) currentDashes = dashes;
                 else if (key == "Color" && currentDashes != int.MinValue && TryColor(value, out Color color))
                 {
-                    result.HairColors[currentDashes] = color;
+                    skin.HairColors[currentDashes] = color;
                     currentDashes = int.MinValue;
                 }
             }
-            return result;
         }
 
         static List<Dictionary<string, string>> ParseBlocks(string[] lines)

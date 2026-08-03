@@ -60,9 +60,9 @@ bin\Release\net8.0-windows\DeskMadeline.exe
 
 ## Skins / 皮肤
 
-The right-click menu's **Skin** submenu supports complete Skin Mod Helper and Skin Mod Helper Plus packages. Put each unpacked mod in its own directory under `skins` beside `DeskMadeline.exe`, then restart the pet. The selected skin is remembered in `settings.txt`; **Default Madeline** switches back to the built-in art.
+The right-click menu's **Skin** submenu supports complete Skin Mod Helper and Skin Mod Helper Plus packages, plus classic direct `characters/player` replacements. Put either the original mod `.zip` or an unpacked mod directory under `skins` beside `DeskMadeline.exe`, then restart the pet. ZIPs are read into a validated local cache; an enclosing folder inside the archive is fine. The selected skin is remembered in `settings.txt`; **Default Madeline** switches back to the built-in art.
 
-右键菜单的「皮肤」子菜单支持完整的 Skin Mod Helper / Skin Mod Helper Plus 皮肤包。把解压后的每个 mod 文件夹放进 exe 同目录的 `skins` 文件夹，然后重启桌宠。选择会保存进 `settings.txt`；选「默认玛德琳」可恢复内置贴图。
+右键菜单的「皮肤」子菜单支持完整的 Skin Mod Helper / Skin Mod Helper Plus 皮肤包，也支持传统的 `characters/player` 直接替换包。把原始 mod `.zip` 或解压后的 mod 文件夹放进 exe 同目录的 `skins` 文件夹，然后重启桌宠。ZIP 会解压到经过路径和体积检查的本地缓存，压缩包内多套一层文件夹也没问题。选择会保存进 `settings.txt`；选「默认玛德琳」可恢复内置贴图。
 
 The loader follows Skin Mod Helper's source behavior: legacy `SkinId` paths, Plus `Player_List` + `Character_ID`, sprite paths from `Graphics/Sprites.xml`, vanilla fallback for omitted frames/hair/bangs, and legacy per-dash hair colors. The checked-in `example_skins` packages are discovered automatically by local development builds but are not copied into release output.
 
