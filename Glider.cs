@@ -18,6 +18,7 @@ namespace DeskMadeline
         public PointF Speed;
         public Player Holder { get; private set; }
         public bool IsHeld => Holder != null;
+        public bool BeingDragged { get; private set; }
         public string FrameId { get; private set; } = "glider/idle0";
         public float Rotation { get; private set; }
         public float ScaleX { get; private set; } = 1f;
@@ -66,7 +67,7 @@ namespace DeskMadeline
 
         public bool CanPickup(Player player)
         {
-            if (IsHeld || cannotHoldTimer > 0f) return false;
+            if (IsHeld || BeingDragged || cannotHoldTimer > 0f) return false;
             // Holdable.PickupCollider is 20x22 at (-10,-16).
             float l = Pos.X - 10f, r = Pos.X + 10f, t = Pos.Y - 16f, b = Pos.Y + 6f;
             float ph = player.Ducking ? 6f : 11f;
@@ -101,11 +102,47 @@ namespace DeskMadeline
             SetAnimation("idle", true);
         }
 
+        public void BeginDrag(Player player)
+        {
+            if (Holder == player) player.ReleaseGliderForDrag();
+            BeingDragged = true;
+            Holder = null;
+            Speed = PointF.Empty;
+            counter = PointF.Empty;
+            SetAnimation("idle", true);
+        }
+
+        public void DragTo(PointF position)
+        {
+            if (!BeingDragged) return;
+            Pos = position;
+            counter = PointF.Empty;
+        }
+
+        public void EndDrag(PointF velocity)
+        {
+            if (!BeingDragged) return;
+            BeingDragged = false;
+            cannotHoldTimer = 0.15f;
+            noGravityTimer = 0.1f;
+            Speed = velocity;
+        }
+
         public void Update(float dt, PetInput input, IList<Solid> solids, float minX, float maxX)
         {
             if (cannotHoldTimer > 0f) cannotHoldTimer -= dt;
             if (noGravityTimer > 0f) noGravityTimer -= dt;
             if (highFrictionTimer > 0f) highFrictionTimer -= dt;
+
+            if (BeingDragged)
+            {
+                Rotation = Approach(Rotation, 0f, (float)Math.PI * dt);
+                ScaleX = Approach(ScaleX, 1f, 2f * dt);
+                ScaleY = Approach(ScaleY, 1f, 2f * dt);
+                SetAnimation("idle");
+                UpdateAnimation(dt);
+                return;
+            }
 
             if (IsHeld)
             {
@@ -133,7 +170,11 @@ namespace DeskMadeline
                 bool onGround = !CollidesAt(Pos.X, Pos.Y, solids) && CollidesAt(Pos.X, Pos.Y + 1f, solids);
                 if (onGround)
                 {
-                    Speed.X = Approach(Speed.X, 0f, 800f * dt);
+                    // Vanilla nudges a resting glider away from an unsupported
+                    // ledge instead of letting it balance forever on one corner.
+                    float target = !CollidesAt(Pos.X + 3f, Pos.Y + 1f, solids) ? 20f
+                        : CollidesAt(Pos.X - 3f, Pos.Y + 1f, solids) ? 0f : -20f;
+                    Speed.X = Approach(Speed.X, target, 800f * dt);
                 }
                 else
                 {

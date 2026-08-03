@@ -20,6 +20,8 @@ namespace DeskMadeline
         public string PlayerDirectory;
         public string SpriteXml;
         public readonly Dictionary<int, Color> HairColors = new Dictionary<int, Color>();
+        public readonly Dictionary<string, int[]> CarryOffsets =
+            new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase);
     }
 
     internal sealed class SkinManager
@@ -172,6 +174,12 @@ namespace DeskMadeline
             return Active != null && Active.HairColors.TryGetValue(dashes, out Color color) ? color : fallback;
         }
 
+        public bool TryGetCarryOffsets(string animation, out int[] offsets)
+        {
+            offsets = null;
+            return Active != null && Active.CarryOffsets.TryGetValue(animation, out offsets);
+        }
+
         SkinDefinition Parse(string modDirectory, string configPath, string packageKey)
         {
             string[] lines = File.ReadAllLines(configPath);
@@ -200,6 +208,7 @@ namespace DeskMadeline
                 SpriteXml = xml
             };
             LoadHairColors(Path.Combine(result.PlayerDirectory, "skinConfig", "HairConfig.yaml"), result);
+            LoadCarryOffsets(sprite, result);
             return result;
         }
 
@@ -219,7 +228,26 @@ namespace DeskMadeline
             };
 
             LoadHairColors(lines, result);
+            LoadCarryOffsets(sprite, result);
             return result;
+        }
+
+        static void LoadCarryOffsets(XElement sprite, SkinDefinition skin)
+        {
+            XElement metadata = sprite.Elements().FirstOrDefault(e =>
+                e.Name.LocalName.Equals("Metadata", StringComparison.OrdinalIgnoreCase));
+            if (metadata == null) return;
+            foreach (XElement frames in metadata.Descendants().Where(e =>
+                e.Name.LocalName.Equals("Frames", StringComparison.OrdinalIgnoreCase)))
+            {
+                string path = (string)frames.Attribute("path");
+                string carry = (string)frames.Attribute("carry");
+                if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(carry)) continue;
+                var values = new List<int>();
+                foreach (string value in carry.Split(','))
+                    if (int.TryParse(value.Trim(), out int parsed)) values.Add(parsed);
+                if (values.Count > 0) skin.CarryOffsets[path.Trim()] = values.ToArray();
+            }
         }
 
         static SkinDefinition ParseDirectReplacement(string modDirectory, string packageKey)

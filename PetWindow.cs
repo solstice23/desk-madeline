@@ -53,7 +53,7 @@ namespace DeskMadeline
 
         // 渲染
         Bitmap small;           // 1x 游戏像素缓冲（CanvasW × CanvasH），整数坐标绘制后整数倍放大
-        readonly TrailStamp[] trailStamps = new TrailStamp[16];
+        readonly TrailStamp[] trailStamps = new TrailStamp[64];
         D3DPresenter presenter;
         CompositionHost compositionHost;
         readonly Rectangle virtualDesktop;
@@ -100,6 +100,7 @@ namespace DeskMadeline
         bool dashVisualPending;
         float dashVisualTimer = -1f;
         int dashTrailStage;
+        float dreamTrailTimer;
         bool english = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "zh";
         const int CatTailCount = 8;
         readonly PointF[] catTailNodes = new PointF[CatTailCount];
@@ -109,8 +110,22 @@ namespace DeskMadeline
         bool catTailEnabled, catBangsEnabled, customHairColorsEnabled;
         int speedometerMode;
         bool hitboxesEnabled;
+        bool dreamBlockMode;
         readonly Bitmap[] picoDigits = new Bitmap[10];
         readonly List<Glider> gliders = new List<Glider>();
+        readonly object gliderWindowLock = new object();
+        readonly Dictionary<Glider, JellyInputWindow> gliderWindows = new Dictionary<Glider, JellyInputWindow>();
+        readonly Dictionary<Glider, GliderStampCache> gliderStampCache = new Dictionary<Glider, GliderStampCache>();
+        Glider draggedGlider;
+        PointF gliderDragOffset, gliderCursorVelocity;
+        Point lastGliderCursor;
+
+        sealed class GliderStampCache
+        {
+            public string FrameId;
+            public int Rotation, ScaleX, ScaleY;
+            public Bitmap Bitmap;
+        }
 
         struct WaveRing
         {
@@ -153,6 +168,7 @@ namespace DeskMadeline
             customHairColors[2] = Rgb(settings.HairColor2);
             speedometerMode = settings.SpeedometerMode;
             hitboxesEnabled = settings.HitboxesEnabled;
+            dreamBlockMode = settings.DreamBlockMode;
             player.SetFreezeFramesEnabled(settings.FreezeFramesEnabled);
             player.InfiniteStamina = settings.InfiniteStamina;
             player.SetDashMode(settings.DashMode);
@@ -335,6 +351,11 @@ namespace DeskMadeline
             Add("jumpSlow_carry", Sprites.Seq("jump_carry", 0, 1), 0.1f, true);
             Add("fallSlow_carry", Sprites.Seq("jump_carry", 2, 3), 0.1f, false);
             Add("pickUp", Sprites.Seq("pickup", 0, 4), 0.06f, false);
+            Add("throw", Sprites.Seq("throw", 0, 3), 0.06f, false);
+            Add("dreamDashIn", Sprites.Seq("dreamDash", 0, 3), 0.04f, false);
+            if (d.TryGetValue("dreamDashIn", out var dreamIn)) dreamIn.Goto = "dreamDashLoop";
+            Add("dreamDashLoop", Sprites.Seq("dreamDash", 4, 16), 0.03f, true);
+            Add("dreamDashOut", Sprites.Seq("dreamDash", 17, 20), 0.04f, false);
             var stumble = new List<string> { "runStumble10", "runStumble11" };
             stumble.AddRange(Sprites.Seq("runStumble", 0, 11));
             Add("runStumble", stumble.ToArray(), 0.05f, false);
@@ -457,6 +478,8 @@ namespace DeskMadeline
                 gliders.Add(new Glider(new PointF(
                     player.Pos.X + player.Facing * (18f + i * 5f), player.Pos.Y - 16f)));
             }
+            if (spawnCount > 0 && IsHandleCreated)
+                BeginInvoke(new Action(EnsureGliderWindows));
 
             // 应用待定的缩放变更
             if (pendingScale > 0)
@@ -590,6 +613,26 @@ namespace DeskMadeline
             return skinManager.ResolveHairColor(dashes, fallback);
         }
 
+        internal float ResolveCarryYOffset(string frameId)
+        {
+            if (string.IsNullOrEmpty(frameId)) return 0f;
+            int frame = 0;
+            int split = frameId.Length;
+            while (split > 0 && char.IsDigit(frameId[split - 1])) split--;
+            if (split < frameId.Length) int.TryParse(frameId.Substring(split), out frame);
+            string id = frameId.Substring(0, split);
+            int[] offsets = null;
+            if (skinManager.TryGetCarryOffsets(id, out int[] skinOffsets))
+                offsets = skinOffsets;
+            else if (id.Equals("idle_carry", StringComparison.OrdinalIgnoreCase))
+                offsets = new[] { -1, -1, -1, 0, 0, 0, 0, 0, -1 };
+            else if (id.Equals("run_carry", StringComparison.OrdinalIgnoreCase))
+                offsets = new[] { -1, 0, 0, 0, -3, -2, -1, 0, 0, 0, -3, -1 };
+            else if (id.Equals("jump_carry", StringComparison.OrdinalIgnoreCase))
+                offsets = new[] { -3, -3, -1, -1 };
+            return offsets != null && frame >= 0 && frame < offsets.Length ? offsets[frame] : 0f;
+        }
+
         static PointF Approach(PointF value, PointF target, float maxMove)
         {
             float dx = target.X - value.X, dy = target.Y - value.Y;
@@ -700,6 +743,18 @@ namespace DeskMadeline
                     dashVisualTimer = -1f;
                 }
             }
+
+            if (player.State == Player.StDreamDash)
+            {
+                dreamTrailTimer -= dt;
+                if (dreamTrailTimer <= 0f)
+                {
+                    CaptureDashTrail();
+                    dreamTrailTimer += 0.1f;
+                }
+            }
+            else
+                dreamTrailTimer = 0f;
 
         }
 
@@ -1016,7 +1071,8 @@ namespace DeskMadeline
             // GetAsyncKeyState is global. By default it is gated to this pet's
             // focus; the explicit menu opt-in permits reading it while unfocused.
             // No hook is installed and keys are never swallowed from other apps.
-            if (!InputEnabled || dragging || (!InputWhenUnfocused && Win32.GetForegroundWindow() != Handle))
+            if (!InputEnabled || dragging || draggedGlider != null ||
+                (!InputWhenUnfocused && !IsPetInputWindow(Win32.GetForegroundWindow())))
             {
                 prevJump = prevDash = prevCrouchDash = false;
                 return input;
@@ -1050,6 +1106,62 @@ namespace DeskMadeline
             return input;
         }
 
+        bool IsPetInputWindow(IntPtr hwnd)
+        {
+            if (hwnd == Handle) return true;
+            lock (gliderWindowLock)
+                return gliderWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd);
+        }
+
+        void EnsureGliderWindows()
+        {
+            lock (gliderWindowLock)
+            {
+                foreach (Glider glider in gliders)
+                {
+                    if (gliderWindows.ContainsKey(glider)) continue;
+                    var window = new JellyInputWindow(this, glider);
+                    gliderWindows[glider] = window;
+                    window.Show();
+                }
+            }
+        }
+
+        internal void BeginGliderDrag(Glider glider)
+        {
+            Point cursor = Cursor.Position;
+            glider.BeginDrag(player);
+            draggedGlider = glider;
+            gliderDragOffset = new PointF(cursor.X / (float)GameScale - glider.Pos.X,
+                cursor.Y / (float)GameScale - glider.Pos.Y);
+            lastGliderCursor = cursor;
+            gliderCursorVelocity = PointF.Empty;
+        }
+
+        internal void ContinueGliderDrag(Glider glider)
+        {
+            if (draggedGlider != glider) return;
+            Point cursor = Cursor.Position;
+            const float dt = 1f / 60f;
+            gliderCursorVelocity = new PointF(
+                gliderCursorVelocity.X * 0.7f + (cursor.X - lastGliderCursor.X) / GameScale / dt * 0.3f,
+                gliderCursorVelocity.Y * 0.7f + (cursor.Y - lastGliderCursor.Y) / GameScale / dt * 0.3f);
+            lastGliderCursor = cursor;
+            glider.DragTo(new PointF(cursor.X / (float)GameScale - gliderDragOffset.X,
+                cursor.Y / (float)GameScale - gliderDragOffset.Y));
+        }
+
+        internal void EndGliderDrag(Glider glider)
+        {
+            if (draggedGlider != glider) return;
+            float vx = gliderCursorVelocity.X * 0.6f, vy = gliderCursorVelocity.Y * 0.6f;
+            float length = (float)Math.Sqrt(vx * vx + vy * vy);
+            if (length > 400f) { vx *= 400f / length; vy *= 400f / length; }
+            if (length < 30f) vx = vy = 0f;
+            glider.EndDrag(new PointF(vx, vy));
+            draggedGlider = null;
+        }
+
         // ================= 平台（窗口即平台，空心边框）=================
         void PollSolids()
         {
@@ -1072,6 +1184,7 @@ namespace DeskMadeline
                 if ((ex & Win32.WS_EX_LAYERED) != 0 && (ex & Win32.WS_EX_TRANSPARENT) != 0) return true;
                 string cls = Win32.GetClassNameString(hwnd);
                 if (cls == "Progman" || cls == "WorkerW" || cls == "Xaml_WindowedPopupClass") return true;
+                if (dreamBlockMode && (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd")) return true;
                 if (!Win32.TryGetWindowRect(hwnd, out var r)) return true;
                 if (r.Width < 24 || r.Height < 18) return true;
                 cur[hwnd] = r;
@@ -1086,11 +1199,22 @@ namespace DeskMadeline
             foreach (var kv in zorder)
             {
                 var r = kv.Value;
-                foreach (var edge in WindowEdges(r))
+                if (dreamBlockMode)
                 {
-                    var pieces = SubtractRects(edge, occluders);
-                    foreach (var p in pieces)
-                        solids.Add(new Solid { Id = kv.Key, L = p.Left / s, T = p.Top / s, R = p.Right / s, B = p.Bottom / s });
+                    solids.Add(new Solid
+                    {
+                        Id = kv.Key, L = r.Left / s, T = r.Top / s,
+                        R = r.Right / s, B = r.Bottom / s, Dream = true
+                    });
+                }
+                else
+                {
+                    foreach (var edge in WindowEdges(r))
+                    {
+                        var pieces = SubtractRects(edge, occluders);
+                        foreach (var p in pieces)
+                            solids.Add(new Solid { Id = kv.Key, L = p.Left / s, T = p.Top / s, R = p.Right / s, B = p.Bottom / s });
+                    }
                 }
                 occluders.Add(r);   // 本窗口整体遮挡它后面的窗口
             }
@@ -1218,7 +1342,6 @@ namespace DeskMadeline
                 float bodyAnchorY = player.Pos.Y - camY;
 
                 DrawWavedashWaves(g, camX, camY);
-                DrawGliders(g, camX, camY);
 
                 // 头发画在身体后面（先画头发，再画身体覆盖）。
                 // wakeUp 帧自带完整头发（蜷着睡觉），不再叠加模拟头发
@@ -1247,7 +1370,26 @@ namespace DeskMadeline
                 float opacity = 0.75f * remain * remain * remain;
                 trailStamps[i] = new TrailStamp(trail.Mask, trail.X, trail.Y, opacity);
             }
+            foreach (Glider glider in gliders)
+            {
+                if (trailCount >= trailStamps.Length) break;
+                Bitmap stamp = GetGliderStamp(glider);
+                if (stamp != null)
+                    trailStamps[trailCount++] = new TrailStamp(stamp, glider.Pos.X, glider.Pos.Y, 1f);
+            }
             presenter.Present(small, left, top, trailStamps, trailCount);
+
+            lock (gliderWindowLock)
+            {
+                foreach (var pair in gliderWindows)
+                {
+                    if (!pair.Value.IsHandleCreated) continue;
+                    int jellyLeft = (int)Math.Round((pair.Key.Pos.X - 10f) * s);
+                    int jellyTop = (int)Math.Round((pair.Key.Pos.Y - 16f) * s);
+                    Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, jellyLeft, jellyTop,
+                        20 * s, 22 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                }
+            }
 
             // Only this tiny invisible input HWND moves. Rendering belongs to the fixed
             // click-through composition host, so window movement cannot shake pixels.
@@ -1304,6 +1446,52 @@ namespace DeskMadeline
                 g.DrawImage(frame, x, y, w, h);
                 g.Restore(state);
             }
+        }
+
+        Bitmap GetGliderStamp(Glider glider)
+        {
+            Bitmap frame = Sprites.Get(glider.FrameId, false);
+            if (frame == null) return null;
+            int rotation = (int)Math.Round(glider.Rotation * 180f / Math.PI);
+            int scaleX = (int)Math.Round(glider.ScaleX * 100f);
+            int scaleY = (int)Math.Round(glider.ScaleY * 100f);
+            if (gliderStampCache.TryGetValue(glider, out var cached) &&
+                cached.FrameId == glider.FrameId && cached.Rotation == rotation &&
+                cached.ScaleX == scaleX && cached.ScaleY == scaleY)
+                return cached.Bitmap;
+
+            var bitmap = new Bitmap(64, 64, PixelFormat.Format32bppPArgb);
+            using (var g = Graphics.FromImage(bitmap))
+            {
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.SmoothingMode = SmoothingMode.None;
+                var state = g.Save();
+                g.TranslateTransform(32f, 32f);
+                g.RotateTransform(rotation);
+                float w = 48f * glider.ScaleX, h = 48f * glider.ScaleY;
+                float x = -w / 2f, y = -h / 2f;
+                Sprites.DrawSilhouette(g, frame, Color.Black, x - 1f, y, w, h);
+                Sprites.DrawSilhouette(g, frame, Color.Black, x + 1f, y, w, h);
+                Sprites.DrawSilhouette(g, frame, Color.Black, x, y - 1f, w, h);
+                Sprites.DrawSilhouette(g, frame, Color.Black, x, y + 1f, w, h);
+                g.DrawImage(frame, x, y, w, h);
+                g.Restore(state);
+            }
+            if (cached == null)
+            {
+                cached = new GliderStampCache();
+                gliderStampCache[glider] = cached;
+            }
+            // The presenter has already uploaded the previous frame on the prior
+            // Present. It no longer needs the CPU bitmap after this replacement.
+            cached.Bitmap?.Dispose();
+            cached.FrameId = glider.FrameId;
+            cached.Rotation = rotation;
+            cached.ScaleX = scaleX;
+            cached.ScaleY = scaleY;
+            cached.Bitmap = bitmap;
+            return bitmap;
         }
 
         void DrawBody(Graphics g, float anchorX, float anchorY)
@@ -1589,6 +1777,7 @@ namespace DeskMadeline
             settings.HairColor2 = RgbValue(customHairColors[2]);
             settings.SpeedometerMode = speedometerMode;
             settings.HitboxesEnabled = hitboxesEnabled;
+            settings.DreamBlockMode = dreamBlockMode;
             settings.Save();
         }
 
@@ -1885,6 +2074,15 @@ namespace DeskMadeline
             { Checked = player.FreezeFramesEnabled };
             menu.Items.Add(freezeItem);
 
+            var dreamItem = new ToolStripMenuItem(T("Dream Block windows", "梦境方块窗口"), null, (sender, __) =>
+            {
+                dreamBlockMode = !dreamBlockMode;
+                ((ToolStripMenuItem)sender).Checked = dreamBlockMode;
+                pollCounter = 999;
+                SaveSettings();
+            }) { Checked = dreamBlockMode };
+            menu.Items.Add(dreamItem);
+
             var overlaysItem = new ToolStripMenuItem(T("Extra overlays", "额外叠加层"));
             var speedometerItem = new ToolStripMenuItem(T("Speedometer", "速度计"));
             foreach (var option in new[]
@@ -2058,6 +2256,13 @@ namespace DeskMadeline
             presenter?.Dispose();
             foreach (var trail in dashTrails) trail.Mask?.Dispose();
             dashTrails.Clear();
+            lock (gliderWindowLock)
+            {
+                foreach (var window in gliderWindows.Values) window.Dispose();
+                gliderWindows.Clear();
+            }
+            foreach (var cached in gliderStampCache.Values) cached.Bitmap?.Dispose();
+            gliderStampCache.Clear();
             foreach (var digit in picoDigits) digit?.Dispose();
             compositionHost?.Close();
             compositionHost?.Dispose();

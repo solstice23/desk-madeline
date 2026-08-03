@@ -9,6 +9,7 @@ namespace DeskMadeline
     {
         public IntPtr Id;
         public float L, T, R, B;
+        public bool Dream;
     }
 
     /// <summary>每帧输入快照。</summary>
@@ -73,10 +74,28 @@ namespace DeskMadeline
         const float ClimbHopX = 100f;          // 爬过墙顶水平推力
         const int DashingUpwardCornerCorrection = 5; // 上冲天花板角修正距离
 
-        public const int StNormal = 0;
-        public const int StClimb = 1;
-        public const int StDash = 2;
-        public const int StPickup = 8;
+        // Keep Celeste.Player's complete state-number contract.  Several of these
+        // need level actors the desktop cannot currently create, but retaining the
+        // original indices means new ports can be added without renumbering or
+        // folding unrelated behavior into Normal.
+        public const int StNormal = 0, StClimb = 1, StDash = 2, StSwim = 3,
+            StBoost = 4, StRedDash = 5, StHitSquash = 6, StLaunch = 7,
+            StPickup = 8, StDreamDash = 9, StSummitLaunch = 10, StDummy = 11,
+            StIntroWalk = 12, StIntroJump = 13, StIntroRespawn = 14,
+            StIntroWakeUp = 15, StBirdDashTutorial = 16, StFrozen = 17,
+            StReflectionFall = 18, StStarFly = 19, StTempleFall = 20,
+            StCassetteFly = 21, StAttract = 22, StIntroMoonJump = 23,
+            StFlingBird = 24, StIntroThinkForABit = 25;
+
+        public static readonly string[] StateNames =
+        {
+            "Normal", "Climb", "Dash", "Swim", "Boost", "RedDash",
+            "HitSquash", "Launch", "Pickup", "DreamDash", "SummitLaunch",
+            "Dummy", "IntroWalk", "IntroJump", "IntroRespawn", "IntroWakeUp",
+            "BirdDashTutorial", "Frozen", "ReflectionFall", "StarFly",
+            "TempleFall", "CassetteFly", "Attract", "IntroMoonJump",
+            "FlingBird", "IntroThinkForABit"
+        };
 
         // 头发颜色（Player.cs）
         public static readonly Color NormalHairColor = Color.FromArgb(0xAC, 0x32, 0x32);
@@ -90,6 +109,8 @@ namespace DeskMadeline
         public int Facing = 1;      // -1 左 / 1 右
         public bool Ducking;
         public int State;
+        public string StateName => State >= 0 && State < StateNames.Length
+            ? StateNames[State] : "Custom(" + State + ")";
         public int Dashes = 1;
         // 0/1/2 = 最大冲刺数，-1 = 无限（按原作双冲刺外观处理）。
         public int DashMode = 1;
@@ -179,6 +200,10 @@ namespace DeskMadeline
         float minHoldTimer;
         float pickupTimer;
         PointF pickupStoredSpeed;
+        PointF pickupCurveBegin, pickupCurveControl;
+        float dreamDashCanEndTimer;
+        float dreamDashAnimTimer, dreamDashOutTimer;
+        float throwAnimTimer;
 
         // 保留速度（cornerboost）：撞墙瞬间保存水平速度，时限内墙不再阻挡则返还
         float wallSpeedRetained;
@@ -224,6 +249,22 @@ namespace DeskMadeline
             HitboxAt(x, y, out float l, out float t, out float r, out float b);
             foreach (var s in Solids)
                 if (Overlap(l, t, r, b, s)) return true;
+            return false;
+        }
+
+        bool DreamAt(float x, float y)
+        {
+            HitboxAt(x, y, out float l, out float t, out float r, out float b);
+            foreach (var s in Solids)
+                if (s.Dream && Overlap(l, t, r, b, s)) return true;
+            return false;
+        }
+
+        bool NonDreamAt(float x, float y)
+        {
+            HitboxAt(x, y, out float l, out float t, out float r, out float b);
+            foreach (var s in Solids)
+                if (!s.Dream && Overlap(l, t, r, b, s)) return true;
             return false;
         }
 
@@ -290,6 +331,12 @@ namespace DeskMadeline
             int sign = Math.Sign(n);
             while (n != 0)
             {
+                if (State == StDreamDash)
+                {
+                    Pos.X += sign;
+                    n -= sign;
+                    continue;
+                }
                 HitboxAt(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
                 HitboxAt(Pos.X + sign, Pos.Y, out float l, out float t, out float r, out float b);
                 bool blocked = false;
@@ -300,6 +347,12 @@ namespace DeskMadeline
                 }
                 if (blocked)
                 {
+                    if (TryEnterDreamDash(Pos.X + sign, Pos.Y, sign, 0))
+                    {
+                        Pos.X += sign;
+                        n -= sign;
+                        continue;
+                    }
                     counter.X = 0;
                     if (notifyCollision) OnCollideH(sign);
                     return; // Actor.MoveH discards the blocked movement remainder.
@@ -314,6 +367,12 @@ namespace DeskMadeline
             int sign = Math.Sign(n);
             while (n != 0)
             {
+                if (State == StDreamDash)
+                {
+                    Pos.Y += sign;
+                    n -= sign;
+                    continue;
+                }
                 HitboxAt(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
                 HitboxAt(Pos.X, Pos.Y + sign, out float l, out float t, out float r, out float b);
                 bool blocked = false;
@@ -323,6 +382,12 @@ namespace DeskMadeline
                 }
                 if (blocked)
                 {
+                    if (TryEnterDreamDash(Pos.X, Pos.Y + sign, 0, sign))
+                    {
+                        Pos.Y += sign;
+                        n -= sign;
+                        continue;
+                    }
                     counter.Y = 0;
                     if (notifyCollision) OnCollideV(sign);
                     return; // Actor.MoveV discards the blocked movement remainder.
@@ -330,6 +395,19 @@ namespace DeskMadeline
                 Pos.Y += sign;
                 n -= sign;
             }
+        }
+
+        bool TryEnterDreamDash(float x, float y, int axisX, int axisY)
+        {
+            if (State != StDash || !DashAttacking || !DreamAt(x, y)) return false;
+            if ((axisX != 0 && Sign(DashDir.X) != axisX) ||
+                (axisY != 0 && Sign(DashDir.Y) != axisY)) return false;
+            State = StDreamDash;
+            dreamDashCanEndTimer = 0.1f;
+            dreamDashAnimTimer = 0.16f;
+            Speed = new PointF(DashDir.X * DashSpeed, DashDir.Y * DashSpeed);
+            Stamina = ClimbMaxStamina;
+            return true;
         }
 
         bool OnCollideH(int sign)
@@ -496,6 +574,10 @@ namespace DeskMadeline
             minHoldTimer = 0f;
             pickupTimer = 0f;
             pickupStoredSpeed = PointF.Empty;
+            pickupCurveBegin = pickupCurveControl = PointF.Empty;
+            dreamDashCanEndTimer = 0f;
+            dreamDashAnimTimer = dreamDashOutTimer = 0f;
+            throwAnimTimer = 0f;
             counter.X = counter.Y = 0;
             Hair.Reset(new PointF(Pos.X, Pos.Y - 9), Facing);
         }
@@ -559,6 +641,9 @@ namespace DeskMadeline
                 if (sweatJumpTimer <= 0f) SweatAnimId = "idle";
             }
             if (minHoldTimer > 0f) minHoldTimer -= dt;
+            if (dreamDashAnimTimer > 0f) dreamDashAnimTimer -= dt;
+            if (dreamDashOutTimer > 0f) dreamDashOutTimer -= dt;
+            if (throwAnimTimer > 0f) throwAnimTimer -= dt;
 
             onGround = !BeingDragged && CheckGround();
 
@@ -619,7 +704,17 @@ namespace DeskMadeline
                 {
                     pickupTimer -= dt;
                     if (Holding != null)
-                        Holding.Carry(new PointF(Pos.X, Pos.Y - 12f));
+                    {
+                        float progress = Math.Max(0f, Math.Min(1f, 1f - pickupTimer / 0.16f));
+                        float eased = progress < 0.5f
+                            ? 4f * progress * progress * progress
+                            : 1f - (float)Math.Pow(-2f * progress + 2f, 3) / 2f;
+                        float inv = 1f - eased;
+                        PointF offset = new PointF(
+                            inv * inv * pickupCurveBegin.X + 2f * inv * eased * pickupCurveControl.X,
+                            inv * inv * pickupCurveBegin.Y + 2f * inv * eased * pickupCurveControl.Y + eased * eased * -12f);
+                        Holding.Carry(new PointF(Pos.X + offset.X, Pos.Y + offset.Y));
+                    }
                     if (pickupTimer <= 0f)
                     {
                         Speed = pickupStoredSpeed;
@@ -657,11 +752,13 @@ namespace DeskMadeline
                     }
                 }
 
+                int stateBeforeUpdate = State;
                 switch (State)
                 {
                     case StNormal: NormalUpdate(dt, input); break;
                     case StClimb: ClimbUpdate(dt, input); break;
                     case StDash: DashUpdate(dt, input); break;
+                    case StDreamDash: DreamDashUpdate(dt, input); break;
                 }
 
                 // Vanilla releases the duck hitbox while falling once standing
@@ -669,11 +766,15 @@ namespace DeskMadeline
                 if (Speed.Y > 0f && CanUnDuck && !onGround && jumpGraceTimer <= 0f && State != StClimb)
                     Ducking = false;
 
-                MoveH(Speed.X * dt);
-                MoveV(Speed.Y * dt);
+                if (stateBeforeUpdate != StDreamDash || State == StDreamDash)
+                {
+                    MoveH(Speed.X * dt);
+                    MoveV(Speed.Y * dt);
+                }
 
                 if (Holding != null)
-                    Holding.Carry(new PointF(Pos.X, Pos.Y - 12f));
+                    Holding.Carry(new PointF(Pos.X, Pos.Y - 12f +
+                        (PetWindow.Instance?.ResolveCarryYOffset(CurrentFrameId) ?? 0f)));
 
                 // 屏幕左右边界
                 if (Pos.X < MinX + 4) { Pos.X = MinX + 4; if (Speed.X < 0) Speed.X = 0; }
@@ -889,13 +990,13 @@ namespace DeskMadeline
                 if (jumpGraceTimer > 0) Jump(input);
                 else if (CanUnDuck && WallJumpCheck(1))
                 {
-                    if (Facing == 1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
+                    if (Holding == null && Facing == 1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
                     else if (DashAttacking && SuperWallJumpAngleCheck) SuperWallJump(-1);  // 上冲撞墙
                     else WallJump(-1, input);
                 }
                 else if (CanUnDuck && WallJumpCheck(-1))
                 {
-                    if (Facing == -1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
+                    if (Holding == null && Facing == -1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
                     else if (DashAttacking && SuperWallJumpAngleCheck) SuperWallJump(1);  // 上冲撞墙
                     else WallJump(1, input);
                 }
@@ -921,8 +1022,10 @@ namespace DeskMadeline
             pickupStoredSpeed = Speed;
             Speed = PointF.Empty;
             pickupTimer = 0.16f;
+            pickupCurveBegin = new PointF(nearest.Pos.X - Pos.X, nearest.Pos.Y - Pos.Y);
+            pickupCurveControl = new PointF(
+                pickupCurveBegin.X + Sign(pickupCurveBegin.X) * 2f, -14f);
             State = StPickup;
-            nearest.Carry(new PointF(Pos.X, Pos.Y - 12f));
             return true;
         }
 
@@ -932,6 +1035,7 @@ namespace DeskMadeline
             Holding.Release(new PointF(Facing, 0f));
             Holding = null;
             Speed.X -= 80f * Facing;
+            throwAnimTimer = 0.24f;
         }
 
         void DropGlider()
@@ -939,6 +1043,15 @@ namespace DeskMadeline
             if (Holding == null) return;
             Holding.Release(PointF.Empty);
             Holding = null;
+        }
+
+        public void ReleaseGliderForDrag()
+        {
+            if (Holding == null) return;
+            Holding.Release(PointF.Empty);
+            Holding = null;
+            minHoldTimer = 0f;
+            if (State == StPickup) EnterNormal();
         }
 
         float maxFall = MaxFall;
@@ -1095,6 +1208,9 @@ namespace DeskMadeline
         // ===== 攀爬状态 =====
         void ClimbUpdate(float dt, PetInput input)
         {
+            // Holdable.Check forbids ClimbTrigger, and an externally picked-up
+            // holdable must also eject an already-climbing player immediately.
+            if (Holding != null) { SweatAnimId = "idle"; EnterNormal(); return; }
             climbNoMoveTimer -= dt;
             if (onGround) Stamina = ClimbMaxStamina;
 
@@ -1291,14 +1407,14 @@ namespace DeskMadeline
                 {
                     if (CanUnDuck && WallJumpCheck(1))
                     {
-                        if (Facing == 1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
+                        if (Holding == null && Facing == 1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
                         else WallJump(-1, input);
                         EnterNormal();
                         return;
                     }
                     if (CanUnDuck && WallJumpCheck(-1))
                     {
-                        if (Facing == -1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
+                        if (Holding == null && Facing == -1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
                         else WallJump(1, input);
                         EnterNormal();
                         return;
@@ -1315,6 +1431,47 @@ namespace DeskMadeline
             }
         }
 
+        // Player.DreamDashUpdate: DreamDash movement itself remains collisionless;
+        // after the minimum 0.1s, leaving every dream block returns to Normal and
+        // restores the resources the original DreamDashEnd restores.
+        void DreamDashUpdate(float dt, PetInput input)
+        {
+            dreamDashCanEndTimer -= dt;
+            if (DreamAt(Pos.X, Pos.Y) || dreamDashCanEndTimer > 0f) return;
+
+            if (NonDreamAt(Pos.X, Pos.Y))
+            {
+                PointF original = Pos;
+                bool corrected = false;
+                for (int x = 1; x <= 5 && !corrected; x++)
+                for (int sx = -1; sx <= 1 && !corrected; sx += 2)
+                for (int y = 1; y <= 5 && !corrected; y++)
+                for (int sy = -1; sy <= 1; sy += 2)
+                {
+                    PointF candidate = new PointF(original.X + x * sx, original.Y + y * sy);
+                    if (!NonDreamAt(candidate.X, candidate.Y)) { Pos = candidate; corrected = true; break; }
+                }
+                if (!corrected)
+                {
+                    Pos = original;
+                    Speed = new PointF(-Speed.X, -Speed.Y);
+                    dreamDashCanEndTimer = 0.1f;
+                    return;
+                }
+            }
+
+            if (input.JumpPressed && Math.Abs(DashDir.X) > 0.01f)
+                Jump(input);
+            else
+                autoJump = true;
+            jumpGraceTimer = Math.Abs(DashDir.X) > 0.01f ? JumpGraceTime : 0f;
+            RefillDash();
+            Stamina = ClimbMaxStamina;
+            dreamDashOutTimer = 0.16f;
+            freezeTimer = FreezeFramesEnabled ? 0.05f : 0f;
+            EnterNormal();
+        }
+
         // ===== 动画选择（移植 orig_UpdateSprite）=====
         void UpdateSprite(float dt, PetInput input)
         {
@@ -1327,6 +1484,18 @@ namespace DeskMadeline
             else if (State == StPickup)
             {
                 id = "pickUp";
+            }
+            else if (State == StDreamDash)
+            {
+                id = dreamDashAnimTimer > 0f ? "dreamDashIn" : "dreamDashLoop";
+            }
+            else if (dreamDashOutTimer > 0f)
+            {
+                id = "dreamDashOut";
+            }
+            else if (throwAnimTimer > 0f)
+            {
+                id = "throw";
             }
             else if (!onGround && landingStumbleTimer > 0f)
             {
