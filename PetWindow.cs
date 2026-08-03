@@ -99,6 +99,7 @@ namespace DeskMadeline
             public string FrameId, BangsId;
             public Color Tint, HairColor;
             public PointF[] HairNodes;
+            public Bitmap Mask;
         }
 
         struct SlashVisual
@@ -476,7 +477,11 @@ namespace DeskMadeline
             for (int i = dashTrails.Count - 1; i >= 0; i--)
             {
                 dashTrails[i].Age += dt;
-                if (dashTrails[i].Age >= 1f) dashTrails.RemoveAt(i);
+                if (dashTrails[i].Age >= 1f)
+                {
+                    dashTrails[i].Mask?.Dispose();
+                    dashTrails.RemoveAt(i);
+                }
             }
         }
 
@@ -489,7 +494,7 @@ namespace DeskMadeline
             string bangsId = "bangs00";
             if (HairMeta.TryGet(frameId, out var hm) && hm.Bangs >= 0 && hm.Bangs < HairMeta.BangsFrames.Length)
                 bangsId = HairMeta.BangsFrames[hm.Bangs];
-            dashTrails.Add(new DashTrail
+            var trail = new DashTrail
             {
                 X = player.Pos.X,
                 Y = player.Pos.Y,
@@ -503,7 +508,67 @@ namespace DeskMadeline
                 HairColor = player.HairColor,
                 // Player.GetTrailColor(wasDashB): second-charge dash -> red; otherwise blue.
                 Tint = player.LastDashWasTwo ? Player.NormalHairColor : Player.UsedHairColor
-            });
+            };
+            trail.Mask = BakeDashTrailMask(trail);
+            dashTrails.Add(trail);
+        }
+
+        Bitmap BakeDashTrailMask(DashTrail trail)
+        {
+            // Celeste's TrailManager renders hair + sprite once into an off-screen
+            // buffer, converts its resulting alpha to a white mask, then only moves and
+            // fades that immutable texture. Rebuilding individual pieces every frame
+            // changes raster coverage and causes direction-aligned shimmer.
+            const int sizePx = 64;
+            const float center = sizePx / 2f;
+            var mask = new Bitmap(sizePx, sizePx, PixelFormat.Format32bppPArgb);
+            using var g = Graphics.FromImage(mask);
+            g.Clear(Color.Transparent);
+            g.InterpolationMode = InterpolationMode.NearestNeighbor;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            g.SmoothingMode = SmoothingMode.None;
+            g.CompositingQuality = CompositingQuality.HighSpeed;
+
+            bool flip = trail.Facing < 0;
+            var blob = Sprites.Get("hair00", false);
+            var bangs = Sprites.Get(trail.BangsId, flip);
+            if (blob != null && bangs != null)
+            {
+                // Hair.Render includes its four-direction black outline. The max-blend
+                // mask pass includes that outline in the final silhouette as well.
+                for (int i = 0; i < trail.HairCount; i++)
+                {
+                    float scale = HairSegmentScale(i, trail.HairCount);
+                    float pieceSize = SnapEven(10f * scale);
+                    var tex = i == 0 ? bangs : blob;
+                    float x = SnapPx(trail.HairNodes[i].X - trail.X + center) - pieceSize / 2f;
+                    float y = SnapPx(trail.HairNodes[i].Y - trail.Y + center) - pieceSize / 2f;
+                    DrawTintedSafe(g, tex, Color.Black, x - 1, y, pieceSize, pieceSize);
+                    DrawTintedSafe(g, tex, Color.Black, x + 1, y, pieceSize, pieceSize);
+                    DrawTintedSafe(g, tex, Color.Black, x, y - 1, pieceSize, pieceSize);
+                    DrawTintedSafe(g, tex, Color.Black, x, y + 1, pieceSize, pieceSize);
+                }
+                for (int i = trail.HairCount - 1; i >= 0; i--)
+                {
+                    float scale = HairSegmentScale(i, trail.HairCount);
+                    float pieceSize = SnapEven(10f * scale);
+                    var tex = i == 0 ? bangs : blob;
+                    DrawTintedSafe(g, tex, trail.HairColor,
+                        SnapPx(trail.HairNodes[i].X - trail.X + center) - pieceSize / 2f,
+                        SnapPx(trail.HairNodes[i].Y - trail.Y + center) - pieceSize / 2f,
+                        pieceSize, pieceSize);
+                }
+            }
+
+            var body = Sprites.Get(trail.FrameId, flip);
+            if (body != null)
+            {
+                g.DrawImage(body,
+                    SnapPx(center - 16f * trail.ScaleX),
+                    SnapPx(center - 32f * trail.ScaleY),
+                    SnapPx(32f * trail.ScaleX), SnapPx(32f * trail.ScaleY));
+            }
+            return mask;
         }
 
         // Celeste Player.Update + SpeedRing：Super/Hyper/Wavedash 起跳后，在速度保持
@@ -877,33 +942,11 @@ namespace DeskMadeline
             {
                 float remain = 1f - trail.Age;
                 float alpha = 0.75f * remain * remain * remain; // 0.75 * (1 - Ease.CubeOut(percent))
-                bool flip = trail.Facing < 0;
-                var blob = Sprites.Get("hair00", false);
-                var bangs = Sprites.Get(trail.BangsId, flip);
-
-                if (blob != null && bangs != null)
-                {
-                    for (int i = trail.HairCount - 1; i >= 0; i--)
-                    {
-                        float scale = HairSegmentScale(i, trail.HairCount);
-                        float size = SnapEven(10f * scale);
-                        var tex = i == 0 ? bangs : blob;
-                        Sprites.DrawSilhouette(g, tex, trail.Tint,
-                            SnapPx(trail.HairNodes[i].X - camX) - size / 2f,
-                            SnapPx(trail.HairNodes[i].Y - camY) - size / 2f,
-                            size, size, alpha);
-                    }
-                }
-
-                var body = Sprites.Get(trail.FrameId, flip);
-                if (body != null)
-                {
-                    float anchorX = trail.X - camX, anchorY = trail.Y - camY;
-                    Sprites.DrawSilhouette(g, body, trail.Tint,
-                        SnapPx(anchorX - 16f * trail.ScaleX),
-                        SnapPx(anchorY - 32f * trail.ScaleY),
-                        SnapPx(32f * trail.ScaleX), SnapPx(32f * trail.ScaleY), alpha);
-                }
+                if (trail.Mask != null)
+                    Sprites.DrawSilhouette(g, trail.Mask, trail.Tint,
+                        SnapPx(trail.X - camX) - 32f,
+                        SnapPx(trail.Y - camY) - 32f,
+                        64f, 64f, alpha);
             }
         }
 
@@ -1362,6 +1405,8 @@ namespace DeskMadeline
             // 释放托盘图标 HICON 与 Direct3D / DirectComposition 资源
             if (trayIconHandle != IntPtr.Zero) { Win32.DestroyIcon(trayIconHandle); trayIconHandle = IntPtr.Zero; }
             presenter?.Dispose();
+            foreach (var trail in dashTrails) trail.Mask?.Dispose();
+            dashTrails.Clear();
             compositionHost?.Close();
             compositionHost?.Dispose();
             base.OnFormClosing(e);
