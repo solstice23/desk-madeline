@@ -224,8 +224,6 @@ namespace DeskMadeline
         PointF deathRespawnPos;
         float deathTimer;
         float respawnTimer;
-        PointF respawnEffectStart;
-        PointF respawnTarget;
 
         // 保留速度（cornerboost）：撞墙瞬间保存水平速度，时限内墙不再阻挡则返还
         float wallSpeedRetained;
@@ -691,18 +689,14 @@ namespace DeskMadeline
 
         void BeginRespawn()
         {
-            PointF effectStart = DeathPosition;
             PointF target = deathRespawnPos;
             ResetTo(target);
             State = StIntroRespawn;
             respawnTimer = 0f;
-            respawnEffectStart = effectStart;
-            respawnTarget = target;
-            // The desktop camera follows Player.Pos. Keep it on the reverse
-            // DeathEffect while it crosses monitors so the 160px source surface
-            // cannot clip the effect and make its reappearance look like a teleport.
-            Pos = new PointF(effectStart.X, effectStart.Y + 5f);
-            RespawnEffectPosition = effectStart;
+            // Reload creates a new Player directly at the respawn point. Its
+            // IntroRespawn DeathEffect contracts in place; the old death position
+            // is not transferred into the new room as a movement tween.
+            RespawnEffectPosition = new PointF(target.X, target.Y - 5f);
             RespawnPercent = 1f;
             RespawnColor = DashCapacity > 1
                 ? (PetWindow.Instance?.ResolveHairColor(2, TwoDashesHairColor) ?? TwoDashesHairColor)
@@ -735,18 +729,13 @@ namespace DeskMadeline
             }
             if (State == StIntroRespawn)
             {
-                // Player.IntroRespawn is a 0.6 second linear tween of a reversed
-                // DeathEffect from the old death point to the new player center.
+                // Player.IntroRespawn contracts a reversed DeathEffect at the
+                // newly loaded player's position for 0.6 seconds.
                 respawnTimer += dt;
                 float progress = Math.Min(1f, respawnTimer / 0.6f);
-                RespawnEffectPosition = new PointF(
-                    respawnEffectStart.X + (respawnTarget.X - respawnEffectStart.X) * progress,
-                    respawnEffectStart.Y + (respawnTarget.Y - 5f - respawnEffectStart.Y) * progress);
-                Pos = new PointF(RespawnEffectPosition.X, RespawnEffectPosition.Y + 5f);
                 RespawnPercent = 1f - progress;
                 if (progress >= 1f)
                 {
-                    Pos = respawnTarget;
                     State = StNormal;
                     SpriteScaleX = 1.5f;
                     SpriteScaleY = 0.5f;
@@ -1518,11 +1507,10 @@ namespace DeskMadeline
             sweatJumpTimer = 0f;
             LastDashWasTwo = Dashes == 2;
             Dashes = Math.Max(0, Dashes - 1);
-            if (Dashes > 0)
-            {
-                hairFlashTimer = 0.12f;
-                HairColor = FlashHairColor;
-            }
+            // Player.UpdateHair flashes on every dash-count change, including
+            // the common 1 -> 0 transition used to enter a DreamBlock.
+            hairFlashTimer = 0.12f;
+            HairColor = FlashHairColor;
             DashSequenceCount++;
             dashStartedOnGround = onGround;
             dashStartedWithDreamGrace = dreamGroundedDashGraceTimer > 0f;
