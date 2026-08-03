@@ -692,6 +692,11 @@ namespace DeskMadeline
                     Speed.Y >= 0 && wallSlideTimer > 0 && CollideAt(Pos.X + Facing, Pos.Y))
                 {
                     wallSlideDir = Facing;
+                    // The player is pinned against the wall.  Do not leave the one-frame
+                    // air-acceleration velocity in Speed.X while the subpixel counter waits
+                    // to round to a whole collision pixel (10.83 px/s at 60 Hz).
+                    Speed.X = 0f;
+                    counter.X = 0f;
                     // 滑墙中按抓取 → 自动进入攀爬（原作 ClimbTrigger）
                     if (input.GrabHeld && !IsTired) { EnterClimb(); State = StClimb; return; }
                     target = 160f + (20f - 160f) * (wallSlideTimer / WallSlideTime);
