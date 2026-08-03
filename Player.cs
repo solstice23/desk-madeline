@@ -166,10 +166,18 @@ namespace DeskMadeline
         public float DeathPercent { get; private set; }
         public PointF DeathPosition { get; private set; }
         public Color DeathColor { get; private set; }
+        public bool IsPreDeath { get; private set; }
+        public PointF DeathBodyPosition { get; private set; }
+        public float DeathBodyScale { get; private set; } = 1f;
+        public float DeathBodyRotation { get; private set; }
+        public string DeathBodyFrameId { get; private set; }
         public int DeathSequenceCount { get; private set; }
         public bool IsRespawning => State == StIntroRespawn;
+        public PointF Center => new PointF(Pos.X, Pos.Y - HitH / 2f);
         public int ElytraAnimationFrame { get; private set; } = 6;
         public int ElytraDeploySequenceCount { get; private set; }
+        public int ExplodeLaunchSequenceCount { get; private set; }
+        public float ExplodeLaunchAngle { get; private set; }
         public float ElytraDeployParticleAngle { get; private set; }
         public float RespawnPercent { get; private set; }
         public PointF RespawnEffectPosition { get; private set; }
@@ -207,11 +215,124 @@ namespace DeskMadeline
             hairFlashTimer = 0.12f;
         }
 
+        public void GetHitbox(out float left, out float top, out float right, out float bottom)
+            => HitboxAt(Pos.X, Pos.Y, out left, out top, out right, out bottom);
+
+        public void ApplyFreeze(float duration)
+        {
+            if (FreezeFramesEnabled) freezeTimer = Math.Max(freezeTimer, duration);
+        }
+
+        public void Bounce(float fromY)
+        {
+            MoveVExact((int)(fromY - Pos.Y), false);
+            RefillDash();
+            Stamina = ClimbMaxStamina;
+            State = StNormal;
+            jumpGraceTimer = 0f;
+            varJumpTimer = .2f;
+            autoJump = true;
+            dashAttackTimer = 0f;
+            gliderBoostTimer = 0f;
+            wallSlideTimer = WallSlideTime;
+            wallBoostTimer = 0f;
+            varJumpSpeed = Speed.Y = -140f;
+            SpriteScaleX = .6f;
+            SpriteScaleY = 1.4f;
+        }
+
+        public void PointBounce(PointF from)
+        {
+            if (State == StDash) State = StNormal;
+            RefillDash();
+            Stamina = ClimbMaxStamina;
+            PointF vector = SafeNormalize(Center.X - from.X, Center.Y - from.Y);
+            if (vector.Y > -.2f && vector.Y <= .4f) vector.Y = -.2f;
+            Speed = new PointF(vector.X * 220f * 1.5f, vector.Y * 220f);
+            if (Math.Abs(Speed.X) < 100f)
+                Speed.X = Speed.X == 0f ? -Facing * 100f : Math.Sign(Speed.X) * 100f;
+        }
+
+        public PointF ExplodeLaunch(PointF from)
+        {
+            ApplyFreeze(.1f);
+            PointF vector = SafeNormalize(Center.X - from.X, Center.Y - from.Y, 0f, -1f);
+            float dotUp = vector.Y;
+            if (dotUp <= -.7f) { vector.X = 0f; vector.Y = -1f; }
+            else if (dotUp <= .65f && dotUp >= -.55f) { vector.Y = 0f; vector.X = Math.Sign(vector.X); }
+            Speed = new PointF(280f * vector.X, 280f * vector.Y);
+            if (Speed.Y <= 50f) { Speed.Y = Math.Min(-150f, Speed.Y); autoJump = true; }
+            if (Speed.X != 0f)
+            {
+                explodeLaunchBoostSpeed = Speed.X * 1.2f;
+                if (moveX == Math.Sign(Speed.X)) { Speed.X = explodeLaunchBoostSpeed; explodeLaunchBoostTimer = 0f; }
+                else explodeLaunchBoostTimer = .01f;
+            }
+            RefillDash();
+            Stamina = ClimbMaxStamina;
+            dashCooldownTimer = .2f;
+            State = StLaunch;
+            ExplodeLaunchAngle = (float)Math.Atan2(Speed.Y, Speed.X);
+            ExplodeLaunchSequenceCount++;
+            return vector;
+        }
+
+        public void Die(PointF direction)
+        {
+            if (IsDead || IsRespawning) return;
+            if (Holding != null) DropGlider();
+            IsDead = true;
+            DeathSequenceCount++;
+            DeathColor = HairColor;
+            DeathPosition = new PointF(Pos.X, Pos.Y - 5f);
+            DeathPercent = 0f;
+            deathTimer = 0f;
+            Speed = PointF.Empty;
+            counter = PointF.Empty;
+            dashAimPending = false;
+            IsPreDeath = !direction.IsEmpty;
+            deathDirection = direction;
+            deathBodyStart = DeathBodyPosition = Pos;
+            deathPreTimer = 0f;
+            DeathBodyScale = IsPreDeath ? 1.5f : 1f;
+            DeathBodyRotation = 0f;
+            if (IsPreDeath)
+            {
+                if (Math.Abs(direction.X) > Math.Abs(direction.Y))
+                {
+                    DeathBodyFrameId = "deadside00";
+                    Facing = -Math.Sign(direction.X);
+                }
+                else
+                {
+                    float target = Facing > 0 ? (float)Math.PI : 0f;
+                    float angle = (float)Math.Atan2(direction.Y, direction.X);
+                    float delta = target - angle;
+                    while (delta > Math.PI) delta -= (float)Math.PI * 2f;
+                    while (delta < -Math.PI) delta += (float)Math.PI * 2f;
+                    angle += Math.Max(-.5f, Math.Min(.5f, delta));
+                    deathDirection = new PointF((float)Math.Cos(angle), (float)Math.Sin(angle));
+                    DeathBodyFrameId = deathDirection.Y < 0f ? "deadup00" : "deaddown00";
+                }
+                PlaySound("event:/char/madeline/predeath");
+            }
+            else PlaySound("event:/char/madeline/death");
+            freezeTimer = IsPreDeath && FreezeFramesEnabled ? .05f : 0f;
+            State = StFrozen;
+        }
+
+        static PointF SafeNormalize(float x, float y, float fallbackX = 0f, float fallbackY = 0f)
+        {
+            float length = (float)Math.Sqrt(x * x + y * y);
+            return length > .00001f ? new PointF(x / length, y / length) : new PointF(fallbackX, fallbackY);
+        }
+
         // 计时器
         float jumpGraceTimer;
         float varJumpTimer;
         float varJumpSpeed;
         float dashCooldownTimer;
+        float explodeLaunchBoostTimer, explodeLaunchBoostSpeed;
         float dashRefillCooldownTimer;
         float dashAttackTimer;
         float hairFlashTimer;     // 头发闪白计时（Dash 恢复时 0.12s）
@@ -259,6 +380,8 @@ namespace DeskMadeline
         Solid dreamDashBlock;
         bool hasDreamDashBlock;
         PointF deathRespawnPos;
+        PointF deathDirection, deathBodyStart;
+        float deathPreTimer;
         float deathTimer;
         float respawnTimer;
         bool respawnTravels;
@@ -726,6 +849,7 @@ namespace DeskMadeline
             crouchDashBufferTimer = 0;
             jumpBufferFresh = dashBufferFresh = crouchDashBufferFresh = false;
             dashCooldownTimer = 0;
+            explodeLaunchBoostTimer = explodeLaunchBoostSpeed = 0f;
             dashRefillCooldownTimer = 0;
             dashAttackTimer = 0;
             dashTime = 0;
@@ -774,6 +898,10 @@ namespace DeskMadeline
             deathTimer = 0f;
             respawnTimer = 0f;
             IsDead = false;
+            IsPreDeath = false;
+            DeathBodyFrameId = null;
+            DeathBodyScale = 1f;
+            DeathBodyRotation = 0f;
             DeathPercent = 0f;
             DeathPosition = pos;
             RespawnPercent = 0f;
@@ -832,6 +960,28 @@ namespace DeskMadeline
         {
             if (IsDead)
             {
+                if (IsPreDeath)
+                {
+                    if (freezeTimer > 0f) { freezeTimer -= dt; return; }
+                    deathPreTimer += dt;
+                    float progress = Math.Min(1f, deathPreTimer / .5f);
+                    float eased = 1f - (float)Math.Pow(1f - progress, 3f);
+                    DeathBodyPosition = new PointF(
+                        deathBodyStart.X + deathDirection.X * 24f * eased,
+                        deathBodyStart.Y + deathDirection.Y * 24f * eased);
+                    DeathBodyScale = 1.5f - eased * .5f;
+                    DeathBodyRotation = (float)Math.Floor(eased * 4f) * (float)Math.PI * 2f;
+                    DeathBodyFrameId = DeathBodyFrameId.TrimEnd('0', '1') +
+                        (((int)(deathPreTimer / .1f) & 1) == 0 ? "00" : "01");
+                    if (deathPreTimer >= .375f)
+                    {
+                        IsPreDeath = false;
+                        DeathPosition = new PointF(DeathBodyPosition.X, DeathBodyPosition.Y - 5f);
+                        deathTimer = 0f;
+                        PlaySound("event:/char/madeline/death");
+                    }
+                    return;
+                }
                 deathTimer += dt;
                 DeathPercent = Math.Min(1f, deathTimer / 0.834f);
                 // PlayerDeadBody begins the room reload after 65% of DeathEffect's
@@ -900,6 +1050,15 @@ namespace DeskMadeline
             AdvanceBuffer(ref dashBufferTimer, ref dashBufferFresh, dt);
             AdvanceBuffer(ref crouchDashBufferTimer, ref crouchDashBufferFresh, dt);
             if (dashCooldownTimer > 0) dashCooldownTimer -= dt;
+            if (explodeLaunchBoostTimer > 0f)
+            {
+                if (input.MoveX == Math.Sign(explodeLaunchBoostSpeed))
+                {
+                    Speed.X = explodeLaunchBoostSpeed;
+                    explodeLaunchBoostTimer = 0f;
+                }
+                else explodeLaunchBoostTimer -= dt;
+            }
             bool dashRefillReady = dashRefillCooldownTimer <= 0f;
             if (!dashRefillReady) dashRefillCooldownTimer -= dt;
             if (InfiniteDash && dashRefillReady && Dashes < DashCapacity)
@@ -1064,6 +1223,7 @@ namespace DeskMadeline
                     case StDash: DashUpdate(dt, input); break;
                     case StDreamDash: DreamDashUpdate(dt, input); break;
                     case StElytra: ElytraUpdate(dt, input); break;
+                    case StLaunch: LaunchUpdate(dt, input); break;
                 }
 
                 // Vanilla releases the duck hitbox while falling once standing
@@ -1139,6 +1299,19 @@ namespace DeskMadeline
         {
             float anchorY = -9f * SpriteScaleY;
             Hair.AfterUpdate(dt, new PointF(Pos.X + hx * Facing, Pos.Y + anchorY + hy), Facing, Dashes > 1);
+        }
+
+        void LaunchUpdate(float dt, PetInput input)
+        {
+            if (CanDash)
+            {
+                State = BeginDash(input, crouchDashBufferTimer > 0f);
+                return;
+            }
+            if (Holding == null && input.GrabHeld && !IsTired && !Ducking && TryPickupGlider()) return;
+            Speed.Y = Approach(Speed.Y, 160f, (Speed.Y < 0f ? 450f : 225f) * dt);
+            Speed.X = Approach(Speed.X, 0f, 200f * dt);
+            if (Math.Sqrt(Speed.X * Speed.X + Speed.Y * Speed.Y) < 220f) State = StNormal;
         }
 
         // ===== 普通状态 =====

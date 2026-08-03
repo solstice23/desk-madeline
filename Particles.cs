@@ -18,6 +18,7 @@ namespace DeskMadeline
         public float Size = 5f;     // 尺寸（游戏像素）
         public float SizeRange;
         public float SpeedMin = 5f, SpeedMax = 15f;
+        public float SpeedMultiplier = 1f;
         public bool ScaleOut;       // 消亡时缩小
         public bool FadeOut = true; // 消亡时淡出
         public bool LateFade;       // 原作 Late：仅最后 25% 生命周期淡出
@@ -35,6 +36,7 @@ namespace DeskMadeline
         public bool BlinkColor;
         public float GravY;
         public float Friction;
+        public float SpeedMultiplier;
         public bool FadeOut;
         public bool ScaleOut;
         public bool LateFade;
@@ -51,6 +53,10 @@ namespace DeskMadeline
 
         /// <summary>在 (x,y) 以方向 dir（弧度）±dirRange 发射 count 个粒子。</summary>
         public void Emit(PType t, float x, float y, float dir, float dirRange, int count)
+            => Emit(t, x, y, dir, dirRange, count, 0f, 0f);
+
+        public void Emit(PType t, float x, float y, float dir, float dirRange, int count,
+            float positionRangeX, float positionRangeY)
         {
             if (t == null || t.Tex == null || t.Tex.Length == 0) return;
             for (int i = 0; i < count; i++)
@@ -64,7 +70,8 @@ namespace DeskMadeline
                 if (size < 1) size = 1;
                 parts.Add(new Particle
                 {
-                    X = x, Y = y,
+                    X = x + (float)(rng.NextDouble() * 2 - 1) * positionRangeX,
+                    Y = y + (float)(rng.NextDouble() * 2 - 1) * positionRangeY,
                     VX = (float)Math.Cos(a) * sp,
                     VY = (float)Math.Sin(a) * sp,
                     Life = life, MaxLife = life,
@@ -75,6 +82,7 @@ namespace DeskMadeline
                     BlinkColor = t.BlinkColor,
                     GravY = t.GravY,
                     Friction = t.Friction,
+                    SpeedMultiplier = t.SpeedMultiplier,
                     FadeOut = t.FadeOut,
                     ScaleOut = t.ScaleOut,
                     LateFade = t.LateFade
@@ -94,12 +102,40 @@ namespace DeskMadeline
                 p.VY += p.GravY * dt;
                 if (p.VX > 0) p.VX = Math.Max(0, p.VX - p.Friction * dt);
                 else p.VX = Math.Min(0, p.VX + p.Friction * dt);
+                if (p.SpeedMultiplier != 1f)
+                {
+                    float multiplier = (float)Math.Pow(p.SpeedMultiplier, dt);
+                    p.VX *= multiplier;
+                    p.VY *= multiplier;
+                }
                 parts[i] = p;
             }
         }
 
         public int Count => parts.Count;
         public void Clear() => parts.Clear();
+
+        internal void AppendPointStamps(TrailStamp[] stamps, ref int count,
+            Dictionary<int, Bitmap> colorBitmaps)
+        {
+            for (int i = 0; i < parts.Count && count < stamps.Length; i++)
+            {
+                Particle p = parts[i];
+                float k = p.Life / p.MaxLife;
+                float alpha = p.FadeOut ? Math.Min(1f, k * (p.LateFade ? 4f : 1f)) : 1f;
+                Color color = p.BlinkColor
+                    ? ((((int)(p.Life / .1f) & 1) != 0) ? p.Color : p.Color2)
+                    : p.Color;
+                int key = color.ToArgb();
+                if (!colorBitmaps.TryGetValue(key, out Bitmap bitmap))
+                {
+                    bitmap = new Bitmap(1, 1, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+                    bitmap.SetPixel(0, 0, color);
+                    colorBitmaps[key] = bitmap;
+                }
+                stamps[count++] = new TrailStamp(bitmap, (int)p.X, (int)p.Y, alpha);
+            }
+        }
 
         /// <summary>绘制进 1x 画布（camX/camY = 世界→画布偏移）。</summary>
         public void Draw(Graphics g, float camX, float camY)

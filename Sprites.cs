@@ -126,6 +126,8 @@ namespace DeskMadeline
             }
             string glider = Path.Combine(Path.GetDirectoryName(dir), "glider");
             if (Directory.Exists(glider)) LoadDirectory(glider, "glider/");
+            string seeker = Path.Combine(Path.GetDirectoryName(dir), "seeker");
+            if (Directory.Exists(seeker)) LoadDirectory(seeker, "seeker/");
         }
 
         static void LoadDirectory(string dir, string idPrefix)

@@ -52,12 +52,14 @@ namespace DeskMadeline
         int pendingScale = -1;
         volatile string pendingSkinId;
         int pendingGliderSpawns;
+        int pendingSeekerSpawns;
         readonly Queue<Glider> pendingGliderRemovals = new Queue<Glider>();
+        readonly Queue<Seeker> pendingSeekerRemovals = new Queue<Seeker>();
         bool introWakeUp = true;   // 启动时先播"醒来"动画（wakeUp 00-14），播完切 idle
 
         // 渲染
         Bitmap small;           // 1x 游戏像素缓冲（CanvasW × CanvasH），整数坐标绘制后整数倍放大
-        readonly TrailStamp[] trailStamps = new TrailStamp[64];
+        readonly TrailStamp[] trailStamps = new TrailStamp[1024];
         D3DPresenter presenter;
         CompositionHost compositionHost;
         readonly Rectangle virtualDesktop;
@@ -79,9 +81,12 @@ namespace DeskMadeline
 
         // 粒子 / 特效
         readonly ParticleSystem particles = new ParticleSystem();
+        readonly ParticleSystem seekerParticles = new ParticleSystem();
+        readonly Dictionary<int, Bitmap> seekerParticleBitmaps = new Dictionary<int, Bitmap>();
         readonly List<WaveRing> waveRings = new List<WaveRing>();
         readonly Random effectRng = new Random();
         PType dust, dashBlue, dashRed, elytraDeploy;
+        PType seekerAttack, seekerHitWall, seekerStomp, seekerRegen;
         bool ParticlesEnabled = true;    // 粒子特效开关（默认开，托盘菜单可关闭）
         float skidDustTimer;
         string observedParticleAnimId;
@@ -95,6 +100,7 @@ namespace DeskMadeline
         int observedJumpEffectCount;
         int observedLandingEffectCount;
         int observedElytraDeployCount;
+        int observedExplodeLaunchCount;
         int observedSweatAnimSequenceCount;
         bool speedRingLaunchActive;
         float speedRingLaunchTimer;
@@ -126,6 +132,10 @@ namespace DeskMadeline
         readonly object gliderWindowLock = new object();
         readonly Dictionary<Glider, JellyInputWindow> gliderWindows = new Dictionary<Glider, JellyInputWindow>();
         readonly Dictionary<Glider, GliderStampCache> gliderStampCache = new Dictionary<Glider, GliderStampCache>();
+        readonly List<Seeker> seekers = new List<Seeker>();
+        readonly object seekerWindowLock = new object();
+        readonly Dictionary<Seeker, SeekerInputWindow> seekerWindows = new Dictionary<Seeker, SeekerInputWindow>();
+        readonly Dictionary<Seeker, GliderStampCache> seekerStampCache = new Dictionary<Seeker, GliderStampCache>();
         Glider draggedGlider;
         PointF gliderDragOffset, gliderCursorVelocity;
         Point lastGliderCursor;
@@ -284,6 +294,28 @@ namespace DeskMadeline
                 SpeedMin = 10f, SpeedMax = 60f,
                 ScaleOut = true,
                 FadeOut = false
+            };
+            seekerAttack = new PType
+            {
+                Tex = new[] { "dashParticle" }, Color = Color.FromArgb(0x99, 0xE5, 0x50),
+                Color2 = Color.FromArgb(0xDD, 0xFF, 0xBC), BlinkColor = true,
+                LifeMin = .6f, LifeMax = 1.2f, Size = 1f,
+                SpeedMin = 20f, SpeedMax = 40f, SpeedMultiplier = .4f, LateFade = true
+            };
+            seekerStomp = seekerAttack;
+            seekerHitWall = new PType
+            {
+                Tex = new[] { "dashParticle" }, Color = Color.FromArgb(0x99, 0xE5, 0x50),
+                Color2 = Color.FromArgb(0xDD, 0xFF, 0xBC), BlinkColor = true,
+                LifeMin = .6f, LifeMax = 1.2f, Size = 1f,
+                SpeedMin = 30f, SpeedMax = 60f, SpeedMultiplier = .4f, LateFade = true
+            };
+            seekerRegen = new PType
+            {
+                Tex = new[] { "dashParticle" }, Color = Color.FromArgb(0xCB, 0xDB, 0xFC),
+                Color2 = Color.FromArgb(0x57, 0x5F, 0xD9), BlinkColor = true,
+                LifeMin = .4f, LifeMax = 1.2f, Size = 1f,
+                SpeedMin = 20f, SpeedMax = 100f, SpeedMultiplier = .4f, LateFade = true
             };
             anims = BuildAnims();
             animator = new Animator(anims);
@@ -514,6 +546,13 @@ namespace DeskMadeline
             if (spawnCount > 0 && IsHandleCreated)
                 BeginInvoke(new Action(EnsureGliderWindows));
 
+            int seekerSpawnCount = Interlocked.Exchange(ref pendingSeekerSpawns, 0);
+            for (int i = 0; i < seekerSpawnCount; i++)
+                seekers.Add(new Seeker(new PointF(
+                    player.Pos.X + player.Facing * (48f + i * 8f), player.Pos.Y - 24f)));
+            if (seekerSpawnCount > 0 && IsHandleCreated)
+                BeginInvoke(new Action(EnsureSeekerWindows));
+
             lock (pendingGliderRemovals)
             {
                 while (pendingGliderRemovals.Count > 0)
@@ -528,6 +567,22 @@ namespace DeskMadeline
                         cache.Bitmap?.Dispose();
                         gliderStampCache.Remove(glider);
                     }
+                }
+            }
+
+            lock (pendingSeekerRemovals)
+            {
+                while (pendingSeekerRemovals.Count > 0)
+                {
+                    Seeker seeker = pendingSeekerRemovals.Dequeue();
+                    if (!seekers.Remove(seeker)) continue;
+                    soundEffects.StopLoop(seeker);
+                    if (seekerStampCache.TryGetValue(seeker, out GliderStampCache cache))
+                    {
+                        cache.Bitmap?.Dispose();
+                        seekerStampCache.Remove(seeker);
+                    }
+                    foreach (SeekerTrail trail in seeker.Trails) trail.Stamp?.Dispose();
                 }
             }
 
@@ -654,6 +709,39 @@ namespace DeskMadeline
                 else soundEffects.StopLoop(glider);
             }
 
+            var seekerWorldBounds = new RectangleF(
+                virtualDesktop.Left / (float)GameScale,
+                virtualDesktop.Top / (float)GameScale,
+                virtualDesktop.Width / (float)GameScale,
+                virtualDesktop.Height / (float)GameScale);
+            var seekerCamera = new RectangleF(player.Pos.X - 160f, player.Pos.Y - 90f, 320f, 180f);
+            foreach (Seeker seeker in seekers)
+            {
+                seeker.Update(dt, player, player.Solids, seekerWorldBounds, seekerCamera);
+                while (seeker.SoundEvents.Count > 0)
+                {
+                    PlayerSoundEvent sound = seeker.SoundEvents.Dequeue();
+                    soundEffects.Play(sound.Path, sound.Parameter, sound.Value);
+                }
+                if (seeker.BoopedLoopActive)
+                    soundEffects.StartLoop(seeker, "event:/game/05_mirror_temple/seeker_booped");
+                else soundEffects.StopLoop(seeker);
+                while (seeker.ParticleEvents.Count > 0)
+                {
+                    SeekerParticleEvent effect = seeker.ParticleEvents.Dequeue();
+                    if (!ParticlesEnabled) continue;
+                    PType type = effect.Kind == SeekerParticleKind.HitWall ? seekerHitWall :
+                        effect.Kind == SeekerParticleKind.Stomp ? seekerStomp :
+                        effect.Kind == SeekerParticleKind.Regen ? seekerRegen : seekerAttack;
+                    // ParticleType.DirectionRange is the full arc; ParticleSystem.Emit
+                    // accepts a +/- half-range.
+                    float directionRange = effect.Kind == SeekerParticleKind.Regen
+                        ? (float)Math.PI / 6f : .87266465f;
+                    seekerParticles.Emit(type, effect.Position.X, effect.Position.Y, effect.Direction,
+                        directionRange, effect.Count, effect.RangeX, effect.RangeY);
+                }
+            }
+
             UpdateWavedashWaves(dt);
 
             // 离开屏幕很远自动重置（防"无限下落"/被甩出虚拟屏幕）
@@ -664,10 +752,12 @@ namespace DeskMadeline
             {
                 EmitPlayerParticles(dt, wasState);
                 particles.Update(dt);
+                seekerParticles.Update(dt);
             }
             else
             {
                 particles.Clear();
+                seekerParticles.Clear();
                 observedJumpEffectCount = player.JumpEffectCount;
                 observedWallJumpEffectCount = player.WallJumpEffectCount;
                 observedLandingEffectCount = player.LandingEffectCount;
@@ -822,6 +912,18 @@ namespace DeskMadeline
                     dashTrails[i].Mask?.Dispose();
                     dashTrails.RemoveAt(i);
                 }
+            }
+
+            if (player.ExplodeLaunchSequenceCount != observedExplodeLaunchCount)
+            {
+                observedExplodeLaunchCount = player.ExplodeLaunchSequenceCount;
+                slash = new SlashVisual
+                {
+                    Active = true,
+                    X = player.Center.X,
+                    Y = player.Center.Y,
+                    Angle = player.ExplodeLaunchAngle
+                };
             }
 
             if (player.DashSequenceCount != observedDashSequenceCount)
@@ -1251,7 +1353,38 @@ namespace DeskMadeline
         {
             if (hwnd == Handle) return true;
             lock (gliderWindowLock)
-                return gliderWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd);
+                if (gliderWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd)) return true;
+            lock (seekerWindowLock)
+                return seekerWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd);
+        }
+
+        void EnsureSeekerWindows()
+        {
+            lock (seekerWindowLock)
+            {
+                foreach (Seeker seeker in seekers)
+                {
+                    if (seekerWindows.ContainsKey(seeker)) continue;
+                    var window = new SeekerInputWindow(this, seeker);
+                    seekerWindows[seeker] = window;
+                    window.Show();
+                }
+            }
+        }
+
+        internal void RequestSeekerRemoval(Seeker seeker)
+        {
+            lock (pendingSeekerRemovals) pendingSeekerRemovals.Enqueue(seeker);
+            BeginInvoke(new Action(() =>
+            {
+                lock (seekerWindowLock)
+                {
+                    if (!seekerWindows.TryGetValue(seeker, out SeekerInputWindow window)) return;
+                    seekerWindows.Remove(seeker);
+                    window.Close();
+                    window.Dispose();
+                }
+            }));
         }
 
         void EnsureGliderWindows()
@@ -1600,7 +1733,11 @@ namespace DeskMadeline
 
                 DrawWavedashWaves(g, camX, camY);
 
-                if (player.IsDead)
+                if (player.IsPreDeath)
+                {
+                    DrawPreDeath(g, camX, camY);
+                }
+                else if (player.IsDead)
                 {
                     DrawDeathEffect(g, camX, camY, player.DeathPosition,
                         player.DeathColor, player.DeathPercent);
@@ -1644,6 +1781,7 @@ namespace DeskMadeline
                 float opacity = 0.75f * remain * remain * remain;
                 trailStamps[i] = new TrailStamp(trail.Mask, trail.X, trail.Y, opacity);
             }
+            int foregroundStart = trailCount;
             foreach (Glider glider in gliders)
             {
                 if (glider.IsHeld) continue;
@@ -1652,7 +1790,31 @@ namespace DeskMadeline
                 if (stamp != null)
                     trailStamps[trailCount++] = new TrailStamp(stamp, glider.Pos.X, glider.Pos.Y, 1f);
             }
-            presenter.Present(small, left, top, trailStamps, trailCount);
+            foreach (Seeker seeker in seekers)
+            {
+                foreach (SeekerTrail trail in seeker.Trails)
+                {
+                    if (trailCount >= trailStamps.Length) break;
+                    trail.Stamp ??= CreateSeekerStamp(trail.FrameId, trail.Facing,
+                        trail.ScaleX, trail.ScaleY, true);
+                    float remain = 1f - trail.Age / .5f;
+                    trailStamps[trailCount++] = new TrailStamp(trail.Stamp,
+                        trail.Position.X, trail.Position.Y, .75f * remain * remain * remain);
+                }
+                if (trailCount >= trailStamps.Length) break;
+                if (seeker.ShockwaveFrameId != null && trailCount < trailStamps.Length)
+                {
+                    Bitmap shockwave = Sprites.Get(seeker.ShockwaveFrameId, false);
+                    if (shockwave != null)
+                        trailStamps[trailCount++] = new TrailStamp(shockwave, seeker.Pos.X, seeker.Pos.Y, 1f);
+                }
+                Bitmap seekerStamp = GetSeekerStamp(seeker);
+                if (seekerStamp != null && trailCount < trailStamps.Length)
+                    trailStamps[trailCount++] = new TrailStamp(seekerStamp,
+                        seeker.Pos.X + seeker.Shake.X, seeker.Pos.Y + seeker.Shake.Y, 1f);
+            }
+            seekerParticles.AppendPointStamps(trailStamps, ref trailCount, seekerParticleBitmaps);
+            presenter.Present(small, left, top, trailStamps, trailCount, foregroundStart);
 
             lock (gliderWindowLock)
             {
@@ -1663,6 +1825,17 @@ namespace DeskMadeline
                     int jellyTop = (int)Math.Round((pair.Key.Pos.Y - 16f) * s);
                     Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, jellyLeft, jellyTop,
                         20 * s, 22 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                }
+            }
+            lock (seekerWindowLock)
+            {
+                foreach (var pair in seekerWindows)
+                {
+                    if (!pair.Value.IsHandleCreated) continue;
+                    int seekerLeft = (int)Math.Round((pair.Key.Pos.X - 16f) * s);
+                    int seekerTop = (int)Math.Round((pair.Key.Pos.Y - 16f) * s);
+                    Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, seekerLeft, seekerTop,
+                        32 * s, 32 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
                 }
             }
 
@@ -1727,6 +1900,24 @@ namespace DeskMadeline
             }
         }
 
+        void DrawPreDeath(Graphics g, float camX, float camY)
+        {
+            float dx = player.DeathBodyPosition.X - player.Pos.X;
+            float dy = player.DeathBodyPosition.Y - player.Pos.Y;
+            DrawHair(g, camX - dx, camY - dy,
+                player.DeathBodyFrameId != null && player.DeathBodyFrameId.EndsWith("00")
+                    ? Color.White : player.DeathColor);
+            Bitmap frame = Sprites.Get(player.DeathBodyFrameId, player.Facing < 0);
+            if (frame == null) return;
+            var state = g.Save();
+            g.TranslateTransform(SnapPx(player.DeathBodyPosition.X - camX),
+                SnapPx(player.DeathBodyPosition.Y - camY));
+            g.RotateTransform(player.DeathBodyRotation * 180f / (float)Math.PI);
+            g.ScaleTransform(player.DeathBodyScale, player.DeathBodyScale);
+            g.DrawImage(frame, -16f, -32f, 32f, 32f);
+            g.Restore(state);
+        }
+
         Bitmap GetGliderStamp(Glider glider)
         {
             Bitmap frame = Sprites.Get(glider.FrameId, false);
@@ -1771,6 +1962,42 @@ namespace DeskMadeline
             cached.ScaleX = scaleX;
             cached.ScaleY = scaleY;
             cached.Bitmap = bitmap;
+            return bitmap;
+        }
+
+        Bitmap GetSeekerStamp(Seeker seeker)
+        {
+            string frameId = seeker.FrameId;
+            int sx = (int)Math.Round(seeker.RenderScaleX * 100f);
+            int sy = (int)Math.Round(seeker.RenderScaleY * 100f);
+            int facing = seeker.SpriteFacing;
+            if (seekerStampCache.TryGetValue(seeker, out GliderStampCache cached) &&
+                cached.FrameId == frameId && cached.ScaleX == sx && cached.ScaleY == sy &&
+                cached.Rotation == facing) return cached.Bitmap;
+            Bitmap bitmap = CreateSeekerStamp(frameId, facing, seeker.RenderScaleX, seeker.RenderScaleY, false);
+            cached ??= new GliderStampCache();
+            cached.Bitmap?.Dispose();
+            cached.FrameId = frameId; cached.ScaleX = sx; cached.ScaleY = sy;
+            cached.Rotation = facing; cached.Bitmap = bitmap;
+            seekerStampCache[seeker] = cached;
+            return bitmap;
+        }
+
+        static Bitmap CreateSeekerStamp(string frameId, int facing, float scaleX, float scaleY, bool trail)
+        {
+            Bitmap frame = Sprites.Get(frameId, facing < 0);
+            if (frame == null) return null;
+            var bitmap = new Bitmap(128, 128, PixelFormat.Format32bppPArgb);
+            using (var g = Graphics.FromImage(bitmap))
+            {
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.SmoothingMode = SmoothingMode.None;
+                float w = frame.Width * scaleX, h = frame.Height * scaleY;
+                float x = 64f - w / 2f, y = 64f - h / 2f;
+                if (trail) Sprites.DrawSilhouette(g, frame, Seeker.TrailColor, x, y, w, h);
+                else g.DrawImage(frame, x, y, w, h);
+            }
             return bitmap;
         }
 
@@ -1864,10 +2091,10 @@ namespace DeskMadeline
             }
         }
 
-        void DrawHair(Graphics g, float camX, float camY)
+        void DrawHair(Graphics g, float camX, float camY, Color? colorOverride = null)
         {
             var hair = player.Hair;
-            Color color = player.HairColor;
+            Color color = colorOverride ?? player.HairColor;
             bool flip = player.Facing < 0;
             var blob = Sprites.Get("hair00", false);
             // 刘海帧：按当前动画帧的朝向元数据选择（0左看/1居中/2右看）；编辑模式下用实时值预览
@@ -2639,6 +2866,8 @@ namespace DeskMadeline
             menu.Items.Add(new ToolStripMenuItem(T("Reset position", "重置位置"), null, (_, __) => ResetPosition()));
             menu.Items.Add(new ToolStripMenuItem(T("Spawn jellyfish", "生成水母"), null, (_, __) =>
                 Interlocked.Increment(ref pendingGliderSpawns)));
+            menu.Items.Add(new ToolStripMenuItem(T("Spawn Seeker", "生成追踪者"), null, (_, __) =>
+                Interlocked.Increment(ref pendingSeekerSpawns)));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem(T("Controls", "操作说明"), null, (_, __) =>
                 MessageBox.Show(
@@ -2741,6 +2970,17 @@ namespace DeskMadeline
             }
             foreach (var cached in gliderStampCache.Values) cached.Bitmap?.Dispose();
             gliderStampCache.Clear();
+            lock (seekerWindowLock)
+            {
+                foreach (var window in seekerWindows.Values) window.Dispose();
+                seekerWindows.Clear();
+            }
+            foreach (var cached in seekerStampCache.Values) cached.Bitmap?.Dispose();
+            seekerStampCache.Clear();
+            foreach (Seeker seeker in seekers)
+                foreach (SeekerTrail trail in seeker.Trails) trail.Stamp?.Dispose();
+            foreach (Bitmap bitmap in seekerParticleBitmaps.Values) bitmap.Dispose();
+            seekerParticleBitmaps.Clear();
             foreach (var digit in picoDigits) digit?.Dispose();
             compositionHost?.Close();
             compositionHost?.Dispose();

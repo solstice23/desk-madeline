@@ -151,7 +151,7 @@ namespace DeskMadeline
         }
 
         public void Present(Bitmap bitmap, int screenLeft, int screenTop,
-            TrailStamp[] trails, int trailCount)
+            TrailStamp[] trails, int trailCount, int foregroundStart = int.MaxValue)
         {
             Upload(sourceBitmap, bitmap);
 
@@ -186,19 +186,10 @@ namespace DeskMadeline
 
             d2dContext.BeginDraw();
             d2dContext.Clear(new Color4(0, 0, 0, 0));
-            for (int i = 0; i < trailCount; i++)
+            int foreground = Math.Max(0, Math.Min(trailCount, foregroundStart));
+            for (int i = 0; i < foreground; i++)
             {
-                var trail = trails[i];
-                if (trail.Bitmap == null || !trailBitmaps.TryGetValue(trail.Bitmap, out var gpu)) continue;
-                float width = trail.Bitmap.Width * scale;
-                float height = trail.Bitmap.Height * scale;
-                float centerX = (float)Math.Round(trail.X) * scale - virtualDesktop.Left;
-                float centerY = (float)Math.Round(trail.Y) * scale - virtualDesktop.Top;
-                var trailDestination = new Vortice.RawRectF(
-                    centerX - width / 2f, centerY - height / 2f,
-                    centerX + width / 2f, centerY + height / 2f);
-                d2dContext.DrawBitmap(gpu, trailDestination, trail.Opacity,
-                    Vortice.Direct2D1.InterpolationMode.NearestNeighbor, null, null);
+                DrawStamp(trails[i]);
             }
             var destination = new Vortice.RawRectF(
                 screenLeft - virtualDesktop.Left,
@@ -207,6 +198,7 @@ namespace DeskMadeline
                 screenTop - virtualDesktop.Top + visualHeight);
             d2dContext.DrawBitmap(sourceBitmap, destination, 1f,
                 Vortice.Direct2D1.InterpolationMode.NearestNeighbor, null, null);
+            for (int i = foreground; i < trailCount; i++) DrawStamp(trails[i]);
             d2dContext.EndDraw().CheckError();
             swapChain.Present(1, PresentFlags.None).CheckError();
 
@@ -216,6 +208,19 @@ namespace DeskMadeline
                 PetWindow.Log("Direct3D 11 + DirectComposition active; source=" +
                     sourceWidth + "x" + sourceHeight + " desktopTarget=" +
                     targetWidth + "x" + targetHeight + " scale=" + scale);
+            }
+
+            void DrawStamp(TrailStamp trail)
+            {
+                if (trail.Bitmap == null || !trailBitmaps.TryGetValue(trail.Bitmap, out var gpu)) return;
+                float width = trail.Bitmap.Width * scale;
+                float height = trail.Bitmap.Height * scale;
+                float centerX = (float)Math.Round(trail.X) * scale - virtualDesktop.Left;
+                float centerY = (float)Math.Round(trail.Y) * scale - virtualDesktop.Top;
+                var target = new Vortice.RawRectF(centerX - width / 2f, centerY - height / 2f,
+                    centerX + width / 2f, centerY + height / 2f);
+                d2dContext.DrawBitmap(gpu, target, trail.Opacity,
+                    Vortice.Direct2D1.InterpolationMode.NearestNeighbor, null, null);
             }
         }
 
