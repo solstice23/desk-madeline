@@ -76,9 +76,9 @@ The **Extra overlays** submenu includes an Extended Variant Mode-style speedomet
 
 「额外叠加层」子菜单包含 Extended Variant Mode 风格的速度计，可选择水平、垂直或合速度（速度向量长度）。它使用原版 PICO-8 数字，并显示最近 10 个渲染帧中的峰值。「碰撞箱」会用亮绿色描出玛德琳当前站立／下蹲碰撞箱，并用红色描出所有有效窗口与屏幕边缘实体。两项设置都会保存，粒子特效默认开启。可通过「皮肤 → 打开皮肤文件夹」打开（或创建）用于放置皮肤 ZIP 的目录。
 
-The **Sound effects** submenu offers Off (the default), Only when focused, and On modes, plus volume adjustment in 10% steps. Mode and volume are remembered. Focused-only audio follows the same pet-window focus boundary as keyboard input and never plays while another application is active.
+The **Sound effects** submenu offers Off (the default), Only when focused, and On modes, plus volume adjustment in 10% steps. Mode and volume are remembered. Focused-only audio follows the same pet-window focus boundary as keyboard input and never plays while another application is active. Sounds are the original Celeste FMOD events loaded from the user's installed game; if compatible original banks cannot be found, the pet stays silent instead of using replacements. Set `CELESTE_PATH` when automatic Steam-library discovery is insufficient.
 
-「音效」子菜单提供关闭（默认）、仅聚焦时和开启三种模式，并可按 10% 调节音量。模式和音量都会保存；“仅聚焦时”沿用键盘输入的桌宠窗口焦点判断，在其他程序处于活动状态时不会播放。
+「音效」子菜单提供关闭（默认）、仅聚焦时和开启三种模式，并可按 10% 调节音量。模式和音量都会保存；“仅聚焦时”沿用键盘输入的桌宠窗口焦点判断，在其他程序处于活动状态时不会播放。声音直接从用户安装的 Celeste 中加载原版 FMOD 事件；若找不到兼容的原版音频库，桌宠会保持静音，不使用替代音效。Steam 库自动检测失败时可设置 `CELESTE_PATH`。
 
 ## 实现要点
 

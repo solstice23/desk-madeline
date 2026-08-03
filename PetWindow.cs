@@ -85,6 +85,9 @@ namespace DeskMadeline
         float skidDustTimer;
         string observedParticleAnimId;
         int observedParticleAnimFrame = -1;
+        string observedSoundAnimId;
+        int observedSoundAnimFrame = -1;
+        bool soundDucking;
         int observedLaunchCount;
         int observedRingDashSequenceCount;
         int observedWallJumpEffectCount;
@@ -101,9 +104,6 @@ namespace DeskMadeline
         readonly List<DashTrail> dashTrails = new List<DashTrail>();
         SlashVisual slash;
         int observedDashSequenceCount;
-        int soundDashSequenceCount, soundJumpEffectCount, soundWallJumpEffectCount;
-        int soundLandingEffectCount, soundDeathSequenceCount;
-        bool soundWasRespawning;
         bool dashVisualPending;
         float dashVisualTimer = -1f;
         int dashTrailStage;
@@ -487,6 +487,7 @@ namespace DeskMadeline
 
         void Tick(float dt)
         {
+            soundEffects.Update();
             if (pendingSkinId != null)
             {
                 string id = pendingSkinId;
@@ -534,6 +535,7 @@ namespace DeskMadeline
                 if (HairMeta.TryGet(animator.CurrentFrameId, out var wm)) { hx = wm.Offset.X; hy = wm.Offset.Y; }
                 player.UpdateHairOnly(dt, hx, hy);
                 animator.Update(dt);
+                EmitAnimationSounds();
                 player.AnimFinished = animator.Finished;
                 player.AnimLoopCount = animator.LoopCount;
                 player.CurrentFrameId = animator.CurrentFrameId;
@@ -559,6 +561,7 @@ namespace DeskMadeline
                     !string.Equals(player.AnimId, animator.CurrentId, StringComparison.OrdinalIgnoreCase);
                 player.AnimLoopCount = animator.LoopCount;
                 player.CurrentFrameId = animator.CurrentFrameId;
+                EmitAnimationSounds();
                 if (ParticlesEnabled) EmitAnimationParticles();
 
                 tiredFlashTimer += dt;
@@ -588,6 +591,7 @@ namespace DeskMadeline
             // selected animation stays on frame zero until the next game frame.
             animator.Play(player.AnimId);
             if (player.State == Player.StElytra) animator.Frame = player.ElytraAnimationFrame;
+            EmitAnimationSounds();
             bool restartSweat = player.SweatAnimSequenceCount != observedSweatAnimSequenceCount;
             observedSweatAnimSequenceCount = player.SweatAnimSequenceCount;
             sweatAnimator.Play(player.SweatAnimId, restartSweat);
@@ -615,7 +619,21 @@ namespace DeskMadeline
             }
 
             foreach (Glider glider in gliders)
+            {
                 glider.Update(dt, input, player.Solids, player.MinX, player.MaxX);
+                while (glider.SoundEvents.Count > 0)
+                {
+                    PlayerSoundEvent sound = glider.SoundEvents.Dequeue();
+                    soundEffects.Play(sound.Path, sound.Parameter, sound.Value);
+                }
+                if (glider.MovementSoundActive)
+                {
+                    soundEffects.StartLoop(glider,
+                        "event:/new_content/game/10_farewell/glider_movement");
+                    soundEffects.SetLoopParameter(glider, "glider_speed", glider.MovementSoundSpeed);
+                }
+                else soundEffects.StopLoop(glider);
+            }
 
             UpdateWavedashWaves(dt);
 
@@ -644,38 +662,52 @@ namespace DeskMadeline
 
         void UpdateSoundEffects(int wasState)
         {
-            if (player.DashSequenceCount != soundDashSequenceCount)
+            if (wasState == Player.StDreamDash && player.State != Player.StDreamDash)
+                soundEffects.StopLoop();
+            while (player.SoundEvents.Count > 0)
             {
-                soundDashSequenceCount = player.DashSequenceCount;
-                soundEffects.Play(PetSound.Dash);
+                PlayerSoundEvent sound = player.SoundEvents.Dequeue();
+                soundEffects.Play(sound.Path, sound.Parameter, sound.Value);
+                if (sound.Path == "event:/char/madeline/dreamblock_enter")
+                    soundEffects.StartLoop("event:/char/madeline/dreamblock_travel");
             }
-            if (player.WallJumpEffectCount != soundWallJumpEffectCount)
+            if (player.Ducking != soundDucking)
             {
-                soundWallJumpEffectCount = player.WallJumpEffectCount;
-                soundEffects.Play(PetSound.WallJump);
+                if (!player.IsDead && !player.IsRespawning)
+                    soundEffects.Play(player.Ducking
+                        ? "event:/char/madeline/duck"
+                        : "event:/char/madeline/stand");
+                soundDucking = player.Ducking;
             }
-            if (player.JumpEffectCount != soundJumpEffectCount)
+            // orig_Update tests the sprite selected on the preceding frame before
+            // UpdateSprite chooses the next one later in the same player update.
+            bool wallSliding = animator.CurrentId == "wallslide" && player.Speed.Y > 0f;
+            if (wallSliding)
             {
-                soundJumpEffectCount = player.JumpEffectCount;
-                soundEffects.Play(PetSound.Jump);
+                soundEffects.StartLoop("wallslide", "event:/char/madeline/wallslide");
+                soundEffects.SetLoopParameter("wallslide", "surface_index", -1f);
             }
-            if (player.LandingEffectCount != soundLandingEffectCount)
-            {
-                soundLandingEffectCount = player.LandingEffectCount;
-                soundEffects.Play(PetSound.Land);
-            }
-            if (player.DeathSequenceCount != soundDeathSequenceCount)
-            {
-                soundDeathSequenceCount = player.DeathSequenceCount;
-                soundEffects.Play(PetSound.Death);
-            }
-            if (wasState != Player.StDreamDash && player.State == Player.StDreamDash)
-                soundEffects.Play(PetSound.DreamEnter);
-            else if (wasState == Player.StDreamDash && player.State != Player.StDreamDash && !player.IsDead)
-                soundEffects.Play(PetSound.DreamExit);
-            if (soundWasRespawning && !player.IsRespawning && !player.IsDead)
-                soundEffects.Play(PetSound.Respawn);
-            soundWasRespawning = player.IsRespawning;
+            else soundEffects.StopLoop("wallslide");
+        }
+
+        void EmitAnimationSounds()
+        {
+            if (animator.CurrentId == observedSoundAnimId && animator.Frame == observedSoundAnimFrame)
+                return;
+            observedSoundAnimId = animator.CurrentId;
+            observedSoundAnimFrame = animator.Frame;
+            string id = animator.CurrentId;
+            int frame = animator.Frame;
+            bool footstep =
+                ((id == "runSlow_carry" || id == "runFast" || id == "runSlow") && (frame == 0 || frame == 6)) ||
+                (id == "runStumble" && frame == 6) || (id == "flip" && frame == 4) ||
+                (id == "push" && (frame == 8 || frame == 15));
+            if (footstep)
+                soundEffects.Play("event:/char/madeline/footstep", "surface_index", -1f);
+            else if (id == "climb" && frame == 5)
+                soundEffects.Play("event:/char/madeline/handhold", "surface_index", -1f);
+            else if (introWakeUp && id == "wakeUp" && frame == 19)
+                soundEffects.Play("event:/char/madeline/campfire_stand");
         }
 
         internal Color ResolveHairColor(int dashes, Color fallback)
@@ -2595,6 +2627,7 @@ namespace DeskMadeline
             // 等游戏循环线程结束当前帧再释放资源，避免渲染线程还在使用 GPU 对象
             if (loopThread != null && loopThread != Thread.CurrentThread)
                 loopThread.Join(1500);
+            soundEffects.Dispose();
             tray.Visible = false;
             tray.Dispose();
             // 释放托盘图标 HICON 与 Direct3D / DirectComposition 资源

@@ -23,6 +23,9 @@ namespace DeskMadeline
         public float Rotation { get; private set; }
         public float ScaleX { get; private set; } = 1f;
         public float ScaleY { get; private set; } = 1f;
+        public readonly Queue<PlayerSoundEvent> SoundEvents = new Queue<PlayerSoundEvent>();
+        public bool MovementSoundActive { get; private set; }
+        public float MovementSoundSpeed { get; private set; }
 
         float animTimer;
         int animFrame;
@@ -156,6 +159,7 @@ namespace DeskMadeline
 
             if (BeingDragged)
             {
+                MovementSoundActive = false;
                 Rotation = Approach(Rotation, 0f, (float)Math.PI * dt);
                 ScaleX = Approach(ScaleX, 1f, 2f * dt);
                 ScaleY = Approach(ScaleY, 1f, 2f * dt);
@@ -176,6 +180,17 @@ namespace DeskMadeline
                 bool opening = open && anim != "fall" && anim != "fallLoop";
                 if (opening) SetAnimation("fall");
                 else if (!open) SetAnimation("held");
+                if (open)
+                {
+                    if (!MovementSoundActive)
+                        SoundEvents.Enqueue(new PlayerSoundEvent(
+                            "event:/new_content/game/10_farewell/glider_engage"));
+                    MovementSoundActive = true;
+                    float sx = player.Speed.X * 0.5f;
+                    float sy = player.Speed.Y < 0f ? player.Speed.Y * 2f : player.Speed.Y;
+                    MovementSoundSpeed = (float)Math.Sqrt(sx * sx + sy * sy) / 120f * 0.7f;
+                }
+                else MovementSoundActive = false;
                 // Glider.PlayOpen sets this exact squash before easing back to one.
                 // Besides matching the animation, keeping it as one continuous
                 // fall -> fallLoop state avoids repeatedly restarting differently
@@ -189,6 +204,7 @@ namespace DeskMadeline
             }
             else
             {
+                MovementSoundActive = false;
                 Rotation = Approach(Rotation, 0f, (float)Math.PI * dt);
                 ScaleX = Approach(ScaleX, 1f, 2f * dt);
                 ScaleY = Approach(ScaleY, 1f, 2f * dt);
@@ -236,6 +252,9 @@ namespace DeskMadeline
                 if (BlocksMove(Pos.X + sign, Pos.Y, solids))
                 {
                     counter.X = 0f;
+                    SoundEvents.Enqueue(new PlayerSoundEvent(Speed.X < 0f
+                        ? "event:/new_content/game/10_farewell/glider_wallbounce_left"
+                        : "event:/new_content/game/10_farewell/glider_wallbounce_right"));
                     Speed.X *= -1f;
                     ScaleX = 0.8f; ScaleY = 1.2f;
                     return;
@@ -257,7 +276,12 @@ namespace DeskMadeline
                 if (BlocksMove(Pos.X, Pos.Y + sign, solids))
                 {
                     counter.Y = 0f;
-                    if (Math.Abs(Speed.Y) > 8f) { ScaleX = 1.2f; ScaleY = 0.8f; }
+                    if (Math.Abs(Speed.Y) > 8f)
+                    {
+                        ScaleX = 1.2f; ScaleY = 0.8f;
+                        SoundEvents.Enqueue(new PlayerSoundEvent(
+                            "event:/new_content/game/10_farewell/glider_land"));
+                    }
                     Speed.Y = Speed.Y < 0f ? Speed.Y * -0.5f : 0f;
                     return;
                 }

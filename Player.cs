@@ -24,6 +24,14 @@ namespace DeskMadeline
         public bool ElytraHeld;
     }
 
+    public readonly struct PlayerSoundEvent
+    {
+        public readonly string Path, Parameter;
+        public readonly float Value;
+        public PlayerSoundEvent(string path, string parameter = null, float value = 0f)
+        { Path = path; Parameter = parameter; Value = value; }
+    }
+
     /// <summary>
     /// 玛德琳：从 Celeste Player.cs 移植的物理与状态机（Normal/Climb/Dash）。
     /// 坐标单位 = 游戏像素（1:1 对应原作），渲染时整体放大 S 倍。
@@ -166,6 +174,10 @@ namespace DeskMadeline
         public float RespawnPercent { get; private set; }
         public PointF RespawnEffectPosition { get; private set; }
         public Color RespawnColor { get; private set; }
+        public readonly Queue<PlayerSoundEvent> SoundEvents = new Queue<PlayerSoundEvent>();
+
+        void PlaySound(string path, string parameter = null, float value = 0f)
+            => SoundEvents.Enqueue(new PlayerSoundEvent(path, parameter, value));
 
         public void SetFreezeFramesEnabled(bool enabled)
         {
@@ -506,6 +518,7 @@ namespace DeskMadeline
             Stamina = ClimbMaxStamina;
             dashAttackTimer = 0f;
             gliderBoostTimer = 0f;
+            PlaySound("event:/char/madeline/dreamblock_enter");
             return true;
         }
 
@@ -607,7 +620,11 @@ namespace DeskMadeline
                     float amount = Math.Min(Speed.Y / FastMaxFall, 1f);
                     SpriteScaleX = 1f + 0.6f * amount;
                     SpriteScaleY = 1f - 0.6f * amount;
-                    if (Speed.Y >= 80f) LandingEffectCount++;
+                    if (Speed.Y >= 80f)
+                    {
+                        LandingEffectCount++;
+                        PlaySound("event:/char/madeline/landing", "surface_index", -1f);
+                    }
                     if (highestAirY < Pos.Y - 50f && Speed.Y >= MaxFall && Math.Abs(Speed.X) >= MaxRun)
                         landingStumbleTimer = 0.7f;
                 }
@@ -769,6 +786,7 @@ namespace DeskMadeline
                 ? (PetWindow.Instance?.ResolveHairColor(2, TwoDashesHairColor) ?? TwoDashesHairColor)
                 : (PetWindow.Instance?.ResolveHairColor(1, NormalHairColor) ?? NormalHairColor);
             HairColor = RespawnColor;
+            PlaySound("event:/char/madeline/revive");
         }
 
         public void WrapBy(float x, float y)
@@ -1308,6 +1326,7 @@ namespace DeskMadeline
             pickupCurveControl = new PointF(
                 pickupCurveBegin.X + Sign(pickupCurveBegin.X) * 2f, -14f);
             State = StPickup;
+            PlaySound("event:/char/madeline/crystaltheo_lift");
             return true;
         }
 
@@ -1318,6 +1337,7 @@ namespace DeskMadeline
             Holding = null;
             Speed.X -= 80f * Facing;
             throwAnimTimer = 0.24f;
+            PlaySound("event:/char/madeline/crystaltheo_throw");
         }
 
         void DropGlider()
@@ -1325,6 +1345,7 @@ namespace DeskMadeline
             if (Holding == null) return;
             Holding.Release(PointF.Empty, Solids);
             Holding = null;
+            PlaySound("event:/new_content/char/madeline/glider_drop");
         }
 
         public void ReleaseGliderForDrag()
@@ -1332,6 +1353,7 @@ namespace DeskMadeline
             if (Holding == null) return;
             Holding.Release(PointF.Empty, Solids);
             Holding = null;
+            PlaySound("event:/new_content/char/madeline/glider_drop");
             minHoldTimer = 0f;
             if (State == StPickup) EnterNormal();
         }
@@ -1340,6 +1362,7 @@ namespace DeskMadeline
 
         void Jump(PetInput input, bool particles = true)
         {
+            bool dreamJump = dreamTechGraceTimer > 0f;
             ConsumeJump();
             autoJump = false;
             jumpGraceTimer = 0;
@@ -1354,6 +1377,9 @@ namespace DeskMadeline
             varJumpSpeed = Speed.Y;
             SpriteScaleX = 0.6f; SpriteScaleY = 1.4f;
             if (particles) JumpEffectCount++;
+            PlaySound(dreamJump
+                ? "event:/char/madeline/jump_dreamblock"
+                : "event:/char/madeline/jump");
         }
 
         void SuperJump()
@@ -1387,6 +1413,10 @@ namespace DeskMadeline
             LaunchCount++;
             JumpEffectCount++;
             SpriteScaleX = 0.6f; SpriteScaleY = 1.4f;
+            PlaySound("event:/char/madeline/jump");
+            PlaySound(wasDucking
+                ? "event:/char/madeline/jump_superslide"
+                : "event:/char/madeline/jump_super");
         }
 
         void WallJump(int dir, PetInput input)
@@ -1412,6 +1442,9 @@ namespace DeskMadeline
             LastWallJumpDirection = dir;
             WallJumpEffectCount++;
             SpriteScaleX = 0.6f; SpriteScaleY = 1.4f;
+            PlaySound(dir < 0
+                ? "event:/char/madeline/jump_wall_right"
+                : "event:/char/madeline/jump_wall_left");
         }
 
         void SuperWallJump(int dir)
@@ -1436,6 +1469,10 @@ namespace DeskMadeline
             LastWallJumpDirection = dir;
             WallJumpEffectCount++;
             SpriteScaleX = 0.6f; SpriteScaleY = 1.4f;
+            PlaySound(dir < 0
+                ? "event:/char/madeline/jump_wall_right"
+                : "event:/char/madeline/jump_wall_left");
+            PlaySound("event:/char/madeline/jump_superwall");
         }
 
         void ClimbJump(PetInput input)
@@ -1456,6 +1493,9 @@ namespace DeskMadeline
             }
             LastWallJumpDirection = -Facing;
             WallJumpEffectCount++;
+            PlaySound(Facing > 0
+                ? "event:/char/madeline/jump_climb_right"
+                : "event:/char/madeline/jump_climb_left");
         }
 
         void EnterClimb()
@@ -1478,6 +1518,7 @@ namespace DeskMadeline
                 if (CollideAt(Pos.X + Facing, Pos.Y)) break;
                 Pos.X += Facing;
             }
+            PlaySound("event:/char/madeline/grab", "surface_index", -1f);
         }
 
         void EnterNormal()
@@ -1617,7 +1658,13 @@ namespace DeskMadeline
                 return;
             }
             if (CanDash) { SweatAnimId = "idle"; State = StartDash(input); return; }
-            if (!input.GrabHeld) { SweatAnimId = "idle"; EnterNormal(); return; }
+            if (!input.GrabHeld)
+            {
+                SweatAnimId = "idle";
+                PlaySound("event:/char/madeline/grab_letgo");
+                EnterNormal();
+                return;
+            }
             if (!CollideAt(Pos.X + Facing, Pos.Y))
             {
                 if (Speed.Y < 0) ClimbHop();
@@ -1781,6 +1828,10 @@ namespace DeskMadeline
                 Ducking = true;
             }
             if (DashDir.X != 0) Facing = Sign(DashDir.X);
+            bool rightSound = DashDir.Y < 0f || (DashDir.Y == 0f && DashDir.X > 0f);
+            PlaySound(LastDashWasTwo
+                ? (rightSound ? "event:/char/madeline/dash_pink_right" : "event:/char/madeline/dash_pink_left")
+                : (rightSound ? "event:/char/madeline/dash_red_right" : "event:/char/madeline/dash_red_left"));
         }
 
         void DashUpdate(float dt, PetInput input)
@@ -1938,6 +1989,7 @@ namespace DeskMadeline
             }
             else
                 EnterNormal();
+            PlaySound("event:/char/madeline/dreamblock_exit");
         }
 
         void SnapDreamDeathToExitFace()
@@ -1958,6 +2010,7 @@ namespace DeskMadeline
             if (Holding != null) DropGlider();
             IsDead = true;
             DeathSequenceCount++;
+            PlaySound("event:/char/madeline/death");
             DeathColor = HairColor;
             DeathPosition = new PointF(Pos.X, Pos.Y - 5f);
             DeathPercent = 0f;
