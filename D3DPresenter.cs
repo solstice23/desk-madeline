@@ -16,9 +16,9 @@ using static Vortice.DirectComposition.DComp;
 namespace DeskMadeline
 {
     /// <summary>
-    /// Uploads the 1x premultiplied game bitmap to Direct2D, nearest-neighbor scales it
-    /// into a Direct3D 11 composition swap chain, and positions that visual without
-    /// moving the owning HWND. DWM therefore sees one stationary virtual-desktop window.
+    /// Uploads 1x premultiplied game layers to Direct2D and draws them at absolute
+    /// physical coordinates in a virtual-desktop-sized Direct3D 11 composition swap
+    /// chain. Neither the owning HWND nor its visual tree moves between frames.
     /// </summary>
     sealed class D3DPresenter : IDisposable
     {
@@ -46,6 +46,8 @@ namespace DeskMadeline
         int scale;
         int targetWidth;
         int targetHeight;
+        int visualWidth;
+        int visualHeight;
         bool logged;
 
         public D3DPresenter(IntPtr hwnd, int sourceWidth, int sourceHeight, int scale, Rectangle virtualDesktop)
@@ -98,8 +100,12 @@ namespace DeskMadeline
         public void Resize(int newScale)
         {
             scale = Math.Max(1, newScale);
-            targetWidth = sourceWidth * scale;
-            targetHeight = sourceHeight * scale;
+            visualWidth = sourceWidth * scale;
+            visualHeight = sourceHeight * scale;
+            // The swap chain is fixed to the virtual desktop. Nothing in the visual
+            // tree moves per frame, so a present can never race a transform commit.
+            targetWidth = virtualDesktop.Width;
+            targetHeight = virtualDesktop.Height;
             DisposeSwapChain();
 
             var desc = new SwapChainDescription1(
@@ -131,7 +137,7 @@ namespace DeskMadeline
         }
 
         public void Present(Bitmap trails, Bitmap bitmap, int screenLeft, int screenTop,
-            int trailOffsetX, int trailOffsetY)
+            int trailScreenLeft, int trailScreenTop)
         {
             Upload(trailBitmap, trails);
             Upload(sourceBitmap, bitmap);
@@ -139,28 +145,28 @@ namespace DeskMadeline
             d2dContext.BeginDraw();
             d2dContext.Clear(new Color4(0, 0, 0, 0));
             var trailDestination = new Vortice.RawRectF(
-                trailOffsetX, trailOffsetY,
-                trailOffsetX + targetWidth, trailOffsetY + targetHeight);
+                trailScreenLeft - virtualDesktop.Left,
+                trailScreenTop - virtualDesktop.Top,
+                trailScreenLeft - virtualDesktop.Left + visualWidth,
+                trailScreenTop - virtualDesktop.Top + visualHeight);
             d2dContext.DrawBitmap(trailBitmap, trailDestination, 1f,
                 Vortice.Direct2D1.InterpolationMode.NearestNeighbor, null, null);
-            var destination = new Vortice.RawRectF(0, 0, targetWidth, targetHeight);
+            var destination = new Vortice.RawRectF(
+                screenLeft - virtualDesktop.Left,
+                screenTop - virtualDesktop.Top,
+                screenLeft - virtualDesktop.Left + visualWidth,
+                screenTop - virtualDesktop.Top + visualHeight);
             d2dContext.DrawBitmap(sourceBitmap, destination, 1f,
                 Vortice.Direct2D1.InterpolationMode.NearestNeighbor, null, null);
             d2dContext.EndDraw().CheckError();
-
-            // Commit the transform before presenting the completed buffer. Present(1)
-            // waits for vsync; doing this afterwards made the texture and its position
-            // one frame out of phase and was visible as a shake at dash speed.
-            compositionVisual.SetOffsetX(screenLeft - virtualDesktop.Left).CheckError();
-            compositionVisual.SetOffsetY(screenTop - virtualDesktop.Top).CheckError();
-            compositionDevice.Commit().CheckError();
             swapChain.Present(1, PresentFlags.None).CheckError();
 
             if (!logged)
             {
                 logged = true;
                 PetWindow.Log("Direct3D 11 + DirectComposition active; source=" +
-                    sourceWidth + "x" + sourceHeight + " target=" + targetWidth + "x" + targetHeight);
+                    sourceWidth + "x" + sourceHeight + " desktopTarget=" +
+                    targetWidth + "x" + targetHeight + " scale=" + scale);
             }
         }
 

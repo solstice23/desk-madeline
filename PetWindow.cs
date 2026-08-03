@@ -896,9 +896,9 @@ namespace DeskMadeline
 
             int left = (int)Math.Round(camX * s);
             int top = (int)Math.Round(camY * s);
-            int trailOffsetX = (int)Math.Round(trailCamX * s) - left;
-            int trailOffsetY = (int)Math.Round(trailCamY * s) - top;
-            presenter.Present(trailSmall, small, left, top, trailOffsetX, trailOffsetY);
+            int trailLeft = (int)Math.Round(trailCamX * s);
+            int trailTop = (int)Math.Round(trailCamY * s);
+            presenter.Present(trailSmall, small, left, top, trailLeft, trailTop);
 
             // Only this tiny invisible input HWND moves. Rendering belongs to the fixed
             // click-through composition host, so window movement cannot shake pixels.
@@ -1390,7 +1390,10 @@ namespace DeskMadeline
         {
             running = false;
             tray.Visible = false;
-            Application.Exit();
+            // Close after the ToolStrip click unwinds. Application.Exit enumerates all
+            // open forms; disposing the composition host during that enumeration caused
+            // "Collection was modified" on .NET 8.
+            BeginInvoke(new Action(Close));
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)

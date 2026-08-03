@@ -60,7 +60,7 @@ bin\Release\net8.0-windows\DeskMadeline.exe
 
 ## 实现要点
 
-- **GPU 合成**：1x 游戏像素缓冲上传至 Direct2D/Direct3D 11，DirectComposition 负责最近邻缩放和移动；固定的虚拟桌面宿主 HWND 不随角色移动。
+- **GPU 合成**：1x 游戏像素缓冲上传至 Direct2D/Direct3D 11，并按绝对物理桌面坐标画进固定的虚拟桌面交换链；宿主 HWND 和 DirectComposition visual 都不随角色移动。
 - **输入隔离**：渲染宿主完全点击穿透，只有跟随角色身体的小型透明输入 HWND 接收聚焦、拖拽和右键。
 - **世界特效层**：冲刺残影使用独立 GPU 图层和物理像素世界坐标，避免高速移动时裁切或水平锯齿抖动。
 - **头发锚点**：`node0 = feet + (HairOffset.X×Facing, -9×ScaleY + HairOffset.Y)`，恒 -9。
