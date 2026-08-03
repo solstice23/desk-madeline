@@ -583,9 +583,11 @@ namespace DeskMadeline
                 moveX = input.MoveX;
             }
 
-            // Facing is updated before NormalUpdate in vanilla.  This allows a
-            // direction press to turn and grab the opposite wall on the same frame.
-            if (!BeingDragged && moveX != 0 && State == StNormal)
+            // Vanilla updates Facing in both Normal (0) and Dash (2); only Climb
+            // (1) is excluded among the states implemented here.  Updating it
+            // during Dash is what makes reverse supers, hypers and wavedashes
+            // possible: SuperJump launches in Facing, not in DashDir.
+            if (!BeingDragged && moveX != 0 && State != StClimb)
             {
                 if (Facing != moveX && Ducking)
                 {
