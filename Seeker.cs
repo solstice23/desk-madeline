@@ -296,7 +296,8 @@ namespace DeskMadeline
             KeepInsideBounds(worldBounds, solids);
         }
 
-        public void Update(float dt, Player player, IList<Solid> solids, RectangleF worldBounds, RectangleF camera)
+        public void Update(float dt, Player player, IList<Solid> solids, RectangleF worldBounds,
+            RectangleF camera, IList<TheoCrystal> theos = null)
         {
             if (Removed) return;
             for (int i = Trails.Count - 1; i >= 0; i--)
@@ -336,6 +337,8 @@ namespace DeskMadeline
             // PlayerCollider components are added before StateMachine in the
             // original constructor, so contacts use the pre-state-update pose.
             CheckPlayer(player);
+            if (theos != null)
+                foreach (TheoCrystal theo in theos) CheckTheo(theo);
 
             switch (State)
             {
@@ -610,6 +613,28 @@ namespace DeskMadeline
                 ScaleX = 1.4f; ScaleY = .6f; player.ApplyFreeze(.15f); SetState(StRegenerate);
                 ParticleEvents.Enqueue(new SeekerParticleEvent(SeekerParticleKind.Stomp,
                     new PointF(Pos.X, Pos.Y - 5f), 8, -(float)Math.PI / 2f, 6f, 3f));
+            }
+        }
+
+        void CheckTheo(TheoCrystal theo)
+        {
+            if (theo.Removed) return;
+            // HoldableCollider(theo) uses Seeker.attackHitbox (12x8, -6,-2).
+            if (!(theo.Pos.X - 4f < Pos.X + 6f && theo.Pos.X + 4f > Pos.X - 6f &&
+                  theo.Pos.Y - 10f < Pos.Y + 6f && theo.Pos.Y > Pos.Y - 2f)) return;
+            if (State != StRegenerate && theo.DangerousTo(this))
+            {
+                theo.HitBySeeker(this);
+                SetState(StStunned);
+                Speed = Normalize(Pos.X - theo.Pos.X, Pos.Y - (theo.Pos.Y - 5f), 120f);
+                StartWiggler();
+            }
+            else if ((State == StAttack || State == StSkidding) && theo.IsHeld &&
+                theo.SwatBy(this, Math.Sign(Speed.X)))
+            {
+                SetState(StStunned);
+                Speed = Normalize(Pos.X - theo.Pos.X, Pos.Y - (theo.Pos.Y - 5f), 120f);
+                StartWiggler();
             }
         }
     }

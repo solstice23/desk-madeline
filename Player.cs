@@ -132,9 +132,9 @@ namespace DeskMadeline
         public bool onGround;
         public IntPtr GroundId;
         public PointF DashDir;
-        public IList<Glider> Gliders;
-        public Glider Holding { get; private set; }
-        public bool IsHoldingGlider => Holding != null;
+        public IList<IPetHoldable> Holdables;
+        public IPetHoldable Holding { get; private set; }
+        public bool IsHoldingGlider => Holding is Glider;
 
         // 表现
         public float SpriteScaleX = 1f, SpriteScaleY = 1f;
@@ -1216,12 +1216,12 @@ namespace DeskMadeline
                         varJumpTimer = pickupStoredVarJump;
                         if (Holding != null)
                         {
-                            if (gliderBoostTimer > 0f && gliderBoostDir.Y < 0f)
+                            if (Holding.SlowFall && gliderBoostTimer > 0f && gliderBoostDir.Y < 0f)
                             {
                                 gliderBoostTimer = 0f;
                                 Speed.Y = Math.Min(Speed.Y, -DashSpeed * Math.Abs(gliderBoostDir.Y));
                             }
-                            else if (Speed.Y < 0f)
+                            else if (Holding.SlowFall && Speed.Y < 0f)
                                 Speed.Y = Math.Min(Speed.Y, JumpSpeed);
                         }
                         EnterNormal();
@@ -1366,7 +1366,7 @@ namespace DeskMadeline
                 State = BeginDash(input, crouchDashBufferTimer > 0f);
                 return;
             }
-            if (Holding == null && input.GrabHeld && !IsTired && !Ducking && TryPickupGlider()) return;
+            if (Holding == null && input.GrabHeld && !IsTired && !Ducking && TryPickupHoldable()) return;
             Speed.Y = Approach(Speed.Y, 160f, (Speed.Y < 0f ? 450f : 225f) * dt);
             Speed.X = Approach(Speed.X, 0f, 200f * dt);
             if (Math.Sqrt(Speed.X * Speed.X + Speed.Y * Speed.Y) < 220f) State = StNormal;
@@ -1375,7 +1375,7 @@ namespace DeskMadeline
         // ===== 普通状态 =====
         void NormalUpdate(float dt, PetInput input)
         {
-            if (Holding == null && input.GrabHeld && !IsTired && !Ducking && TryPickupGlider())
+            if (Holding == null && input.GrabHeld && !IsTired && !Ducking && TryPickupHoldable())
             {
                 Ducking = false;
                 return;
@@ -1470,8 +1470,9 @@ namespace DeskMadeline
             else
             {
                 float mult = onGround ? 1f : AirMult;
-                float maxRun = Holding != null && !onGround ? 108.00001f : MaxRun;
-                if (Holding != null && !onGround) mult *= 0.5f;
+                float maxRun = Holding != null && Holding.SlowRun ? 70f :
+                    Holding != null && Holding.SlowFall && !onGround ? 108.00001f : MaxRun;
+                if (Holding != null && Holding.SlowFall && !onGround) mult *= 0.5f;
                 if (Math.Abs(Speed.X) > maxRun && Sign(Speed.X) == moveX)
                     Speed.X = Approach(Speed.X, maxRun * moveX, RunReduce * mult * dt);
                 else
@@ -1479,7 +1480,7 @@ namespace DeskMadeline
             }
 
             // 最大下落速度
-            if (Holding != null)
+            if (Holding != null && Holding.SlowFall)
             {
                 float gliderTarget = input.MoveY > 0 ? 120f : input.MoveY < 0 ? 24f : 40f;
                 maxFall = Approach(maxFall, gliderTarget, FastMaxAccel * dt);
@@ -1521,7 +1522,7 @@ namespace DeskMadeline
                     target = 160f + (20f - 160f) * (wallSlideTimer / WallSlideTime);
                 }
                 float gravMult = (Math.Abs(Speed.Y) < HalfGravThreshold && (input.JumpHeld || autoJump)) ? 0.5f : 1f;
-                if (Holding != null) gravMult *= 0.5f;
+                if (Holding != null && Holding.SlowFall) gravMult *= 0.5f;
                 Speed.Y = Approach(Speed.Y, target, Gravity * gravMult * dt);
             }
             else wallSlideDir = 0;
@@ -1553,17 +1554,17 @@ namespace DeskMadeline
 
         }
 
-        bool TryPickupGlider()
+        bool TryPickupHoldable()
         {
-            if (Gliders == null) return false;
-            Glider nearest = null;
+            if (Holdables == null) return false;
+            IPetHoldable nearest = null;
             float nearestSq = float.MaxValue;
-            foreach (Glider glider in Gliders)
+            foreach (IPetHoldable holdable in Holdables)
             {
-                if (!glider.CanPickup(this)) continue;
-                float dx = glider.Pos.X - Pos.X, dy = glider.Pos.Y - Pos.Y;
+                if (!holdable.CanPickup(this)) continue;
+                float dx = holdable.Pos.X - Pos.X, dy = holdable.Pos.Y - Pos.Y;
                 float distanceSq = dx * dx + dy * dy;
-                if (distanceSq < nearestSq) { nearest = glider; nearestSq = distanceSq; }
+                if (distanceSq < nearestSq) { nearest = holdable; nearestSq = distanceSq; }
             }
             if (nearest == null || !nearest.Pickup(this)) return false;
             Holding = nearest;
@@ -1593,27 +1594,37 @@ namespace DeskMadeline
         void DropGlider()
         {
             if (Holding == null) return;
-            Holding.Release(PointF.Empty, Solids);
+            IPetHoldable held = Holding;
+            held.Release(PointF.Empty, Solids);
             Holding = null;
-            PlaySound("event:/new_content/char/madeline/glider_drop");
+            if (held is Glider)
+                PlaySound("event:/new_content/char/madeline/glider_drop");
         }
 
-        public void ReleaseGliderForDrag()
+        public void ReleaseHoldableForDrag(IPetHoldable holdable)
+        {
+            if (Holding != holdable) return;
+            Holding.Release(PointF.Empty, Solids);
+            Holding = null;
+            if (holdable is Glider)
+                PlaySound("event:/new_content/char/madeline/glider_drop");
+            minHoldTimer = 0f;
+            if (State == StPickup) EnterNormal();
+        }
+
+        public void ForgetHoldable(IPetHoldable holdable)
+        {
+            if (Holding != holdable) return;
+            Holding = null;
+            minHoldTimer = 0f;
+            if (State == StPickup) EnterNormal();
+        }
+
+        public void SwatHoldable(int direction)
         {
             if (Holding == null) return;
-            Holding.Release(PointF.Empty, Solids);
+            Holding.Release(new PointF(.8f * direction, -.25f), Solids);
             Holding = null;
-            PlaySound("event:/new_content/char/madeline/glider_drop");
-            minHoldTimer = 0f;
-            if (State == StPickup) EnterNormal();
-        }
-
-        public void ForgetGlider(Glider glider)
-        {
-            if (Holding != glider) return;
-            Holding = null;
-            minHoldTimer = 0f;
-            if (State == StPickup) EnterNormal();
         }
 
         float maxFall = MaxFall;
@@ -2102,7 +2113,7 @@ namespace DeskMadeline
             dashTime -= dt;
 
             if (Holding == null && (DashDir.X != 0f || DashDir.Y != 0f) &&
-                input.GrabHeld && !IsTired && CanUnDuck && TryPickupGlider())
+                input.GrabHeld && !IsTired && CanUnDuck && TryPickupHoldable())
                 return;
 
             // A down-diagonal dash buffered across a horizontal DreamBlock exit

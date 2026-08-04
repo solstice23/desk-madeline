@@ -9,15 +9,19 @@ namespace DeskMadeline
     /// original free-flight gravity, wall bounce, throw force and slow-fall rules.
     /// Coordinates use the same bottom-center convention as Player.
     /// </summary>
-    public sealed class Glider
+    public sealed class Glider : IPetHoldable
     {
         const float Width = 8f;
         const float Height = 10f;
 
         public PointF Pos;
         public PointF Speed;
+        PointF IPetHoldable.Pos => Pos;
+        PointF IPetHoldable.Speed => Speed;
         public Player Holder { get; private set; }
         public bool IsHeld => Holder != null;
+        public bool SlowRun => false;
+        public bool SlowFall => true;
         public bool BeingDragged { get; private set; }
         public string FrameId { get; private set; } = "glider/idle0";
         public float Rotation { get; private set; }
@@ -126,7 +130,7 @@ namespace DeskMadeline
 
         public void BeginDrag(Player player)
         {
-            if (Holder == player) player.ReleaseGliderForDrag();
+            if (Holder == player) player.ReleaseHoldableForDrag(this);
             BeingDragged = true;
             Holder = null;
             Speed = PointF.Empty;

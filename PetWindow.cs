@@ -52,8 +52,11 @@ namespace DeskMadeline
         int pendingScale = -1;
         volatile string pendingSkinId;
         int pendingGliderSpawns;
+        int pendingTheoSpawns;
         int pendingSeekerSpawns;
+        int pendingRemoveAllEntities;
         readonly Queue<Glider> pendingGliderRemovals = new Queue<Glider>();
+        readonly Queue<TheoCrystal> pendingTheoRemovals = new Queue<TheoCrystal>();
         readonly Queue<Seeker> pendingSeekerRemovals = new Queue<Seeker>();
         bool introWakeUp = true;   // 启动时先播"醒来"动画（wakeUp 00-14），播完切 idle
 
@@ -86,7 +89,7 @@ namespace DeskMadeline
         readonly List<WaveRing> waveRings = new List<WaveRing>();
         readonly Random effectRng = new Random();
         PType dust, dashBlue, dashRed, elytraDeploy;
-        PType seekerAttack, seekerHitWall, seekerStomp, seekerRegen;
+        PType seekerAttack, seekerHitWall, seekerStomp, seekerRegen, theoImpact;
         bool ParticlesEnabled = true;    // 粒子特效开关（默认开，托盘菜单可关闭）
         float skidDustTimer;
         string observedParticleAnimId;
@@ -129,9 +132,13 @@ namespace DeskMadeline
         readonly List<RectangleF> monitorGameBounds = new List<RectangleF>();
         readonly Bitmap[] picoDigits = new Bitmap[10];
         readonly List<Glider> gliders = new List<Glider>();
+        readonly List<IPetHoldable> holdables = new List<IPetHoldable>();
         readonly object gliderWindowLock = new object();
         readonly Dictionary<Glider, JellyInputWindow> gliderWindows = new Dictionary<Glider, JellyInputWindow>();
         readonly Dictionary<Glider, GliderStampCache> gliderStampCache = new Dictionary<Glider, GliderStampCache>();
+        readonly List<TheoCrystal> theos = new List<TheoCrystal>();
+        readonly object theoWindowLock = new object();
+        readonly Dictionary<TheoCrystal, TheoInputWindow> theoWindows = new Dictionary<TheoCrystal, TheoInputWindow>();
         readonly List<Seeker> seekers = new List<Seeker>();
         readonly object seekerWindowLock = new object();
         readonly Dictionary<Seeker, SeekerInputWindow> seekerWindows = new Dictionary<Seeker, SeekerInputWindow>();
@@ -139,6 +146,9 @@ namespace DeskMadeline
         Glider draggedGlider;
         PointF gliderDragOffset, gliderCursorVelocity;
         Point lastGliderCursor;
+        TheoCrystal draggedTheo;
+        PointF theoDragOffset, theoCursorVelocity;
+        Point lastTheoCursor;
         Seeker draggedSeeker;
         PointF seekerDragOffset, seekerCursorVelocity;
         Point lastSeekerCursor;
@@ -201,7 +211,7 @@ namespace DeskMadeline
             player.Invincible = settings.Invincible;
             player.SetDashMode(settings.DashMode);
             player.NormalSurfaceSoundIndex = settings.SurfaceSoundIndex;
-            player.Gliders = gliders;
+            player.Holdables = holdables;
             soundEffects = new SoundEffects(
                 () => IsPetInputWindow(Win32.GetForegroundWindow()),
                 settings.SfxMode, settings.SfxVolume);
@@ -321,6 +331,13 @@ namespace DeskMadeline
                 Color2 = Color.FromArgb(0x57, 0x5F, 0xD9), BlinkColor = true,
                 LifeMin = .4f, LifeMax = 1.2f, Size = 1f,
                 SpeedMin = 20f, SpeedMax = 100f, SpeedMultiplier = .4f, LateFade = true
+            };
+            // ParticleTypes.cs: TheoCrystal.P_Impact.
+            theoImpact = new PType
+            {
+                Tex = new[] { "dashParticle" }, Color = Color.FromArgb(0xCB, 0xDB, 0xFC),
+                LifeMin = .3f, LifeMax = .8f, Size = 1f,
+                SpeedMin = 10f, SpeedMax = 20f, SpeedMultiplier = .1f, LateFade = true
             };
             anims = BuildAnims();
             animator = new Animator(anims);
@@ -545,8 +562,10 @@ namespace DeskMadeline
             {
                 // Spawn just above and in front of Madeline, as a normal unheld
                 // Glider actor rather than placing it directly in her pickup box.
-                gliders.Add(new Glider(new PointF(
-                    player.Pos.X + player.Facing * (18f + i * 5f), player.Pos.Y - 16f)));
+                var glider = new Glider(new PointF(
+                    player.Pos.X + player.Facing * (18f + i * 5f), player.Pos.Y - 16f));
+                gliders.Add(glider);
+                holdables.Add(glider);
             }
             if (spawnCount > 0 && IsHandleCreated)
                 BeginInvoke(new Action(EnsureGliderWindows));
@@ -562,13 +581,36 @@ namespace DeskMadeline
             if (seekerSpawnCount > 0 && IsHandleCreated)
                 BeginInvoke(new Action(EnsureSeekerWindows));
 
+            int theoSpawnCount = Interlocked.Exchange(ref pendingTheoSpawns, 0);
+            for (int i = 0; i < theoSpawnCount; i++)
+            {
+                var theo = new TheoCrystal(new PointF(
+                    player.Pos.X + player.Facing * (20f + i * 8f), player.Pos.Y - 12f));
+                theos.Add(theo);
+                holdables.Add(theo);
+            }
+            if (theoSpawnCount > 0 && IsHandleCreated)
+                BeginInvoke(new Action(EnsureTheoWindows));
+
+            int removeFlags = Interlocked.Exchange(ref pendingRemoveAllEntities, 0);
+            if ((removeFlags & 1) != 0)
+                lock (pendingGliderRemovals)
+                    foreach (Glider glider in gliders) pendingGliderRemovals.Enqueue(glider);
+            if ((removeFlags & 2) != 0)
+                lock (pendingSeekerRemovals)
+                    foreach (Seeker seeker in seekers) pendingSeekerRemovals.Enqueue(seeker);
+            if ((removeFlags & 4) != 0)
+                lock (pendingTheoRemovals)
+                    foreach (TheoCrystal theo in theos) pendingTheoRemovals.Enqueue(theo);
+
             lock (pendingGliderRemovals)
             {
                 while (pendingGliderRemovals.Count > 0)
                 {
                     Glider glider = pendingGliderRemovals.Dequeue();
                     if (!gliders.Remove(glider)) continue;
-                    player.ForgetGlider(glider);
+                    holdables.Remove(glider);
+                    player.ForgetHoldable(glider);
                     if (draggedGlider == glider) draggedGlider = null;
                     soundEffects.StopLoop(glider);
                     if (gliderStampCache.TryGetValue(glider, out GliderStampCache cache))
@@ -576,6 +618,21 @@ namespace DeskMadeline
                         cache.Bitmap?.Dispose();
                         gliderStampCache.Remove(glider);
                     }
+                    if (IsHandleCreated) BeginInvoke(new Action(() => CloseGliderWindow(glider)));
+                }
+            }
+
+            lock (pendingTheoRemovals)
+            {
+                while (pendingTheoRemovals.Count > 0)
+                {
+                    TheoCrystal theo = pendingTheoRemovals.Dequeue();
+                    if (!theos.Remove(theo)) continue;
+                    holdables.Remove(theo);
+                    player.ForgetHoldable(theo);
+                    if (draggedTheo == theo) draggedTheo = null;
+                    soundEffects.StopLoop(theo);
+                    if (IsHandleCreated) BeginInvoke(new Action(() => CloseTheoWindow(theo)));
                 }
             }
 
@@ -593,6 +650,7 @@ namespace DeskMadeline
                         seekerStampCache.Remove(seeker);
                     }
                     foreach (SeekerTrail trail in seeker.Trails) trail.Stamp?.Dispose();
+                    if (IsHandleCreated) BeginInvoke(new Action(() => CloseSeekerWindow(seeker)));
                 }
             }
 
@@ -718,6 +776,12 @@ namespace DeskMadeline
                 return;
             }
 
+            var seekerWorldBounds = new RectangleF(
+                virtualDesktop.Left / (float)GameScale,
+                virtualDesktop.Top / (float)GameScale,
+                virtualDesktop.Width / (float)GameScale,
+                virtualDesktop.Height / (float)GameScale);
+
             foreach (Glider glider in gliders)
             {
                 glider.Update(dt, input, player.Solids, player.MinX, player.MaxX);
@@ -735,16 +799,30 @@ namespace DeskMadeline
                 else soundEffects.StopLoop(glider);
             }
 
-            var seekerWorldBounds = new RectangleF(
-                virtualDesktop.Left / (float)GameScale,
-                virtualDesktop.Top / (float)GameScale,
-                virtualDesktop.Width / (float)GameScale,
-                virtualDesktop.Height / (float)GameScale);
+            foreach (TheoCrystal theo in theos)
+            {
+                theo.Update(dt, player, player.Solids, seekerWorldBounds);
+                while (theo.SoundEvents.Count > 0)
+                {
+                    PlayerSoundEvent sound = theo.SoundEvents.Dequeue();
+                    soundEffects.Play(sound.Path, sound.Parameter, sound.Value);
+                }
+                while (theo.ImpactEvents.Count > 0)
+                {
+                    TheoImpactEvent effect = theo.ImpactEvents.Dequeue();
+                    if (ParticlesEnabled)
+                        seekerParticles.Emit(theoImpact, effect.Position.X, effect.Position.Y,
+                            effect.Direction, .87266465f, 12, effect.RangeX, effect.RangeY);
+                }
+                if (theo.Removed)
+                    lock (pendingTheoRemovals) pendingTheoRemovals.Enqueue(theo);
+            }
+
             var seekerCamera = new RectangleF(player.Pos.X - 160f, player.Pos.Y - 90f, 320f, 180f);
             foreach (Seeker seeker in seekers)
             {
                 if (seekerRespawnDormant) seeker.UpdateDormant(dt, player.Solids, seekerWorldBounds);
-                else seeker.Update(dt, player, player.Solids, seekerWorldBounds, seekerCamera);
+                else seeker.Update(dt, player, player.Solids, seekerWorldBounds, seekerCamera, theos);
                 while (seeker.SoundEvents.Count > 0)
                 {
                     PlayerSoundEvent sound = seeker.SoundEvents.Dequeue();
@@ -1385,7 +1463,7 @@ namespace DeskMadeline
             // GetAsyncKeyState is global. By default it is gated to this pet's
             // focus; the explicit menu opt-in permits reading it while unfocused.
             // No hook is installed and keys are never swallowed from other apps.
-            if (!InputEnabled || dragging || draggedGlider != null || draggedSeeker != null ||
+            if (!InputEnabled || dragging || draggedGlider != null || draggedTheo != null || draggedSeeker != null ||
                 (!InputWhenUnfocused && !IsPetInputWindow(Win32.GetForegroundWindow())))
             {
                 prevJump = prevDash = prevCrouchDash = false;
@@ -1427,8 +1505,74 @@ namespace DeskMadeline
             if (hwnd == Handle) return true;
             lock (gliderWindowLock)
                 if (gliderWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd)) return true;
+            lock (theoWindowLock)
+                if (theoWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd)) return true;
             lock (seekerWindowLock)
                 return seekerWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd);
+        }
+
+        void EnsureTheoWindows()
+        {
+            lock (theoWindowLock)
+            {
+                foreach (TheoCrystal theo in theos)
+                {
+                    if (theoWindows.ContainsKey(theo)) continue;
+                    var window = new TheoInputWindow(this, theo);
+                    theoWindows[theo] = window;
+                    window.Show();
+                }
+            }
+        }
+
+        internal void RequestTheoRemoval(TheoCrystal theo)
+        {
+            lock (pendingTheoRemovals) pendingTheoRemovals.Enqueue(theo);
+            BeginInvoke(new Action(() => CloseTheoWindow(theo)));
+        }
+
+        void CloseTheoWindow(TheoCrystal theo)
+        {
+            lock (theoWindowLock)
+            {
+                if (!theoWindows.TryGetValue(theo, out TheoInputWindow window)) return;
+                theoWindows.Remove(theo); window.Close(); window.Dispose();
+            }
+        }
+
+        internal void BeginTheoDrag(TheoCrystal theo)
+        {
+            Point cursor = Cursor.Position;
+            theo.BeginDrag(player);
+            draggedTheo = theo;
+            theoDragOffset = new PointF(cursor.X / (float)GameScale - theo.Pos.X,
+                cursor.Y / (float)GameScale - theo.Pos.Y);
+            lastTheoCursor = cursor;
+            theoCursorVelocity = PointF.Empty;
+        }
+
+        internal void ContinueTheoDrag(TheoCrystal theo)
+        {
+            if (draggedTheo != theo) return;
+            Point cursor = Cursor.Position;
+            const float dt = 1f / 60f;
+            theoCursorVelocity = new PointF(
+                theoCursorVelocity.X * .7f + (cursor.X - lastTheoCursor.X) / GameScale / dt * .3f,
+                theoCursorVelocity.Y * .7f + (cursor.Y - lastTheoCursor.Y) / GameScale / dt * .3f);
+            lastTheoCursor = cursor;
+            theo.DragTo(new PointF(cursor.X / (float)GameScale - theoDragOffset.X,
+                cursor.Y / (float)GameScale - theoDragOffset.Y));
+        }
+
+        internal void EndTheoDrag(TheoCrystal theo)
+        {
+            if (draggedTheo != theo) return;
+            float vx = theoCursorVelocity.X * .6f, vy = theoCursorVelocity.Y * .6f;
+            float length = (float)Math.Sqrt(vx * vx + vy * vy);
+            if (length > 400f) { vx *= 400f / length; vy *= 400f / length; }
+            if (length < 30f) vx = vy = 0f;
+            theo.EndDrag(new PointF(vx, vy));
+            draggedTheo = null;
         }
 
         void EnsureSeekerWindows()
@@ -1448,16 +1592,18 @@ namespace DeskMadeline
         internal void RequestSeekerRemoval(Seeker seeker)
         {
             lock (pendingSeekerRemovals) pendingSeekerRemovals.Enqueue(seeker);
-            BeginInvoke(new Action(() =>
+            BeginInvoke(new Action(() => CloseSeekerWindow(seeker)));
+        }
+
+        void CloseSeekerWindow(Seeker seeker)
+        {
+            lock (seekerWindowLock)
             {
-                lock (seekerWindowLock)
-                {
-                    if (!seekerWindows.TryGetValue(seeker, out SeekerInputWindow window)) return;
-                    seekerWindows.Remove(seeker);
-                    window.Close();
-                    window.Dispose();
-                }
-            }));
+                if (!seekerWindows.TryGetValue(seeker, out SeekerInputWindow window)) return;
+                seekerWindows.Remove(seeker);
+                window.Close();
+                window.Dispose();
+            }
         }
 
         internal void BeginSeekerDrag(Seeker seeker)
@@ -1517,16 +1663,18 @@ namespace DeskMadeline
                 pendingGliderRemovals.Enqueue(glider);
 
             // Let the ToolStrip click finish before disposing its owner window.
-            BeginInvoke(new Action(() =>
+            BeginInvoke(new Action(() => CloseGliderWindow(glider)));
+        }
+
+        void CloseGliderWindow(Glider glider)
+        {
+            lock (gliderWindowLock)
             {
-                lock (gliderWindowLock)
-                {
-                    if (!gliderWindows.TryGetValue(glider, out JellyInputWindow window)) return;
-                    gliderWindows.Remove(glider);
-                    window.Close();
-                    window.Dispose();
-                }
-            }));
+                if (!gliderWindows.TryGetValue(glider, out JellyInputWindow window)) return;
+                gliderWindows.Remove(glider);
+                window.Close();
+                window.Dispose();
+            }
         }
 
         internal void BeginGliderDrag(Glider glider)
@@ -1870,6 +2018,7 @@ namespace DeskMadeline
                     // Drawing held gliders in this layer also avoids rebuilding a
                     // separately uploaded rotated stamp on every carry frame.
                     DrawGliders(g, camX, camY, heldOnly: true);
+                    DrawTheos(g, camX, camY, heldOnly: true);
                 }
 
                 if (ParticlesEnabled) particles.Draw(g, camX, camY);
@@ -1888,6 +2037,15 @@ namespace DeskMadeline
                 float remain = 1f - trail.Age;
                 float opacity = 0.75f * remain * remain * remain;
                 trailStamps[i] = new TrailStamp(trail.Mask, trail.X, trail.Y, opacity);
+            }
+            // TheoCrystal.Depth=100, behind Player.Depth=0 while unheld.
+            foreach (TheoCrystal theo in theos)
+            {
+                if (theo.IsHeld || theo.Removed || trailCount >= trailStamps.Length) continue;
+                // TheoCrystal.orig_ctor sets sprite.Scale.X = -1.
+                Bitmap stamp = Sprites.Get(theo.FrameId, true);
+                if (stamp != null)
+                    trailStamps[trailCount++] = new TrailStamp(stamp, theo.Pos.X, theo.Pos.Y, 1f);
             }
             int foregroundStart = trailCount;
             foreach (Glider glider in gliders)
@@ -1944,6 +2102,17 @@ namespace DeskMadeline
                     int seekerTop = (int)Math.Round((pair.Key.Pos.Y - 16f) * s);
                     Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, seekerLeft, seekerTop,
                         32 * s, 32 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                }
+            }
+            lock (theoWindowLock)
+            {
+                foreach (var pair in theoWindows)
+                {
+                    if (!pair.Value.IsHandleCreated) continue;
+                    int theoLeft = (int)Math.Round((pair.Key.Pos.X - 8f) * s);
+                    int theoTop = (int)Math.Round((pair.Key.Pos.Y - 16f) * s);
+                    Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, theoLeft, theoTop,
+                        16 * s, 22 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
                 }
             }
 
@@ -2005,6 +2174,18 @@ namespace DeskMadeline
                 Sprites.DrawSilhouette(g, frame, Color.Black, x, y + 1f, w, h);
                 g.DrawImage(frame, x, y, w, h);
                 g.Restore(state);
+            }
+        }
+
+        void DrawTheos(Graphics g, float camX, float camY, bool heldOnly = false)
+        {
+            foreach (TheoCrystal theo in theos)
+            {
+                if (theo.Removed || (heldOnly && !theo.IsHeld)) continue;
+                Bitmap frame = Sprites.Get(theo.FrameId, true);
+                if (frame == null) continue;
+                g.DrawImage(frame, SnapPx(theo.Pos.X - camX) - 32f,
+                    SnapPx(theo.Pos.Y - camY) - 32f, 64f, 64f);
             }
         }
 
@@ -2985,12 +3166,25 @@ namespace DeskMadeline
                 Interlocked.Increment(ref pendingGliderSpawns)));
             menu.Items.Add(new ToolStripMenuItem(T("Spawn Seeker", "生成追踪者"), null, (_, __) =>
                 Interlocked.Increment(ref pendingSeekerSpawns)));
+            menu.Items.Add(new ToolStripMenuItem(T("Spawn Theo crystal", "生成西奥水晶"), null, (_, __) =>
+                Interlocked.Increment(ref pendingTheoSpawns)));
+            var removeEntitiesItem = new ToolStripMenuItem(T("Remove spawned entities", "移除生成的实体"));
+            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(T("Remove all jellyfish", "移除所有水母"), null,
+                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 1)));
+            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(T("Remove all Seekers", "移除所有追踪者"), null,
+                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 2)));
+            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(T("Remove all Theo crystals", "移除所有西奥水晶"), null,
+                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 4)));
+            removeEntitiesItem.DropDownItems.Add(new ToolStripSeparator());
+            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(T("Remove everything", "全部移除"), null,
+                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 7)));
+            menu.Items.Add(removeEntitiesItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem(T("Controls", "操作说明"), null, (_, __) =>
                 MessageBox.Show(
                     T(
-                        "Click Madeline first to focus her, or enable Respond while unfocused. Keys can be changed under Key bindings (three slots per action). Crouch Dash is separate and unbound by default.\n\nMove: Arrow keys / A D\nJump: C (coyote time + variable height)\nDash: X (8 directions; refills on landing)\nClimb / carry: Hold Grab against a wall or near a jellyfish\n\nTech:\n· Super: press Jump during a grounded dash\n· Hyper: down-diagonal grounded dash, then Jump\n· Wavedash/Ultra: down-diagonal air dash, then Jump on landing\n· Cornerboost: Grab + wall-jump within 0.06s after hitting a wall\n· Left-drag Madeline to throw her\n\nWindows are hollow platforms: stand on borders or climb their sides.",
-                        "先点击玛德琳取得键盘焦点，或启用“失焦时也响应输入”。可在“按键绑定”中修改按键（每项三栏）。蹲冲为独立按键，默认未绑定。\n\n移动：方向键 / AD\n跳跃：C（土狼时间+可变跳高）\n冲刺：X（8方向，着地恢复）\n攀爬/携带：对准墙或靠近水母时按住抓取\n\n技巧：\n· Super：地面冲刺中按跳跃\n· Hyper：地面斜下冲后按跳跃\n· Wavedash/Ultra：空中斜下冲，落地时按跳跃\n· Cornerboost：冲刺撞墙后 0.06s 内抓墙+蹬墙跳\n· 左键拖着玛德琳甩出去\n\n窗口是空心平台：可站边框、爬侧边。"),
+                        "Click Madeline first to focus her, or enable Respond while unfocused. Keys can be changed under Key bindings (three slots per action). Crouch Dash is separate and unbound by default.\n\nMove: Arrow keys / A D\nJump: C (coyote time + variable height)\nDash: X (8 directions; refills on landing)\nClimb / carry: Hold Grab against a wall, jellyfish, or Theo crystal\n\nTech:\n· Super: press Jump during a grounded dash\n· Hyper: down-diagonal grounded dash, then Jump\n· Wavedash/Ultra: down-diagonal air dash, then Jump on landing\n· Cornerboost: Grab + wall-jump within 0.06s after hitting a wall\n· Left-drag Madeline to throw her\n\nWindows are hollow platforms: stand on borders or climb their sides.",
+                        "先点击玛德琳取得键盘焦点，或启用“失焦时也响应输入”。可在“按键绑定”中修改按键（每项三栏）。蹲冲为独立按键，默认未绑定。\n\n移动：方向键 / AD\n跳跃：C（土狼时间+可变跳高）\n冲刺：X（8方向，着地恢复）\n攀爬/携带：对准墙、靠近水母或西奥水晶时按住抓取\n\n技巧：\n· Super：地面冲刺中按跳跃\n· Hyper：地面斜下冲后按跳跃\n· Wavedash/Ultra：空中斜下冲，落地时按跳跃\n· Cornerboost：冲刺撞墙后 0.06s 内抓墙+蹬墙跳\n· 左键拖着玛德琳甩出去\n\n窗口是空心平台：可站边框、爬侧边。"),
                     T("Desk Madeline", "玛德琳桌宠"), MessageBoxButtons.OK, MessageBoxIcon.Information)));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem(T("Exit", "退出"), null, (_, __) => ExitApp()));
@@ -3084,6 +3278,11 @@ namespace DeskMadeline
             {
                 foreach (var window in gliderWindows.Values) window.Dispose();
                 gliderWindows.Clear();
+            }
+            lock (theoWindowLock)
+            {
+                foreach (var window in theoWindows.Values) window.Dispose();
+                theoWindows.Clear();
             }
             foreach (var cached in gliderStampCache.Values) cached.Bitmap?.Dispose();
             gliderStampCache.Clear();

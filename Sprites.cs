@@ -128,6 +128,8 @@ namespace DeskMadeline
             if (Directory.Exists(glider)) LoadDirectory(glider, "glider/");
             string seeker = Path.Combine(Path.GetDirectoryName(dir), "seeker");
             if (Directory.Exists(seeker)) LoadDirectory(seeker, "seeker/");
+            string theo = Path.Combine(Path.GetDirectoryName(dir), "theoCrystal");
+            if (Directory.Exists(theo)) LoadDirectory(theo, "theoCrystal/");
         }
 
         static void LoadDirectory(string dir, string idPrefix)
