@@ -1702,10 +1702,10 @@ namespace DeskMadeline
             Speed.X = WallJumpHSpeed * dir;
             Speed.Y = JumpSpeed;
             varJumpSpeed = Speed.Y;
-            // A held glider always gets the longer 0.26s wall-jump steering lock.
-            // Without one, vanilla only applies the normal 0.16s lock when a
-            // horizontal direction was held on the jump frame.
-            if (Holding != null) { forceMoveX = dir; forceMoveXTimer = 0.26f; }
+            // Player.orig_WallJump only forces the long steering lock for a
+            // SlowFall holdable (the jelly). Theo uses the normal neutral-wall-
+            // jump branch, so moveX==0 leaves steering immediately available.
+            if (Holding != null && Holding.SlowFall) { forceMoveX = dir; forceMoveXTimer = 0.26f; }
             else if (moveX != 0) { forceMoveX = dir; forceMoveXTimer = WallJumpForceTime; }
             Facing = dir;
             LastWallJumpDirection = dir;

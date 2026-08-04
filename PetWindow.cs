@@ -86,6 +86,8 @@ namespace DeskMadeline
         readonly ParticleSystem particles = new ParticleSystem();
         readonly ParticleSystem seekerParticles = new ParticleSystem();
         readonly Dictionary<int, Bitmap> seekerParticleBitmaps = new Dictionary<int, Bitmap>();
+        Bitmap gliderDebugStamp, theoDebugStamp;
+        readonly Bitmap[] seekerDebugStamps = new Bitmap[3];
         readonly List<WaveRing> waveRings = new List<WaveRing>();
         readonly Random effectRng = new Random();
         PType dust, dashBlue, dashRed, elytraDeploy;
@@ -2045,7 +2047,9 @@ namespace DeskMadeline
                 // TheoCrystal.orig_ctor sets sprite.Scale.X = -1.
                 Bitmap stamp = Sprites.Get(theo.FrameId, true);
                 if (stamp != null)
-                    trailStamps[trailCount++] = new TrailStamp(stamp, theo.Pos.X, theo.Pos.Y, 1f);
+                    // Sprites.xml: theo_crystal Origin=(32,42), ten pixels below
+                    // the 64x64 frame center used by TrailStamp.
+                    trailStamps[trailCount++] = new TrailStamp(stamp, theo.Pos.X, theo.Pos.Y - 10f, 1f);
             }
             int foregroundStart = trailCount;
             foreach (Glider glider in gliders)
@@ -2080,6 +2084,7 @@ namespace DeskMadeline
                         seeker.Pos.X + seeker.Shake.X, seeker.Pos.Y + seeker.Shake.Y, 1f);
             }
             seekerParticles.AppendPointStamps(trailStamps, ref trailCount, seekerParticleBitmaps);
+            if (hitboxesEnabled) AppendActorDebugStamps(ref trailCount);
             presenter.Present(small, left, top, trailStamps, trailCount, foregroundStart);
 
             lock (gliderWindowLock)
@@ -2184,8 +2189,9 @@ namespace DeskMadeline
                 if (theo.Removed || (heldOnly && !theo.IsHeld)) continue;
                 Bitmap frame = Sprites.Get(theo.FrameId, true);
                 if (frame == null) continue;
+                // Sprites.xml: <Origin x="32" y="42"/>.
                 g.DrawImage(frame, SnapPx(theo.Pos.X - camX) - 32f,
-                    SnapPx(theo.Pos.Y - camY) - 32f, 64f, 64f);
+                    SnapPx(theo.Pos.Y - camY) - 42f, 64f, 64f);
             }
         }
 
@@ -2471,6 +2477,96 @@ namespace DeskMadeline
             using var playerBrush = new SolidBrush(Color.Lime);
             DrawHollowRect(g, player.Pos.X - 4f - camX, player.Pos.Y - playerHeight - camY,
                 8f, playerHeight, playerBrush);
+            DrawSeekerPaths(g, camX, camY);
+        }
+
+        void DrawSeekerPaths(Graphics g, float camX, float camY)
+        {
+            using var pathPen = new Pen(Color.Red, 1f);
+            using var pathBrush = new SolidBrush(Color.Red);
+            using var endpointBrush = new SolidBrush(Color.Green);
+            foreach (Seeker seeker in seekers)
+            {
+                if (!seeker.DebugPathAttempted) continue;
+                IReadOnlyList<PointF> path = seeker.DebugPath;
+                if (seeker.DebugPathFound && path.Count > 0)
+                {
+                    PointF start = path[0];
+                    for (int i = 1; i < path.Count; i++)
+                    {
+                        PointF next = path[i];
+                        g.DrawLine(pathPen, SnapPx(start.X - camX), SnapPx(start.Y - camY),
+                            SnapPx(next.X - camX), SnapPx(next.Y - camY));
+                        g.FillRectangle(pathBrush, SnapPx(start.X - camX) - 2f,
+                            SnapPx(start.Y - camY) - 2f, 4f, 4f);
+                        start = next;
+                    }
+                    g.FillRectangle(pathBrush, SnapPx(start.X - camX) - 2f,
+                        SnapPx(start.Y - camY) - 2f, 4f, 4f);
+                }
+                PointF from = PathfinderCellCenter(seeker.DebugPathStart);
+                PointF to = PathfinderCellCenter(seeker.DebugPathEnd);
+                g.FillRectangle(endpointBrush, SnapPx(from.X - camX) - 2f,
+                    SnapPx(from.Y - camY) - 2f, 4f, 4f);
+                g.FillRectangle(endpointBrush, SnapPx(to.X - camX) - 2f,
+                    SnapPx(to.Y - camY) - 2f, 4f, 4f);
+            }
+        }
+
+        static PointF PathfinderCellCenter(PointF point)
+            => new PointF((float)Math.Floor(point.X / 8f) * 8f + 4f,
+                (float)Math.Floor(point.Y / 8f) * 8f + 4f);
+
+        void AppendActorDebugStamps(ref int trailCount)
+        {
+            gliderDebugStamp ??= CreateHoldableDebugStamp(glider: true);
+            theoDebugStamp ??= CreateHoldableDebugStamp(glider: false);
+            foreach (Glider glider in gliders)
+            {
+                if (trailCount >= trailStamps.Length) return;
+                trailStamps[trailCount++] = new TrailStamp(gliderDebugStamp,
+                    glider.Pos.X, glider.Pos.Y, 1f);
+            }
+            foreach (TheoCrystal theo in theos)
+            {
+                if (theo.Removed || trailCount >= trailStamps.Length) continue;
+                trailStamps[trailCount++] = new TrailStamp(theoDebugStamp,
+                    theo.Pos.X, theo.Pos.Y, 1f);
+            }
+            foreach (Seeker seeker in seekers)
+            {
+                if (trailCount >= trailStamps.Length) return;
+                int variant = seeker.State == Seeker.StAttack && seeker.Speed.X > 0f ? 1 :
+                    seeker.State == Seeker.StAttack && seeker.Speed.Y < 0f ? 2 : 0;
+                seekerDebugStamps[variant] ??= CreateSeekerDebugStamp(variant);
+                trailStamps[trailCount++] = new TrailStamp(seekerDebugStamps[variant],
+                    seeker.Pos.X, seeker.Pos.Y, 1f);
+            }
+        }
+
+        static Bitmap CreateHoldableDebugStamp(bool glider)
+        {
+            var bitmap = new Bitmap(64, 64, PixelFormat.Format32bppPArgb);
+            using var g = Graphics.FromImage(bitmap);
+            using var physical = new SolidBrush(Color.Red);
+            using var pickup = new SolidBrush(Color.Pink);
+            DrawHollowRect(g, 28f, 22f, 8f, 10f, physical);
+            DrawHollowRect(g, glider ? 22f : 24f, 16f,
+                glider ? 20f : 16f, 22f, pickup);
+            return bitmap;
+        }
+
+        static Bitmap CreateSeekerDebugStamp(int variant)
+        {
+            var bitmap = new Bitmap(64, 64, PixelFormat.Format32bppPArgb);
+            using var g = Graphics.FromImage(bitmap);
+            using var attack = new SolidBrush(Color.Red);
+            using var bounce = new SolidBrush(Color.Aqua);
+            DrawHollowRect(g, 26f, 30f, 12f, 8f, attack);
+            float x = variant == 1 ? 22f : 26f;
+            float width = variant == 0 ? 12f : 16f;
+            DrawHollowRect(g, x, 24f, width, 6f, bounce);
+            return bitmap;
         }
 
         static void DrawSolidHitbox(Graphics g, float x, float y, float width, float height, Brush brush)
@@ -3297,6 +3393,9 @@ namespace DeskMadeline
                 foreach (SeekerTrail trail in seeker.Trails) trail.Stamp?.Dispose();
             foreach (Bitmap bitmap in seekerParticleBitmaps.Values) bitmap.Dispose();
             seekerParticleBitmaps.Clear();
+            gliderDebugStamp?.Dispose();
+            theoDebugStamp?.Dispose();
+            foreach (Bitmap bitmap in seekerDebugStamps) bitmap?.Dispose();
             foreach (var digit in picoDigits) digit?.Dispose();
             compositionHost?.Close();
             compositionHost?.Dispose();

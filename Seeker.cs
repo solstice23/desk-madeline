@@ -58,8 +58,15 @@ namespace DeskMadeline
         readonly List<PointF> path = new List<PointF>();
         int pathIndex;
         bool lastPathFound;
+        PointF debugPathStart, debugPathEnd;
+        bool debugPathAttempted;
         bool patrolNeedsTarget;
         readonly PointF[] patrolPoints;
+        public IReadOnlyList<PointF> DebugPath => path;
+        public bool DebugPathFound => lastPathFound;
+        public bool DebugPathAttempted => debugPathAttempted;
+        public PointF DebugPathStart => debugPathStart;
+        public PointF DebugPathEnd => debugPathEnd;
 
         public Seeker(PointF position)
         {
@@ -266,6 +273,7 @@ namespace DeskMadeline
             attackWindUp = strongSkid = spotted = canSeePlayer = lastPathFound = false;
             lastSpottedAt = lastPathTo = PointF.Empty;
             path.Clear(); pathIndex = 0;
+            debugPathAttempted = false;
             ScaleX = ScaleY = 1f;
             wigglerCounter = shakerTimer = shockwaveTimer = 0f;
             Shake = PointF.Empty; ShockwaveFrameId = null; nextSprite = null;
@@ -331,7 +339,7 @@ namespace DeskMadeline
             if (lastPathTo != lastSpottedAt)
             {
                 lastPathTo = lastSpottedAt; pathIndex = 0;
-                lastPathFound = DesktopPathfinder.Find(path, Pos, FollowTarget, solids, worldBounds);
+                FindPath(solids, worldBounds);
             }
 
             // PlayerCollider components are added before StateMachine in the
@@ -446,8 +454,16 @@ namespace DeskMadeline
             PointF selected = choices[random.Next(Math.Min(3, choices.Count))].Point;
             lastSpottedAt = lastPathTo = selected;
             pathIndex = 0;
-            lastPathFound = DesktopPathfinder.Find(path, Pos, FollowTarget, solids, worldBounds);
+            FindPath(solids, worldBounds);
             return true;
+        }
+
+        void FindPath(IList<Solid> solids, RectangleF worldBounds)
+        {
+            debugPathAttempted = true;
+            debugPathStart = Pos;
+            debugPathEnd = FollowTarget;
+            lastPathFound = DesktopPathfinder.Find(path, Pos, FollowTarget, solids, worldBounds);
         }
 
         void UpdateSpotted(float dt, Player player, IList<Solid> solids)
