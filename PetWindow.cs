@@ -90,7 +90,7 @@ namespace DeskMadeline
         readonly Bitmap[] seekerDebugStamps = new Bitmap[3];
         readonly List<WaveRing> waveRings = new List<WaveRing>();
         readonly Random effectRng = new Random();
-        PType dust, dashBlue, dashRed, elytraDeploy;
+        PType dust, dashBlue, dashRed, dashBadeline, elytraDeploy;
         PType seekerAttack, seekerHitWall, seekerStomp, seekerRegen, theoImpact;
         bool ParticlesEnabled = true;    // 粒子特效开关（默认开，托盘菜单可关闭）
         float skidDustTimer;
@@ -291,6 +291,20 @@ namespace DeskMadeline
                 Tex = new[] { "dashParticle" },
                 Color = Color.FromArgb(0xAC, 0x32, 0x32),
                 Color2 = Color.FromArgb(0xE0, 0x59, 0x59),
+                BlinkColor = true,
+                GravY = 8f,
+                LifeMin = 1f, LifeMax = 1.8f,
+                Size = 1f,
+                SpeedMin = 10f, SpeedMax = 20f,
+                LateFade = true
+            };
+            // ParticleTypes.cs: Player.P_DashBadB, used by
+            // PlayerSpriteMode.MadelineAsBadeline for a two-dash dash.
+            dashBadeline = new PType
+            {
+                Tex = new[] { "dashParticle" },
+                Color = Color.FromArgb(0x9B, 0x3F, 0xB5),
+                Color2 = Color.FromArgb(0xCC, 0x8E, 0xE2),
                 BlinkColor = true,
                 GravY = 8f,
                 LifeMin = 1f, LifeMax = 1.8f,
@@ -1427,7 +1441,9 @@ namespace DeskMadeline
                     dashParticleTimer -= 0.02f;
                     float px = player.Pos.X + (float)(effectRng.NextDouble() * 4.0 - 2.0);
                     float py = player.Pos.Y - 5.5f + (float)(effectRng.NextDouble() * 4.0 - 2.0);
-                    particles.Emit(player.LastDashWasTwo ? dashRed : dashBlue,
+                    PType dashType = !player.LastDashWasTwo ? dashBlue :
+                        skinManager.IsBadeline ? dashBadeline : dashRed;
+                    particles.Emit(dashType,
                         px, py, dashAngle, (float)Math.PI / 3f, 1);
                 }
             }

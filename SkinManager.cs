@@ -27,8 +27,11 @@ namespace DeskMadeline
     internal sealed class SkinManager
     {
         public const string DefaultId = "default";
+        public const string BadelineId = "builtin:badeline";
         public readonly List<SkinDefinition> Skins = new List<SkinDefinition>();
         public SkinDefinition Active { get; private set; }
+        public bool IsBadeline => Active != null &&
+            Active.Id.Equals(BadelineId, StringComparison.OrdinalIgnoreCase);
 
         readonly string baseDirectory;
 
@@ -42,6 +45,24 @@ namespace DeskMadeline
         {
             Skins.Clear();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // SaveData.Assists.PlayAsBadeline selects PlayerSpriteMode.MadelineAsBadeline.
+            // Its SpriteBank entry is player_badeline (a copy of player with this
+            // atlas path), and Player.UpdateHair uses this exact built-in palette.
+            string badelineDirectory = Path.Combine(baseDirectory, "assets", "player_badeline");
+            if (IsPlayerDirectory(badelineDirectory))
+            {
+                var badeline = new SkinDefinition
+                {
+                    Id = BadelineId,
+                    DisplayName = "Badeline",
+                    PlayerDirectory = badelineDirectory
+                };
+                badeline.HairColors[0] = Color.FromArgb(0x44, 0xB7, 0xFF);
+                badeline.HairColors[1] = Color.FromArgb(0x9B, 0x3F, 0xB5);
+                badeline.HairColors[2] = Color.FromArgb(0xFF, 0x6D, 0xEF);
+                Skins.Add(badeline);
+                seen.Add(badeline.Id);
+            }
             foreach (string root in CandidateRoots())
             {
                 if (!Directory.Exists(root)) continue;
