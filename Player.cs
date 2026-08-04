@@ -428,6 +428,7 @@ namespace DeskMadeline
         PointF pickupStoredSpeed;
         float pickupStoredVarJump;
         PointF pickupCurveBegin, pickupCurveControl;
+        PointF carryOffset = new PointF(0f, -12f);
         float dreamDashCanEndTimer;
         float dreamDashAnimTimer, dreamDashOutTimer;
         float dreamTechGraceTimer;
@@ -945,6 +946,7 @@ namespace DeskMadeline
             pickupStoredSpeed = PointF.Empty;
             pickupStoredVarJump = 0f;
             pickupCurveBegin = pickupCurveControl = PointF.Empty;
+            carryOffset = new PointF(0f, -12f);
             dreamDashCanEndTimer = 0f;
             dreamDashAnimTimer = dreamDashOutTimer = 0f;
             dreamTechGraceTimer = 0f;
@@ -1204,10 +1206,9 @@ namespace DeskMadeline
                             ? 4f * progress * progress * progress
                             : 1f - (float)Math.Pow(-2f * progress + 2f, 3) / 2f;
                         float inv = 1f - eased;
-                        PointF offset = new PointF(
+                        carryOffset = new PointF(
                             inv * inv * pickupCurveBegin.X + 2f * inv * eased * pickupCurveControl.X,
                             inv * inv * pickupCurveBegin.Y + 2f * inv * eased * pickupCurveControl.Y + eased * eased * -12f);
-                        Holding.Carry(new PointF(Pos.X + offset.X, Pos.Y + offset.Y));
                     }
                     if (pickupTimer <= 0f)
                     {
@@ -1298,10 +1299,6 @@ namespace DeskMadeline
                 if (State != StDreamDash && !IsDead)
                     MoveV(Speed.Y * dt);
 
-                if (Holding != null)
-                    Holding.Carry(new PointF(Pos.X, Pos.Y - 12f +
-                        (PetWindow.Instance?.ResolveCarryYOffset(CurrentFrameId) ?? 0f)));
-
                 // Vanilla skips level-bound enforcement during DreamDash. The
                 // desktop perimeter is represented by real non-dream solids, so
                 // allowing the naive move to reach them produces the proper death.
@@ -1350,6 +1347,17 @@ namespace DeskMadeline
 
             // PetWindow runs PlayerHair.AfterUpdate after it applies the animation
             // selected above, matching Player.UpdateSprite -> UpdateHair ordering.
+        }
+
+        /// <summary>
+        /// Celeste.Player.UpdateCarry, called after the current sprite frame is
+        /// selected so PlayerSprite.CarryYOffset belongs to that same frame.
+        /// </summary>
+        internal void UpdateCarryPosition(float spriteCarryYOffset)
+        {
+            if (Holding != null)
+                Holding.Carry(new PointF(Pos.X + carryOffset.X,
+                    Pos.Y + carryOffset.Y + spriteCarryYOffset * SpriteScaleY));
         }
 
         /// <summary>头发编辑器专用：物理/动画冻结，只按给定 hx/hy 跑头发模拟（实时预览）。</summary>
@@ -1581,6 +1589,10 @@ namespace DeskMadeline
             pickupCurveBegin = new PointF(nearest.Pos.X - Pos.X, nearest.Pos.Y - Pos.Y);
             pickupCurveControl = new PointF(
                 pickupCurveBegin.X + Sign(pickupCurveBegin.X) * 2f, -14f);
+            // PickupCoroutine assigns carryOffset = begin before its first yield.
+            // This keeps the actor at the curve start on the pickup frame instead
+            // of flashing at CarryOffsetTarget for one rendered frame.
+            carryOffset = pickupCurveBegin;
             State = StPickup;
             PlaySound("event:/char/madeline/crystaltheo_lift");
             return true;

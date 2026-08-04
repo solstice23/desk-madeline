@@ -759,6 +759,10 @@ namespace DeskMadeline
                 !string.Equals(player.AnimId, animator.CurrentId, StringComparison.OrdinalIgnoreCase);
             player.AnimLoopCount = animator.LoopCount;
             player.CurrentFrameId = animator.CurrentFrameId;
+            // Player.orig_Update orders UpdateSprite before UpdateCarry. The
+            // animator is hosted here, so apply the held actor's curve only after
+            // the matching frame (and its CarryYOffset metadata) is available.
+            player.UpdateCarryPosition(ResolveCarryYOffset(player.CurrentFrameId));
             if (ParticlesEnabled) EmitAnimationParticles();
 
             float hairX = 0f, hairY = 0f;
