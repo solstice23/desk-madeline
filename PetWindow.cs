@@ -198,6 +198,7 @@ namespace DeskMadeline
             player.SetFreezeFramesEnabled(settings.FreezeFramesEnabled);
             player.RespawnReversalEnabled = settings.RespawnReversalEnabled;
             player.InfiniteStamina = settings.InfiniteStamina;
+            player.Invincible = settings.Invincible;
             player.SetDashMode(settings.DashMode);
             player.NormalSurfaceSoundIndex = settings.SurfaceSoundIndex;
             player.Gliders = gliders;
@@ -2418,6 +2419,7 @@ namespace DeskMadeline
             settings.ParticlesEnabled = ParticlesEnabled;
             settings.FreezeFramesEnabled = player.FreezeFramesEnabled;
             settings.InfiniteStamina = player.InfiniteStamina;
+            settings.Invincible = player.Invincible;
             settings.DashMode = player.DashMode;
             settings.Language = english ? "en" : "zh";
             settings.Skin = skinManager.Active?.Id ?? SkinManager.DefaultId;
@@ -2937,6 +2939,14 @@ namespace DeskMadeline
                 SaveSettings();
             }) { Checked = player.InfiniteStamina };
             menu.Items.Add(staminaItem);
+
+            var invincibleItem = new ToolStripMenuItem(T("Invincible", "无敌模式"), null, (sender, __) =>
+            {
+                player.Invincible = !player.Invincible;
+                ((ToolStripMenuItem)sender).Checked = player.Invincible;
+                SaveSettings();
+            }) { Checked = player.Invincible };
+            menu.Items.Add(invincibleItem);
 
             var dashItem = new ToolStripMenuItem(T("Dash count", "冲刺次数"));
             foreach (var option in new[]

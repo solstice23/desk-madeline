@@ -125,6 +125,7 @@ namespace DeskMadeline
         public int DashMode = 1;
         public float Stamina = ClimbMaxStamina;
         public bool InfiniteStamina;
+        public bool Invincible;
         public bool FreezeFramesEnabled = true;
         public bool RespawnReversalEnabled;
         public bool ElytraEnabled;
@@ -283,6 +284,9 @@ namespace DeskMadeline
 
         public void Die(PointF direction)
         {
+            // Player.orig_Die returns null without changing player state when the
+            // Assist Mode Invincible flag is active.
+            if (Invincible) return;
             if (IsDead || IsRespawning) return;
             if (Holding != null) DropGlider();
             IsDead = true;
@@ -327,6 +331,7 @@ namespace DeskMadeline
 
         public void DieFromSeeker(PointF seekerPosition)
         {
+            if (Invincible) return;
             PointF direction = SafeNormalize(Center.X - seekerPosition.X,
                 Center.Y - seekerPosition.Y, -Facing, 0f);
             deathRespawnPos = FindNearbySafeRespawn(seekerPosition, direction);
@@ -2164,6 +2169,8 @@ namespace DeskMadeline
         {
             // Vanilla calls NaiveMove before testing the new overlap.  Keeping this
             // order is frame-critical for dream jumps, double jumps and dream tech.
+            PointF beforeMove = Pos;
+            PointF beforeMoveCounter = counter;
             MoveH(Speed.X * dt);
             MoveV(Speed.Y * dt);
             dreamDashCanEndTimer -= dt;
@@ -2192,6 +2199,16 @@ namespace DeskMadeline
                 }
                 if (!corrected)
                 {
+                    if (Invincible)
+                    {
+                        // Player.DreamDashUpdate has a dedicated Assist Mode path:
+                        // undo NaiveMove, reverse velocity, and remain in DreamDash.
+                        Pos = beforeMove;
+                        counter = beforeMoveCounter;
+                        Speed = new PointF(-Speed.X, -Speed.Y);
+                        PlaySound("event:/game/general/assist_dreamblockbounce");
+                        return;
+                    }
                     Pos = original;
                     SnapDreamDeathToExitFace();
                     DieFromDreamDash();
@@ -2264,7 +2281,7 @@ namespace DeskMadeline
 
         void DieFromDreamDash()
         {
-            if (IsDead) return;
+            if (Invincible || IsDead) return;
             if (Holding != null) DropGlider();
             IsDead = true;
             DeathSequenceCount++;

@@ -15,6 +15,7 @@ namespace DeskMadeline
         public bool ParticlesEnabled = true;
         public bool FreezeFramesEnabled = true;
         public bool InfiniteStamina;
+        public bool Invincible;
         public int DashMode = 1;
         public string Language;
         public string Skin = "default";
@@ -60,6 +61,7 @@ namespace DeskMadeline
                 ReadBool(values, "ParticlesEnabled", ref result.ParticlesEnabled);
                 ReadBool(values, "FreezeFramesEnabled", ref result.FreezeFramesEnabled);
                 ReadBool(values, "InfiniteStamina", ref result.InfiniteStamina);
+                ReadBool(values, "Invincible", ref result.Invincible);
                 if (values.TryGetValue("DashMode", out string dash) && int.TryParse(dash, out int dashValue))
                     result.DashMode = dashValue < 0 ? -1 : Math.Max(0, Math.Min(2, dashValue));
                 if (values.TryGetValue("Language", out string language) &&
@@ -122,6 +124,7 @@ namespace DeskMadeline
                     "ParticlesEnabled=" + ParticlesEnabled,
                     "FreezeFramesEnabled=" + FreezeFramesEnabled,
                     "InfiniteStamina=" + InfiniteStamina,
+                    "Invincible=" + Invincible,
                     "DashMode=" + DashMode,
                     "Language=" + (Language ?? ""),
                     "Skin=" + (Skin ?? "default"),
