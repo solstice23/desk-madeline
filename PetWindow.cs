@@ -3014,6 +3014,26 @@ namespace DeskMadeline
             { Checked = AlwaysOnTop };
             menu.Items.Add(topItem);
 
+            var startupItem = new ToolStripMenuItem(T("Launch at sign-in", "登录时启动"))
+            {
+                Checked = StartupRegistration.IsEnabled()
+            };
+            startupItem.Click += (_, __) =>
+            {
+                try
+                {
+                    StartupRegistration.SetEnabled(!startupItem.Checked);
+                    startupItem.Checked = StartupRegistration.IsEnabled();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(ex.Message,
+                        T("Could not change sign-in startup", "无法更改登录启动设置"),
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
+            menu.Items.Add(startupItem);
+
             var sfxItem = new ToolStripMenuItem(T("Sound effects", "音效"));
             foreach (var option in new[]
             {
