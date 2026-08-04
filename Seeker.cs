@@ -50,6 +50,7 @@ namespace DeskMadeline
         int facing = 1, spriteFacing = 1;
         string nextSprite;
         float idleX, idleY, stateTimer, spottedLoseTimer, spottedTurnDelay;
+        float idlePatrolTimer, patrolWaitTimer;
         float attackSpeed, wigglerCounter, wigglerSine, sceneTime, previousSceneTime;
         float shakerTimer;
         int regenStage;
@@ -57,10 +58,22 @@ namespace DeskMadeline
         readonly List<PointF> path = new List<PointF>();
         int pathIndex;
         bool lastPathFound;
+        bool patrolNeedsTarget;
+        readonly PointF[] patrolPoints;
 
         public Seeker(PointF position)
         {
             Pos = position;
+            // Celeste receives these nodes from EntityData. Menu-spawned desktop
+            // actors have no map data, so give them a compact set around their
+            // spawn while retaining the original Patrol state selection logic.
+            patrolPoints = new[]
+            {
+                new PointF(position.X - 48f, position.Y),
+                new PointF(position.X + 48f, position.Y),
+                new PointF(position.X, position.Y - 32f),
+                new PointF(position.X, position.Y + 32f)
+            };
             animator = new Animator(BuildAnimations());
             animator.Play("idle", true);
         }
@@ -178,7 +191,8 @@ namespace DeskMadeline
             stateTimer = 0f;
             switch (state)
             {
-                case StIdle: break;
+                case StIdle: idlePatrolTimer = 0f; break;
+                case StPatrol: patrolWaitTimer = 0f; patrolNeedsTarget = true; break;
                 case StSpotted:
                     SoundEvents.Enqueue(new PlayerSoundEvent("event:/game/05_mirror_temple/seeker_aggro"));
                     TurnFacing(lastSpottedAt.X - Pos.X, "spot");
@@ -247,6 +261,8 @@ namespace DeskMadeline
             Speed = counter = PointF.Empty;
             State = StIdle;
             stateTimer = spottedLoseTimer = spottedTurnDelay = attackSpeed = 0f;
+            idlePatrolTimer = patrolWaitTimer = 0f;
+            patrolNeedsTarget = false;
             attackWindUp = strongSkid = spotted = canSeePlayer = lastPathFound = false;
             lastSpottedAt = lastPathTo = PointF.Empty;
             path.Clear(); pathIndex = 0;
@@ -263,11 +279,21 @@ namespace DeskMadeline
             animator.Play("idle", true);
         }
 
-        public void UpdateDormant(float dt)
+        public void UpdateDormant(float dt, IList<Solid> solids, RectangleF worldBounds)
         {
             if (BeingDragged) return;
-            animator.Play("idle");
+            previousSceneTime = sceneTime;
+            sceneTime += dt;
+            idleX += (float)Math.PI * 2f * .5f * dt;
+            idleY += (float)Math.PI * 2f * .7f * dt;
+            PointF target = new PointF((float)Math.Sin(idleX) * 6f, (float)Math.Sin(idleY) * 6f);
+            Speed = Approach(Speed, target, 200f * dt);
+            if (LengthSq(Speed) > 400f) TurnFacing(Speed.X);
+            if (spriteFacing == facing) animator.Play("idle");
             animator.Update(dt);
+            MoveH(Speed.X * dt, solids);
+            MoveV(Speed.Y * dt, solids);
+            KeepInsideBounds(worldBounds, solids);
         }
 
         public void Update(float dt, Player player, IList<Solid> solids, RectangleF worldBounds, RectangleF camera)
@@ -314,7 +340,7 @@ namespace DeskMadeline
             switch (State)
             {
                 case StIdle: UpdateIdle(dt, player); break;
-                case StPatrol: UpdatePatrol(dt, player); break;
+                case StPatrol: UpdatePatrol(dt, player, solids, worldBounds); break;
                 case StSpotted: UpdateSpotted(dt, player, solids); break;
                 case StAttack: UpdateAttack(dt); break;
                 case StStunned:
@@ -348,10 +374,7 @@ namespace DeskMadeline
             }
 
             MoveH(Speed.X * dt, solids); MoveV(Speed.Y * dt, solids);
-            if (Pos.X - 3 < worldBounds.Left && Speed.X < 0f) { Pos.X = worldBounds.Left + 3; CollideH(-1, solids); }
-            else if (Pos.X + 3 > worldBounds.Right && Speed.X > 0f) { Pos.X = worldBounds.Right - 3; CollideH(1, solids); }
-            if (Pos.Y - 3 < worldBounds.Top - 8 && Speed.Y < 0f) { Pos.Y = worldBounds.Top - 5; CollideV(); }
-            else if (Pos.Y + 3 > worldBounds.Bottom && Speed.Y > 0f) { Pos.Y = worldBounds.Bottom - 3; CollideV(); }
+            KeepInsideBounds(worldBounds, solids);
 
         }
 
@@ -371,8 +394,58 @@ namespace DeskMadeline
             Speed = Approach(Speed, target, 200f * dt);
             if (LengthSq(Speed) > 400f) TurnFacing(Speed.X);
             if (spriteFacing == facing) animator.Play("idle");
+            // Port of IdleCoroutine: once a previously-spotted Seeker returns to
+            // FollowTarget it waits 0.3 seconds, then begins its node patrol.
+            if (spotted && patrolPoints.Length > 0 && DistanceSq(Pos, FollowTarget) <= 64f)
+            {
+                idlePatrolTimer += dt;
+                if (idlePatrolTimer >= .3f) SetState(StPatrol);
+            }
+            else idlePatrolTimer = 0f;
         }
-        void UpdatePatrol(float dt, Player player) { SetState(StIdle); }
+
+        void UpdatePatrol(float dt, Player player, IList<Solid> solids, RectangleF worldBounds)
+        {
+            if (canSeePlayer) { SetState(StSpotted); return; }
+            if (patrolNeedsTarget)
+            {
+                patrolNeedsTarget = false;
+                if (!ChoosePatrolTarget(player, solids, worldBounds)) { SetState(StIdle); return; }
+            }
+            if (patrolWaitTimer > 0f)
+            {
+                patrolWaitTimer -= dt;
+                if (patrolWaitTimer <= 0f && !ChoosePatrolTarget(player, solids, worldBounds))
+                { SetState(StIdle); return; }
+            }
+            else if (DistanceSq(Pos, lastSpottedAt) < 144f)
+                patrolWaitTimer = .4f;
+
+            float m = GetSpeedMagnitude(25f, player);
+            PointF target = lastPathFound ? GetPathSpeed(m) :
+                Normalize(FollowTarget.X - Pos.X, FollowTarget.Y - Pos.Y, m);
+            Speed = Approach(Speed, target, 600f * dt);
+            if (LengthSq(Speed) > 100f) TurnFacing(Speed.X);
+            if (spriteFacing == facing) animator.Play("search");
+        }
+
+        bool ChoosePatrolTarget(Player player, IList<Solid> solids, RectangleF worldBounds)
+        {
+            var choices = new List<(PointF Point, float Distance)>();
+            foreach (PointF point in patrolPoints)
+            {
+                if (!worldBounds.Contains(point) || CollidesAt(point.X, point.Y, solids) ||
+                    DistanceSq(Pos, point) < 576f) continue;
+                choices.Add((point, DistanceSq(point, player.Center)));
+            }
+            if (choices.Count == 0) return false;
+            choices.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+            PointF selected = choices[random.Next(Math.Min(3, choices.Count))].Point;
+            lastSpottedAt = lastPathTo = selected;
+            pathIndex = 0;
+            lastPathFound = DesktopPathfinder.Find(path, Pos, FollowTarget, solids, worldBounds);
+            return true;
+        }
 
         void UpdateSpotted(float dt, Player player, IList<Solid> solids)
         {
@@ -485,6 +558,15 @@ namespace DeskMadeline
                 Pos.Y += sign; move -= sign;
             }
         }
+
+        void KeepInsideBounds(RectangleF worldBounds, IList<Solid> solids)
+        {
+            if (Pos.X - 3 < worldBounds.Left && Speed.X < 0f) { Pos.X = worldBounds.Left + 3; CollideH(-1, solids); }
+            else if (Pos.X + 3 > worldBounds.Right && Speed.X > 0f) { Pos.X = worldBounds.Right - 3; CollideH(1, solids); }
+            if (Pos.Y - 3 < worldBounds.Top - 8 && Speed.Y < 0f) { Pos.Y = worldBounds.Top - 5; CollideV(); }
+            else if (Pos.Y + 3 > worldBounds.Bottom && Speed.Y > 0f) { Pos.Y = worldBounds.Bottom - 3; CollideV(); }
+        }
+
         bool MoveVExact(int amount, IList<Solid> solids)
         {
             int sign = Math.Sign(amount);

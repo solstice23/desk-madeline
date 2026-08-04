@@ -552,8 +552,12 @@ namespace DeskMadeline
 
             int seekerSpawnCount = Interlocked.Exchange(ref pendingSeekerSpawns, 0);
             for (int i = 0; i < seekerSpawnCount; i++)
-                seekers.Add(new Seeker(new PointF(
-                    player.Pos.X + player.Facing * (48f + i * 8f), player.Pos.Y - 24f)));
+            {
+                PointF desired = new PointF(
+                    player.Pos.X + player.Facing * 48f, player.Pos.Y - 24f);
+                PointF? spawn = FindFreeSeekerSpawn(desired, player.Facing);
+                if (spawn.HasValue) seekers.Add(new Seeker(spawn.Value));
+            }
             if (seekerSpawnCount > 0 && IsHandleCreated)
                 BeginInvoke(new Action(EnsureSeekerWindows));
 
@@ -738,7 +742,7 @@ namespace DeskMadeline
             var seekerCamera = new RectangleF(player.Pos.X - 160f, player.Pos.Y - 90f, 320f, 180f);
             foreach (Seeker seeker in seekers)
             {
-                if (seekerRespawnDormant) seeker.UpdateDormant(dt);
+                if (seekerRespawnDormant) seeker.UpdateDormant(dt, player.Solids, seekerWorldBounds);
                 else seeker.Update(dt, player, player.Solids, seekerWorldBounds, seekerCamera);
                 while (seeker.SoundEvents.Count > 0)
                 {
@@ -790,6 +794,52 @@ namespace DeskMadeline
 
         static Color Rgb(int value) => Color.FromArgb((value >> 16) & 255, (value >> 8) & 255, value & 255);
         static int RgbValue(Color value) => (value.R << 16) | (value.G << 8) | value.B;
+
+        PointF? FindFreeSeekerSpawn(PointF desired, int facing)
+        {
+            bool Free(PointF candidate)
+            {
+                var bounds = new RectangleF(
+                    virtualDesktop.Left / (float)GameScale + 3f,
+                    virtualDesktop.Top / (float)GameScale - 5f,
+                    virtualDesktop.Width / (float)GameScale - 6f,
+                    virtualDesktop.Height / (float)GameScale + 2f);
+                if (!bounds.Contains(candidate)) return false;
+                foreach (Solid solid in player.Solids)
+                    if (candidate.X - 3f < solid.R && candidate.X + 3f > solid.L &&
+                        candidate.Y - 3f < solid.B && candidate.Y + 3f > solid.T)
+                        return false;
+                foreach (Seeker seeker in seekers)
+                    if (!seeker.Removed && Math.Abs(candidate.X - seeker.Pos.X) < 6f &&
+                        Math.Abs(candidate.Y - seeker.Pos.Y) < 6f)
+                        return false;
+                return true;
+            }
+
+            if (Free(desired)) return desired;
+            int direction = facing == 0 ? 1 : facing;
+            // The physics hitbox is 6x6. Eight-pixel steps leave a small visible
+            // gap and keep repeated menu spawns close to the requested position.
+            for (int ring = 1; ring <= 12; ring++)
+            {
+                float d = ring * 8f;
+                PointF[] candidates =
+                {
+                    new PointF(desired.X + direction * d, desired.Y),
+                    new PointF(desired.X - direction * d, desired.Y),
+                    new PointF(desired.X, desired.Y - d),
+                    new PointF(desired.X, desired.Y + d),
+                    new PointF(desired.X + direction * d, desired.Y - d),
+                    new PointF(desired.X - direction * d, desired.Y - d),
+                    new PointF(desired.X + direction * d, desired.Y + d),
+                    new PointF(desired.X - direction * d, desired.Y + d)
+                };
+                foreach (PointF candidate in candidates)
+                    if (Free(candidate)) return candidate;
+            }
+            // Do not create an overlapping actor if the compact spawn area is full.
+            return null;
+        }
 
         void UpdateSoundEffects(int wasState)
         {
