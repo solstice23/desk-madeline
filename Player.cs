@@ -1405,7 +1405,12 @@ namespace DeskMadeline
                     }
                 }
             }
-            if (CanDash)
+            // Celeste.Player.NormalUpdate places its CanDash check inside the
+            // Holding == null branch.  Keep the gate here rather than in the
+            // CanDash property: a held Theo/glider blocks the normal-state dash,
+            // while the input buffer remains available for a later frame after
+            // the holdable is released.
+            if (Holding == null && CanDash)
             {
                 normalDashWasCrouch = ConsumeDashRequest();
                 normalDashRequested = true;
