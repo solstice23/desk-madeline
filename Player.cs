@@ -325,6 +325,55 @@ namespace DeskMadeline
             State = StFrozen;
         }
 
+        public void DieFromSeeker(PointF seekerPosition)
+        {
+            PointF direction = SafeNormalize(Center.X - seekerPosition.X,
+                Center.Y - seekerPosition.Y, -Facing, 0f);
+            deathRespawnPos = FindNearbySafeRespawn(seekerPosition, direction);
+            Die(direction);
+        }
+
+        PointF FindNearbySafeRespawn(PointF threat, PointF away)
+        {
+            PointF origin = Pos;
+            PointF? bestGrounded = null, bestAir = null;
+            float bestGroundedScore = float.MaxValue, bestAirScore = float.MaxValue;
+            float baseAngle = (float)Math.Atan2(away.Y, away.X);
+            // A Celeste room reload chooses a map spawn. Desktop rooms have no map
+            // spawns, so choose the closest valid 8x11 placement around the death,
+            // preferring the direction away from the killing Seeker and safe ground.
+            float[] angleOffsets =
+            {
+                0f, -(float)Math.PI / 8f, (float)Math.PI / 8f,
+                -(float)Math.PI / 4f, (float)Math.PI / 4f,
+                -(float)Math.PI * 3f / 8f, (float)Math.PI * 3f / 8f,
+                -(float)Math.PI / 2f, (float)Math.PI / 2f,
+                (float)Math.PI
+            };
+            int[] radii = { 40, 48, 56, 64, 80, 96, 112, 128 };
+            foreach (int radius in radii)
+            foreach (float offset in angleOffsets)
+            {
+                float angle = baseAngle + offset;
+                PointF candidate = new PointF(
+                    Math.Max(MinX + 4f, Math.Min(MaxX - 4f,
+                        origin.X + (float)Math.Cos(angle) * radius)),
+                    origin.Y + (float)Math.Sin(angle) * radius);
+                if (CollideAt(candidate.X, candidate.Y, 11f)) continue;
+                PointF candidateCenter = new PointF(candidate.X, candidate.Y - 5.5f);
+                float tx = candidateCenter.X - threat.X, ty = candidateCenter.Y - threat.Y;
+                if (tx * tx + ty * ty < 40f * 40f) continue;
+                float ox = candidate.X - origin.X, oy = candidate.Y - origin.Y;
+                float score = ox * ox + oy * oy + Math.Abs(offset) * 64f;
+                if (CheckGroundAt(candidate.X, candidate.Y))
+                {
+                    if (score < bestGroundedScore) { bestGroundedScore = score; bestGrounded = candidate; }
+                }
+                else if (score < bestAirScore) { bestAirScore = score; bestAir = candidate; }
+            }
+            return bestGrounded ?? bestAir ?? deathRespawnPos;
+        }
+
         static PointF SafeNormalize(float x, float y, float fallbackX = 0f, float fallbackY = 0f)
         {
             float length = (float)Math.Sqrt(x * x + y * y);

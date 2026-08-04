@@ -57,11 +57,10 @@ namespace DeskMadeline
         readonly List<PointF> path = new List<PointF>();
         int pathIndex;
         bool lastPathFound;
-        PointF roomSpawnPosition;
 
         public Seeker(PointF position)
         {
-            Pos = roomSpawnPosition = position;
+            Pos = position;
             animator = new Animator(BuildAnimations());
             animator.Play("idle", true);
         }
@@ -217,7 +216,7 @@ namespace DeskMadeline
         {
             BeingDragged = true;
             Speed = counter = PointF.Empty;
-            ResetStateAt(Pos, null, updateRoomSpawn: false);
+            ResetStateAt(Pos, null);
         }
 
         public void DragTo(PointF position)
@@ -231,20 +230,20 @@ namespace DeskMadeline
         {
             if (!BeingDragged) return;
             BeingDragged = false;
-            roomSpawnPosition = Pos;
             Speed = velocity;
         }
 
         public void ResetForRoomReload(PointF playerCenter)
         {
             BeingDragged = false;
-            ResetStateAt(roomSpawnPosition, playerCenter, updateRoomSpawn: false);
+            // Desktop policy: a room reload resets the Seeker state like Celeste,
+            // but preserves its current world position as requested for the pet.
+            ResetStateAt(Pos, playerCenter);
         }
 
-        void ResetStateAt(PointF position, PointF? playerCenter, bool updateRoomSpawn)
+        void ResetStateAt(PointF position, PointF? playerCenter)
         {
             Pos = position;
-            if (updateRoomSpawn) roomSpawnPosition = position;
             Speed = counter = PointF.Empty;
             State = StIdle;
             stateTimer = spottedLoseTimer = spottedTurnDelay = attackSpeed = 0f;
@@ -515,7 +514,7 @@ namespace DeskMadeline
             float attackL = Pos.X - 6f, attackT = Pos.Y - 2f, attackR = Pos.X + 6f, attackB = Pos.Y + 6f;
             if (pl < attackR && pr > attackL && pt < attackB && pb > attackT)
             {
-                if (State != StStunned) player.Die(Normalize(player.Center.X - Pos.X, player.Center.Y - Pos.Y));
+                if (State != StStunned) player.DieFromSeeker(Pos);
                 else { player.PointBounce(Pos); Speed = Normalize(Pos.X - player.Center.X, Pos.Y - player.Center.Y, 100f); StartWiggler(); }
                 return;
             }
