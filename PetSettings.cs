@@ -29,10 +29,10 @@ namespace DeskMadeline
         public int SpeedometerMode;
         public bool HitboxesEnabled;
         public bool DreamBlockMode;
-        public bool RespawnReversalEnabled;
+        public bool RespawnReversalEnabled = true;
         public int EdgeWrapMode;
         public bool ElytraEnabled;
-        public int SfxMode;
+        public int SfxMode = 1;          // 0 off, 1 only when focused, 2 always
         public int SfxVolume = 100;
         public int SurfaceSoundIndex = 8;
 
