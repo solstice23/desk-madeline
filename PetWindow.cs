@@ -73,6 +73,8 @@ namespace DeskMadeline
         // Platforms
         readonly Dictionary<IntPtr, Win32.RECT> lastRects = new Dictionary<IntPtr, Win32.RECT>();
         int pollCounter;
+        IntPtr rideAlongId;             // window the ride-along remainder belongs to
+        PointF rideAlongRemainder;      // sub-pixel part of a moving window's offset
 
         // Input state
         bool prevJump, prevDash, prevCrouchDash;
@@ -366,7 +368,7 @@ namespace DeskMadeline
 
             // ---- Spawn point: bottom-center of primary working area ----
             var wa = Screen.PrimaryScreen.WorkingArea;
-            player.Pos = new PointF((wa.Left + wa.Right) / 2f / GameScale, wa.Bottom / GameScale - 2);
+            player.Pos = new PointF(ToGamePixels((wa.Left + wa.Right) / 2), ToGamePixels(wa.Bottom) - 2);
 
             // ---- Tray ----
             trayMenu = BuildMenu();
@@ -1753,6 +1755,40 @@ namespace DeskMadeline
         }
 
         // ================= Platforms (windows are platforms; hollow borders) =================
+        /// <summary>Physical pixels to game pixels, snapped to the whole-pixel grid.</summary>
+        /// <remarks>
+        /// Celeste's collision is defined on whole pixels: Actor.MoveH/MoveV step one pixel at
+        /// a time and every Solid is an integer rect, so a player who has come to rest against
+        /// a wall has her collider edge exactly on the wall edge, and the port inherits checks
+        /// that rely on it.  Player.SlipCheck probes the single point at the collider edge
+        /// while the climb wall check is a box overlap reaching one pixel further; between the
+        /// two lies a sub-pixel band where she counts as on the wall but the slip probe misses
+        /// it, and climbing becomes a permanent 30px/s slip.  Window rectangles are physical
+        /// pixels and rarely divide evenly by GameScale, so every coordinate handed to the
+        /// physics is snapped here instead.
+        ///
+        /// Rounds halves up rather than through Math.Round, whose default tie-break is to the
+        /// nearest even integer: that maps 15.5 and 16.5 both onto 16, so at 8x the two edges
+        /// of an 8px window border would land on the same grid line and the border would
+        /// disappear.  Adding 0.5 before flooring keeps whole-pixel offsets whole for every
+        /// coordinate, negative ones on secondary monitors included.
+        /// </remarks>
+        float ToGamePixels(int physical) => (float)Math.Floor(physical / (double)GameScale + 0.5);
+
+        /// <summary>Physical-pixel rect to a grid-aligned Solid; false when it rounds away to nothing.</summary>
+        bool TryToSolid(IntPtr id, Win32.RECT r, bool dream, out Solid solid)
+        {
+            float l = ToGamePixels(r.Left), t = ToGamePixels(r.Top);
+            float right = ToGamePixels(r.Right), b = ToGamePixels(r.Bottom);
+            // A remnant narrower than a game pixel has no grid representation.  Keeping it
+            // would leave a zero-width wall that still blocks movement but that SlipCheck's
+            // point probe can never hit.  WindowEdges keeps real borders at least a pixel
+            // thick, so only slivers left behind by occlusion are dropped here.
+            if (right <= l || b <= t) { solid = default; return false; }
+            solid = new Solid { Id = id, L = l, T = t, R = right, B = b, Dream = dream };
+            return true;
+        }
+
         void PollSolids()
         {
             float s = GameScale;
@@ -1791,11 +1827,7 @@ namespace DeskMadeline
                 var r = kv.Value;
                 if (dreamBlockMode)
                 {
-                    solids.Add(new Solid
-                    {
-                        Id = kv.Key, L = r.Left / s, T = r.Top / s,
-                        R = r.Right / s, B = r.Bottom / s, Dream = true
-                    });
+                    if (TryToSolid(kv.Key, r, true, out Solid dreamSolid)) solids.Add(dreamSolid);
                 }
                 else
                 {
@@ -1803,7 +1835,7 @@ namespace DeskMadeline
                     {
                         var pieces = SubtractRects(edge, occluders);
                         foreach (var p in pieces)
-                            solids.Add(new Solid { Id = kv.Key, L = p.Left / s, T = p.Top / s, R = p.Right / s, B = p.Bottom / s });
+                            if (TryToSolid(kv.Key, p, false, out Solid piece)) solids.Add(piece);
                     }
                 }
                 occluders.Add(r);   // This window as a whole occludes windows behind it
@@ -1822,9 +1854,9 @@ namespace DeskMadeline
                     Left = bounds.Left, Top = bounds.Top,
                     Right = bounds.Right, Bottom = bounds.Bottom
                 });
-                monitorGameBounds.Add(new RectangleF(
-                    bounds.Left / s, bounds.Top / s,
-                    bounds.Width / s, bounds.Height / s));
+                monitorGameBounds.Add(RectangleF.FromLTRB(
+                    ToGamePixels(bounds.Left), ToGamePixels(bounds.Top),
+                    ToGamePixels(bounds.Right), ToGamePixels(bounds.Bottom)));
                 virtualLeft = Math.Min(virtualLeft, bounds.Left);
                 virtualRight = Math.Max(virtualRight, bounds.Right);
             }
@@ -1846,12 +1878,7 @@ namespace DeskMadeline
                 {
                     if (edge.Key ? (edgeWrapMode & 1) != 0 : (edgeWrapMode & 2) != 0) continue;
                     foreach (var p in SubtractRects(edge.Value, screenRects))
-                        solids.Add(new Solid
-                        {
-                            Id = FloorId,
-                            L = p.Left / s, T = p.Top / s,
-                            R = p.Right / s, B = p.Bottom / s
-                        });
+                        if (TryToSolid(FloorId, p, false, out Solid piece)) solids.Add(piece);
                 }
             }
 
@@ -1866,20 +1893,33 @@ namespace DeskMadeline
                 }
                 else
                 {
-                    player.MinX = virtualLeft / s;
-                    player.MaxX = virtualRight / s;
+                    player.MinX = ToGamePixels(virtualLeft);
+                    player.MaxX = ToGamePixels(virtualRight);
                 }
             }
 
-            // Ride-along: follow the window underfoot when it moves
+            // Ride-along: follow the window underfoot when it moves.  Only whole game pixels
+            // reach Pos; the sub-pixel part is carried in a remainder the way
+            // Actor.movementCounter carries one, so a slow window drag is not rounded away.
             if (player.GroundId != IntPtr.Zero && player.GroundId != FloorId &&
                 lastRects.TryGetValue(player.GroundId, out var oldR) &&
                 cur.TryGetValue(player.GroundId, out var newR))
             {
-                player.Pos = new PointF(
-                    player.Pos.X + (newR.Left - oldR.Left) / s,
-                    player.Pos.Y + (newR.Top - oldR.Top) / s);
+                if (player.GroundId != rideAlongId)
+                {
+                    rideAlongId = player.GroundId;
+                    rideAlongRemainder = PointF.Empty;
+                }
+                rideAlongRemainder = new PointF(
+                    rideAlongRemainder.X + (newR.Left - oldR.Left) / s,
+                    rideAlongRemainder.Y + (newR.Top - oldR.Top) / s);
+                int rideX = (int)Math.Round(rideAlongRemainder.X, MidpointRounding.ToEven);
+                int rideY = (int)Math.Round(rideAlongRemainder.Y, MidpointRounding.ToEven);
+                rideAlongRemainder = new PointF(rideAlongRemainder.X - rideX, rideAlongRemainder.Y - rideY);
+                if (rideX != 0 || rideY != 0)
+                    player.Pos = new PointF(player.Pos.X + rideX, player.Pos.Y + rideY);
             }
+            else rideAlongId = IntPtr.Zero;
 
             lastRects.Clear();
             foreach (var kv in cur) lastRects[kv.Key] = kv.Value;
@@ -1964,9 +2004,11 @@ namespace DeskMadeline
         }
 
         /// <summary>Four hollow window edges (physical-pixel coords), thickness WindowBorderPx.</summary>
-        static IEnumerable<Win32.RECT> WindowEdges(Win32.RECT r)
+        IEnumerable<Win32.RECT> WindowEdges(Win32.RECT r)
         {
-            int b = WindowBorderPx;
+            // Never thinner than one game pixel: a border that rounded away to nothing on the
+            // grid would stop being a platform at all.
+            int b = Math.Max(WindowBorderPx, GameScale);
             yield return new Win32.RECT { Left = r.Left, Top = r.Top, Right = r.Right, Bottom = r.Top + b };                 // top
             yield return new Win32.RECT { Left = r.Left, Top = r.Bottom - b, Right = r.Right, Bottom = r.Bottom };          // bottom
             yield return new Win32.RECT { Left = r.Left, Top = r.Top + b, Right = r.Left + b, Bottom = r.Bottom - b };      // left
@@ -2696,9 +2738,10 @@ namespace DeskMadeline
                             cursorVel.X * 0.7f + (cur.X - lastCursor.X) / dt * 0.3f,
                             cursorVel.Y * 0.7f + (cur.Y - lastCursor.Y) / dt * 0.3f);
                         lastCursor = cur;
+                        // Whole game pixels only: the physics grid the climb checks rely on.
                         player.Pos = new PointF(
-                            (cur.X + dragGrabOffset.X) / (float)GameScale,
-                            (cur.Y + dragGrabOffset.Y) / (float)GameScale);
+                            ToGamePixels(cur.X + dragGrabOffset.X),
+                            ToGamePixels(cur.Y + dragGrabOffset.Y));
                     }
                     break;
                 case WM_LBUTTONUP:
@@ -3491,7 +3534,7 @@ namespace DeskMadeline
             float py = Math.Max(vs.Top, Math.Min(player.Pos.Y * GameScale, vs.Bottom - 1f));
             var sc = Screen.FromPoint(new Point((int)px, (int)py));
             var wa = sc.WorkingArea;
-            player.ResetTo(new PointF((wa.Left + wa.Right) / 2f / GameScale, wa.Top / GameScale + 5));
+            player.ResetTo(new PointF(ToGamePixels((wa.Left + wa.Right) / 2), ToGamePixels(wa.Top) + 5));
             dragging = false;
             if (introWakeUp)
             {
