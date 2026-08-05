@@ -655,16 +655,28 @@ namespace DeskMadeline
                 }
                 HitboxAt(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
                 HitboxAt(Pos.X + sign, Pos.Y, out float l, out float t, out float r, out float b);
-                bool blocked = false;
+                bool blocked = false, held = false;
                 foreach (var s in Solids)
                 {
-                    // Only collide from the outside: platforms already containing the player do not block (prevents being swallowed by windows)
-                    if (Overlap(l, t, r, b, s) && !Overlap(l0, t0, r0, b0, s)) { blocked = true; break; }
+                    if (!Overlap(l, t, r, b, s)) continue;
+                    bool inside = Overlap(l0, t0, r0, b0, s);
+                    // A window border only collides from the outside: one opening around her
+                    // would otherwise swallow her, with no way back out.  A DreamBlock holds
+                    // her as it does in Celeste, where Actor.MoveHExact tests the destination
+                    // and nothing else -- being inside one is meant to be a trap, and a dash
+                    // is always the way out of it.
+                    if (s.Dream || !inside) { blocked = true; held = inside; break; }
                 }
                 if (blocked)
                 {
                     counter.X = 0;
-                    if (notifyCollision) OnCollideH(sign);
+                    if (!notifyCollision) return;
+                    // Held, not hit.  Nothing struck anything, so there is no impact to report:
+                    // reporting one every frame she is in there would repeat its sound and its
+                    // squash, and she is meant to simply sit in the block.  A dash reports as
+                    // usual, because that is where the dream dash out of it begins.
+                    if (held && !DashAttacking) Speed.X = 0f;
+                    else OnCollideH(sign);
                     return; // Actor.MoveH discards the blocked movement remainder.
                 }
                 Pos.X += sign;
@@ -685,15 +697,21 @@ namespace DeskMadeline
                 }
                 HitboxAt(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
                 HitboxAt(Pos.X, Pos.Y + sign, out float l, out float t, out float r, out float b);
-                bool blocked = false;
+                bool blocked = false, held = false;
                 foreach (var s in Solids)
                 {
-                    if (Overlap(l, t, r, b, s) && !Overlap(l0, t0, r0, b0, s)) { blocked = true; break; }
+                    if (!Overlap(l, t, r, b, s)) continue;
+                    bool inside = Overlap(l0, t0, r0, b0, s);
+                    if (s.Dream || !inside) { blocked = true; held = inside; break; }
                 }
                 if (blocked)
                 {
                     counter.Y = 0;
-                    if (notifyCollision) OnCollideV(sign);
+                    if (!notifyCollision) return;
+                    // Held, not hit: see MoveHExact.  Without this she lands on the block she
+                    // is sitting in every single frame, footstep and all.
+                    if (held && !DashAttacking) Speed.Y = 0f;
+                    else OnCollideV(sign);
                     return; // Actor.MoveV discards the blocked movement remainder.
                 }
                 Pos.Y += sign;
@@ -1355,6 +1373,16 @@ namespace DeskMadeline
                 // space is available (except during climb).
                 if (Speed.Y > 0f && CanUnDuck && !onGround && jumpGraceTimer <= 0f && State != StClimb)
                     Ducking = false;
+                }
+
+                // Sitting inside a DreamBlock she cannot move at all, so keep her still
+                // instead of letting gravity build a speed the collision quietly throws away
+                // again: that leaves the fall speed flickering between frames, and with it the
+                // animation.  A dash is exempt, being the way out of the block.
+                if (State != StDreamDash && !DashAttacking && DreamAt(Pos.X, Pos.Y))
+                {
+                    Speed = PointF.Empty;
+                    counter = PointF.Empty;
                 }
 
                 // Player.orig_Update tests the current state separately before

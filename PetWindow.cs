@@ -1791,6 +1791,22 @@ namespace DeskMadeline
             return true;
         }
 
+        /// <summary>A window the poll kept: its frame, and whether it may be stood on.</summary>
+        readonly struct PolledWindow
+        {
+            public readonly IntPtr Handle;
+            public readonly Win32.RECT Rect;
+            /// <summary>False for a window that hides what is behind it but is not a platform.</summary>
+            public readonly bool IsPlatform;
+
+            public PolledWindow(IntPtr handle, Win32.RECT rect, bool isPlatform)
+            {
+                Handle = handle;
+                Rect = rect;
+                IsPlatform = isPlatform;
+            }
+        }
+
         void PollSolids()
         {
             float s = GameScale;
@@ -1798,7 +1814,7 @@ namespace DeskMadeline
             IntPtr self = Handle;
 
             // EnumWindows enumerates top-to-bottom Z-order (front→back); keep order for front-window occlusion of rear windows
-            var zorder = new List<KeyValuePair<IntPtr, Win32.RECT>>();
+            var zorder = new List<PolledWindow>();
 
             Win32.EnumWindows((hwnd, _) =>
             {
@@ -1815,9 +1831,14 @@ namespace DeskMadeline
                 if (dreamBlockMode && (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd")) return true;
                 if (!Win32.TryGetWindowRect(hwnd, out var r)) return true;
                 if (r.Width < 24 || r.Height < 18) return true;
-                if (ignoreMaximizedWindows && IsMaximizedOrFullscreen(hwnd, r)) return true;
-                cur[hwnd] = r;
-                zorder.Add(new KeyValuePair<IntPtr, Win32.RECT>(hwnd, r));
+                // An ignored window is still in front of whatever it covers, so it is kept as
+                // an occluder: dropping it outright would leave the borders of every window
+                // underneath standing as walls in a place the user sees nothing at all.
+                bool isPlatform = !(ignoreMaximizedWindows && IsMaximizedOrFullscreen(hwnd, r));
+                // Only platforms are tracked between polls; the ride-along follows the window
+                // underfoot, and nothing can be standing on one of these.
+                if (isPlatform) cur[hwnd] = r;
+                zorder.Add(new PolledWindow(hwnd, r, isPlatform));
                 return true;
             }, IntPtr.Zero);
 
@@ -1825,23 +1846,34 @@ namespace DeskMadeline
             // subtract their full rect from rear borders so covered segments no longer collide.
             var solids = new List<Solid>(zorder.Count * 4 + 1);
             var occluders = new List<Win32.RECT>(zorder.Count);
-            foreach (var kv in zorder)
+            // Windows in front that hide what is behind them without being solid themselves.
+            var hidersOnly = new List<Win32.RECT>();
+            foreach (var window in zorder)
             {
-                var r = kv.Value;
-                if (dreamBlockMode)
+                var r = window.Rect;
+                if (window.IsPlatform)
                 {
-                    if (TryToSolid(kv.Key, r, true, out Solid dreamSolid)) solids.Add(dreamSolid);
-                }
-                else
-                {
-                    foreach (var edge in WindowEdges(r))
+                    if (dreamBlockMode)
                     {
-                        var pieces = SubtractRects(edge, occluders);
-                        foreach (var p in pieces)
-                            if (TryToSolid(kv.Key, p, false, out Solid piece)) solids.Add(piece);
+                        // Dream blocks union with each other: overlapping windows are one
+                        // shape, and cutting them apart only invents edges that belong to no
+                        // window.  What does come out is the ignored windows -- maximized and
+                        // fullscreen -- and whatever they cover, which is solid nobody can see.
+                        foreach (var p in SubtractRects(r, hidersOnly))
+                            if (TryToSolid(window.Handle, p, true, out Solid dreamSolid)) solids.Add(dreamSolid);
+                    }
+                    else
+                    {
+                        foreach (var edge in WindowEdges(r))
+                        {
+                            var pieces = SubtractRects(edge, occluders);
+                            foreach (var p in pieces)
+                                if (TryToSolid(window.Handle, p, false, out Solid piece)) solids.Add(piece);
+                        }
                     }
                 }
                 occluders.Add(r);   // This window as a whole occludes windows behind it
+                if (!window.IsPlatform) hidersOnly.Add(r);
             }
             // Treat the exposed perimeter of the monitor union as solid.  Each edge
             // extends outward, then other monitor rectangles are subtracted from it:
@@ -2573,9 +2605,9 @@ namespace DeskMadeline
         {
             if (!hitboxesEnabled) return;
             using var solidBrush = new SolidBrush(Color.Red);
-            foreach (var solid in player.Solids)
-                DrawSolidHitbox(g, solid.L - camX, solid.T - camY,
-                    solid.R - solid.L, solid.B - solid.T, solidBrush);
+            List<Solid> allSolids = player.Solids;
+            foreach (var solid in allSolids)
+                DrawSolidHitbox(g, allSolids, solid, camX, camY, solidBrush);
             float playerHeight = player.Ducking ? 6f : 11f;
             using var playerBrush = new SolidBrush(Color.Lime);
             DrawHollowRect(g, player.Pos.X - 4f - camX, player.Pos.Y - playerHeight - camY,
@@ -2670,6 +2702,82 @@ namespace DeskMadeline
             float width = variant == 0 ? 12f : 16f;
             DrawHollowRect(g, x, 24f, width, 6f, bounce);
             return bitmap;
+        }
+
+        /// <summary>Outline a solid, minus the stretches another solid is pressed against.</summary>
+        /// <remarks>
+        /// Occlusion cuts a covered platform into pieces, and outlining each piece whole draws
+        /// a line along every join between them.  A join is inside the shape rather than an
+        /// edge of it, and it reads as the border of one window running on across the window
+        /// behind it.  Border mode never showed this because its pieces are thin enough to be
+        /// drawn as a single stroke, which is the case kept below.
+        /// </remarks>
+        static void DrawSolidHitbox(Graphics g, List<Solid> all, Solid s, float camX, float camY, Brush brush)
+        {
+            float width = s.R - s.L, height = s.B - s.T;
+            if ((height <= 2 && width > height) || (width <= 2 && height > width))
+            {
+                DrawSolidHitbox(g, s.L - camX, s.T - camY, width, height, brush);
+                return;
+            }
+
+            var covered = new List<PointF>();
+
+            void Edge(bool horizontal, bool nearSide)
+            {
+                float at = horizontal ? (nearSide ? s.T : s.B) : (nearSide ? s.L : s.R);
+                float from = horizontal ? s.L : s.T, to = horizontal ? s.R : s.B;
+                covered.Clear();
+                foreach (Solid q in all)
+                {
+                    // Does q fill the space immediately outside this edge?  A solid exactly
+                    // level with it on the far side does; the solid itself never can.
+                    bool presses = horizontal
+                        ? (nearSide ? q.T < at && q.B >= at : q.B > at && q.T <= at)
+                        : (nearSide ? q.L < at && q.R >= at : q.R > at && q.L <= at);
+                    bool alongside = horizontal
+                        ? q.L < s.R && q.R > s.L
+                        : q.T < s.B && q.B > s.T;
+                    if (presses && alongside)
+                        covered.Add(horizontal
+                            ? new PointF(Math.Max(q.L, from), Math.Min(q.R, to))
+                            : new PointF(Math.Max(q.T, from), Math.Min(q.B, to)));
+                }
+                foreach (PointF span in ExposedSpans(from, to, covered))
+                {
+                    int length = Math.Max(1, (int)Math.Round(span.Y - span.X));
+                    if (horizontal)
+                        g.FillRectangle(brush, (int)Math.Round(span.X - camX),
+                            (int)Math.Round(at - camY), length, 1);
+                    else
+                        g.FillRectangle(brush, (int)Math.Round(at - camX),
+                            (int)Math.Round(span.X - camY), 1, length);
+                }
+            }
+
+            Edge(horizontal: true, nearSide: true);
+            Edge(horizontal: true, nearSide: false);
+            Edge(horizontal: false, nearSide: true);
+            Edge(horizontal: false, nearSide: false);
+        }
+
+        /// <summary>The parts of [from,to] left over once the covered spans are removed.</summary>
+        static List<PointF> ExposedSpans(float from, float to, List<PointF> covered)
+        {
+            var spans = new List<PointF> { new PointF(from, to) };
+            foreach (PointF cover in covered)
+            {
+                var next = new List<PointF>(spans.Count + 1);
+                foreach (PointF span in spans)
+                {
+                    if (cover.Y <= span.X || cover.X >= span.Y) { next.Add(span); continue; }
+                    if (span.X < cover.X) next.Add(new PointF(span.X, cover.X));
+                    if (span.Y > cover.Y) next.Add(new PointF(cover.Y, span.Y));
+                }
+                spans = next;
+                if (spans.Count == 0) break;
+            }
+            return spans;
         }
 
         static void DrawSolidHitbox(Graphics g, float x, float y, float width, float height, Brush brush)
