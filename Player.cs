@@ -435,6 +435,7 @@ namespace DeskMadeline
             return new PointF(aimX / len, aimY / len);
         }
         bool dashAimPending;
+        bool calledDashEvents;  // vanilla Player.calledDashEvents: dash sfx fires once per dash
         bool autoJump;          // auto-jump hold after dash ends (vanilla AutoJump: half-gravity / var-jump treated as jump held)
         int lastClimbMove;
         bool fastJump;
@@ -1361,6 +1362,12 @@ namespace DeskMadeline
                     if (State == StDash) ApplyDashAim();
                 }
 
+                // Player.DashEnd, which the StateMachine runs on the way out of the dash.  The
+                // aim above is genuinely lost when the dash is cut short, but the dash's own
+                // effects are not: leaving on the first frame, as a super or hyper does when
+                // jump and dash are pressed together, still sounds the dash.
+                if (stateBeforeUpdate == StDash && State != StDash) CallDashEvents();
+
                 // Player.orig_Update: an airborne horizontal dash snaps down to a floor
                 // up to DashVFloorSnapDist away. This is what lets a dash aimed slightly
                 // above the ground land grounded, which is the setup for supers/hypers
@@ -2167,6 +2174,7 @@ namespace DeskMadeline
             hopWaitX = 0;
             SweatAnimId = "idle";
             sweatJumpTimer = 0f;
+            calledDashEvents = false;   // DashBegin
             DashSequenceCount++;
             dashStartedOnGround = onGround;
             dashCooldownTimer = DashCooldown;
@@ -2217,7 +2225,25 @@ namespace DeskMadeline
                 Ducking = true;
             }
             if (DashDir.X != 0) Facing = Sign(DashDir.X);
-            bool rightSound = DashDir.Y < 0f || (DashDir.Y == 0f && DashDir.X > 0f);
+            CallDashEvents();
+        }
+
+        /// <summary>Player.CallDashEvents: the dash's own effects, fired once per dash.</summary>
+        /// <remarks>
+        /// DashCoroutine only reaches these on the dash's second frame, so a super or hyper
+        /// taken on the first one -- jump and dash pressed together, or a jump right on the
+        /// dash's heels -- left the dash with no sound at all.  Vanilla covers that by calling
+        /// this from DashEnd as well, the flag making whichever comes second a no-op.  The aim
+        /// may not have been sampled yet when it arrives that way, and a dash with no direction
+        /// yet takes its side from Facing.
+        /// </remarks>
+        void CallDashEvents()
+        {
+            if (calledDashEvents) return;
+            calledDashEvents = true;
+            bool rightSound = DashDir.X == 0f && DashDir.Y == 0f
+                ? Facing > 0
+                : DashDir.Y < 0f || (DashDir.Y == 0f && DashDir.X > 0f);
             PlaySound(LastDashWasTwo
                 ? (rightSound ? "event:/char/madeline/dash_pink_right" : "event:/char/madeline/dash_pink_left")
                 : (rightSound ? "event:/char/madeline/dash_red_right" : "event:/char/madeline/dash_red_left"));

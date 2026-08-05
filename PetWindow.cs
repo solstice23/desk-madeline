@@ -962,7 +962,9 @@ namespace DeskMadeline
             }
             if (player.Ducking != soundDucking)
             {
-                if (!player.IsDead && !player.IsRespawning)
+                // orig_Update sounds the duck wherever it happens, but standing up only counts
+                // on the ground: unducking into a hyper off a ledge is not someone standing up.
+                if (!player.IsDead && !player.IsRespawning && (player.Ducking || player.onGround))
                     soundEffects.Play(player.Ducking
                         ? "event:/char/madeline/duck"
                         : "event:/char/madeline/stand");
