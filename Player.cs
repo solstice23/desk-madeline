@@ -85,9 +85,11 @@ namespace DeskMadeline
         const float ClimbDownSpeed = 80f;
         const float ClimbAccel = 900f;         // climb move acceleration (vanilla Approach)
         const float ClimbStillCost = 10f;      // stamina drain per second while holding still on a wall
+        const float ClimbSlipSpeed = 30f;      // slide speed when the grabbed lip slips away
         const float ClimbHopY = -120f;         // hop-up speed when climbing over a ledge
         const float ClimbHopX = 100f;          // horizontal push when climbing over a ledge
         const int DashingUpwardCornerCorrection = 5; // upward-dash ceiling corner-correction distance
+        const int DashVFloorSnapDist = 3;      // airborne horizontal dash snaps down onto a floor this close
 
         // Keep Celeste.Player's complete state-number contract.  Several of these
         // need level actors the desktop cannot currently create, but retaining the
@@ -417,7 +419,16 @@ namespace DeskMadeline
         bool crouchDashBufferFresh;
         bool dashStartedOnGround;
         PointF beforeDashSpeed;
-        PointF pendingDashDir;
+        // Player.lastAim / Input.LastAim: the 8-way snapped aim, refreshed every frame.
+        PointF lastAim = new PointF(1, 0);
+
+        /// <summary>Input.GetAimVector: a zero aim falls back to Facing, otherwise 8-way snapped.</summary>
+        PointF AimVector(int aimX, int aimY)
+        {
+            if (aimX == 0 && aimY == 0) return new PointF(Facing, 0);
+            float len = (float)Math.Sqrt(aimX * aimX + aimY * aimY);
+            return new PointF(aimX / len, aimY / len);
+        }
         bool dashAimPending;
         bool autoJump;          // auto-jump hold after dash ends (vanilla AutoJump: half-gravity / var-jump treated as jump held)
         int lastClimbMove;
@@ -437,7 +448,10 @@ namespace DeskMadeline
         PointF carryOffset = new PointF(0f, -12f);
         float dreamDashCanEndTimer;
         float dreamDashAnimTimer, dreamDashOutTimer;
-        float dreamTechGraceTimer;
+        // Player.dreamJump. Vanilla's "dream jump" window is nothing but the ordinary
+        // jumpGraceTimer that DreamDashEnd re-grants on a horizontal exit; this flag only
+        // selects the dream-block jump sfx and never gates a jump.
+        bool dreamJump;
         float throwAnimTimer;
         float gliderBoostTimer;
         PointF gliderBoostDir;
@@ -717,7 +731,7 @@ namespace DeskMadeline
             State = StDreamDash;
             dreamDashCanEndTimer = 0.1f;
             dreamDashAnimTimer = 0.16f;
-            dreamTechGraceTimer = 0f;
+            dreamJump = false;   // DreamDashBegin
             Speed = new PointF(DashDir.X * DashSpeed, DashDir.Y * DashSpeed);
             Stamina = ClimbMaxStamina;
             dashAttackTimer = 0f;
@@ -855,6 +869,10 @@ namespace DeskMadeline
                         { Pos.X += i; Pos.Y -= 1; return true; }
                 if (TryEnterDreamDash(Pos.X, Pos.Y + sign, 0, sign)) return true;
                 Speed.Y = 0;
+                // Vanilla clears the dash-attack window on both vertical collisions, not
+                // just landings: bonking a ceiling ends the dash attack, so it cannot
+                // still feed a super wall jump afterwards.
+                dashAttackTimer = 0f;
                 gliderBoostTimer = 0f;
                 // Vanilla: ceiling hit cancels variable jump (prevents keeping low-gravity arc after headbonk)
                 if (varJumpTimer < 0.15f) varJumpTimer = 0;
@@ -865,7 +883,9 @@ namespace DeskMadeline
         // ===== Input buffering =====
         public void BufferJump()
         {
-            jumpBufferTimer = 0.1f;
+            // Celeste.Input builds Jump as VirtualButton(binding, pad, bufferTime: 0.08f, ...),
+            // the same buffer Dash and CrouchDash use - not the 0.1s jump grace time.
+            jumpBufferTimer = 0.08f;
             jumpBufferFresh = true;
         }
         public void BufferDash(bool crouchDash = false)
@@ -933,7 +953,7 @@ namespace DeskMadeline
             hopWaitXSpeed = 0f;
             freezeTimer = 0;
             dashAimPending = false;
-            pendingDashDir = new PointF(0, 0);
+            lastAim = new PointF(Facing, 0);
             hairFlashTimer = 0;
             wallSpeedRetained = 0;
             wallSpeedRetentionTimer = 0;
@@ -955,7 +975,7 @@ namespace DeskMadeline
             carryOffset = new PointF(0f, -12f);
             dreamDashCanEndTimer = 0f;
             dreamDashAnimTimer = dreamDashOutTimer = 0f;
-            dreamTechGraceTimer = 0f;
+            dreamJump = false;
             throwAnimTimer = 0f;
             gliderBoostTimer = 0f;
             gliderBoostDir = PointF.Empty;
@@ -1094,14 +1114,6 @@ namespace DeskMadeline
                 return;
             }
 
-            // DashBegin clears movement during the freeze; DashCoroutine applies the
-            // direction that was sampled on the press frame once gameplay resumes.
-            if (dashAimPending)
-            {
-                dashAimPending = false;
-                ApplyDashAim();
-            }
-
             idleTimer += dt;
             if (Speed.X != 0f || Speed.Y != 0f) idleTimer = 0f;
 
@@ -1141,10 +1153,14 @@ namespace DeskMadeline
             if (minHoldTimer > 0f) minHoldTimer -= dt;
             if (dreamDashAnimTimer > 0f) dreamDashAnimTimer -= dt;
             if (dreamDashOutTimer > 0f) dreamDashOutTimer -= dt;
-            if (dreamTechGraceTimer > 0f) dreamTechGraceTimer -= dt;
             if (throwAnimTimer > 0f) throwAnimTimer -= dt;
 
-            onGround = !BeingDragged && CheckGround();
+            // Vanilla only looks for ground while Speed.Y >= 0; rising never counts as
+            // grounded, so it cannot refresh coyote time, stamina or the dash refill.
+            // CheckGround still runs unconditionally to keep GroundId (the moving-window
+            // ride link, which has no vanilla counterpart) tracking the platform below.
+            bool touchingGround = CheckGround();
+            onGround = !BeingDragged && touchingGround && Speed.Y >= 0f;
 
             if (onGround) highestAirY = Pos.Y;
             else highestAirY = Math.Min(highestAirY, Pos.Y);
@@ -1153,7 +1169,7 @@ namespace DeskMadeline
 
             if (onGround)
             {
-                dreamTechGraceTimer = 0f;
+                dreamJump = false;
                 Stamina = ClimbMaxStamina;
                 wallSlideTimer = WallSlideTime;  // Vanilla: reset wall-slide timer on landing
                 if (State != StClimb) autoJump = false;
@@ -1198,6 +1214,13 @@ namespace DeskMadeline
                 }
                 Facing = moveX;
             }
+
+            // Player.orig_Update: `lastAim = Input.GetAimVector(Facing)`, refreshed every
+            // frame right after Facing and before the state machine. DashCoroutine reads
+            // it when it resumes, so this runs on the frame that decides a dash direction.
+            // Update.freeze returns before this point, matching vanilla, where a frozen
+            // Engine skips Player.Update entirely and leaves lastAim on its old value.
+            lastAim = AimVector(input.AimX, input.AimY);
 
             if (!BeingDragged)
             {
@@ -1271,6 +1294,7 @@ namespace DeskMadeline
                     }
                 }
 
+                int stateBeforeUpdate = State;
                 switch (State)
                 {
                     case StNormal:
@@ -1290,6 +1314,27 @@ namespace DeskMadeline
                     case StElytra: ElytraUpdate(dt, input); break;
                     case StLaunch: LaunchUpdate(dt, input); break;
                 }
+
+                // Monocle's StateMachine runs the state update before the state coroutine.
+                // DashCoroutine's first step, `yield return null`, is therefore consumed on
+                // the frame the dash began (the frame NormalUpdate ran), and the aim lands on
+                // the next frame that actually dispatches DashUpdate - which runs first, with
+                // DashDir still zero, so jumping on it supers in Facing exactly as vanilla.
+                // If DashUpdate already changed state, vanilla's StateMachine has replaced
+                // the coroutine and the aim is never applied.
+                if (dashAimPending && stateBeforeUpdate == StDash)
+                {
+                    dashAimPending = false;
+                    if (State == StDash) ApplyDashAim();
+                }
+
+                // Player.orig_Update: an airborne horizontal dash snaps down to a floor
+                // up to DashVFloorSnapDist away. This is what lets a dash aimed slightly
+                // above the ground land grounded, which is the setup for supers/hypers
+                // off a near-ground dash. (DashCorrectCheck only guards LedgeBlockers,
+                // which the desktop pet has none of, so only the solid check remains.)
+                if (!onGround && DashAttacking && DashDir.Y == 0f && CollideAt(Pos.X, Pos.Y + DashVFloorSnapDist))
+                    MoveVExact(DashVFloorSnapDist);
 
                 // Vanilla releases the duck hitbox while falling once standing
                 // space is available (except during climb).
@@ -1498,8 +1543,9 @@ namespace DeskMadeline
                     Speed.X = Approach(Speed.X, maxRun * moveX, RunAccel * mult * dt);
             }
 
-            // Max fall speed
-            if (Holding != null && Holding.SlowFall)
+            // Max fall speed. Vanilla drops the glider's fall control while a wall jump
+            // is still forcing move-X, so the jelly does not float during that window.
+            if (Holding != null && Holding.SlowFall && forceMoveXTimer <= 0f)
             {
                 // vanilla reads Input.GliderMoveY here, not Input.MoveY
                 float gliderTarget = input.GliderMoveY > 0 ? 120f : input.GliderMoveY < 0 ? 24f : 40f;
@@ -1542,7 +1588,7 @@ namespace DeskMadeline
                     target = 160f + (20f - 160f) * (wallSlideTimer / WallSlideTime);
                 }
                 float gravMult = (Math.Abs(Speed.Y) < HalfGravThreshold && (input.JumpHeld || autoJump)) ? 0.5f : 1f;
-                if (Holding != null && Holding.SlowFall) gravMult *= 0.5f;
+                if (Holding != null && Holding.SlowFall && forceMoveXTimer <= 0f) gravMult *= 0.5f;
                 Speed.Y = Approach(Speed.Y, target, Gravity * gravMult * dt);
             }
             else wallSlideDir = 0;
@@ -1557,7 +1603,7 @@ namespace DeskMadeline
             // Jump
             if (input.JumpPressed)
             {
-                if (jumpGraceTimer > 0 || dreamTechGraceTimer > 0) Jump(input);
+                if (jumpGraceTimer > 0) Jump(input);
                 else if (CanUnDuck && WallJumpCheck(1))
                 {
                     if (Holding == null && Facing == 1 && input.GrabHeld && Stamina > 0) ClimbJump(input);
@@ -1655,11 +1701,9 @@ namespace DeskMadeline
 
         void Jump(PetInput input, bool particles = true)
         {
-            bool dreamJump = dreamTechGraceTimer > 0f;
             ConsumeJump();
             autoJump = false;
             jumpGraceTimer = 0;
-            dreamTechGraceTimer = 0f;
             varJumpTimer = VarJumpTime;
             wallSlideTimer = WallSlideTime;
             wallBoostTimer = 0f;
@@ -1681,7 +1725,6 @@ namespace DeskMadeline
             ConsumeJump();
             autoJump = false;
             jumpGraceTimer = 0;
-            dreamTechGraceTimer = 0f;
             varJumpTimer = VarJumpTime;
             wallSlideTimer = WallSlideTime;
             wallBoostTimer = 0f;
@@ -1779,6 +1822,7 @@ namespace DeskMadeline
                 sweatJumpTimer = 0.4f;
                 SweatAnimSequenceCount++;
             }
+            dreamJump = false;   // vanilla ClimbJump clears it before jumping
             Jump(input, particles: false);
             // Vanilla wallBoost: undirected climb-jump does not push off immediately; hold away-from-wall within 0.2s → 130 accel + restore stamina
             if (moveX == 0)
@@ -1996,15 +2040,21 @@ namespace DeskMadeline
                 else if (input.MoveY == 1)
                 {
                     ty = ClimbDownSpeed;
-                    if (onGround) ty = 0;
+                    if (onGround)
+                    {
+                        if (Speed.Y > 0f) Speed.Y = 0f;  // vanilla stops the slide immediately on landing
+                        ty = 0;
+                    }
                 }
                 else slipping = true;
             }
             else slipping = true;
-            if (slipping && SlipCheck()) ty = 30f;
+            // Vanilla samples lastClimbMove before the slip override, so slipping still
+            // counts as "holding still" and keeps draining the 10/s still cost.
+            lastClimbMove = Sign(ty);
+            if (slipping && SlipCheck()) ty = ClimbSlipSpeed;
             // Vanilla: climb speed uses Approach (accel ClimbAccel=900), not an instant set
             Speed.Y = Approach(Speed.Y, ty, ClimbAccel * dt);
-            lastClimbMove = Sign(ty);
 
             if (input.MoveY != 1 && Speed.Y > 0f && !CollideAt(Pos.X + Facing, Pos.Y + 1f))
                 Speed.Y = 0f;
@@ -2087,15 +2137,11 @@ namespace DeskMadeline
             if (!onGround && Ducking && CanUnDuck) Ducking = false;
             else if (!Ducking && (crouchDash || input.MoveY == 1)) Ducking = true;
 
-            // Lock lastAim on the dash-press frame. Releasing or changing a direction
-            // during the 0.05s freeze must not curve a normal dash into another vector.
-            float ax = input.AimX, ay = input.AimY;
-            if (ax == 0 && ay == 0) pendingDashDir = new PointF(Facing, 0);
-            else
-            {
-                float len = (float)Math.Sqrt(ax * ax + ay * ay);
-                pendingDashDir = new PointF(ax / len, ay / len);
-            }
+            // The direction is deliberately NOT captured here. Vanilla refreshes lastAim
+            // every frame and DashCoroutine reads it when it resumes, which is after the
+            // 0.05s freeze - so the aim held ~4 frames after the press is the one that
+            // counts. That leniency is what makes a hand demo dash possible: press down
+            // with dash to duck here, then swap to a horizontal aim before it is sampled.
             Speed = new PointF(0, 0);
             DashDir = new PointF(0, 0);
             dashAimPending = true;
@@ -2106,7 +2152,8 @@ namespace DeskMadeline
 
         void ApplyDashAim()
         {
-            PointF dir = pendingDashDir;
+            // DashCoroutine: `Vector2 value = lastAim;` on the frame the coroutine resumes.
+            PointF dir = lastAim;
 
             PointF speed = new PointF(dir.X * DashSpeed, dir.Y * DashSpeed);
             if (Sign(beforeDashSpeed.X) == Sign(speed.X) && Math.Abs(beforeDashSpeed.X) > Math.Abs(speed.X))
@@ -2116,8 +2163,9 @@ namespace DeskMadeline
             gliderBoostDir = dir;
             Speed = speed;
 
-            // Grounded down-diagonal dash → crouch dash (1.2x, vanilla)
-            if (dashStartedOnGround &&
+            // Grounded down-diagonal dash → crouch dash (1.2x, vanilla). DashCoroutine
+            // tests onGround as of this frame, not the state captured at DashBegin.
+            if (onGround &&
                 DashDir.X != 0 && DashDir.Y > 0 && Speed.Y > 0 &&
                 !DreamAt(Pos.X, Pos.Y + 1f))
             {
@@ -2134,30 +2182,15 @@ namespace DeskMadeline
 
         void DashUpdate(float dt, PetInput input)
         {
-            dashTime -= dt;
-
             if (Holding == null && (DashDir.X != 0f || DashDir.Y != 0f) &&
                 input.GrabHeld && !IsTired && CanUnDuck && TryPickupHoldable())
                 return;
-
-            // A down-diagonal dash buffered across a horizontal DreamBlock exit
-            // remains diagonal. If jump is then pressed during the dream coyote
-            // window, it cancels into the corresponding hyper at that moment;
-            // do not flatten the dash early when no jump was requested.
-            if (input.JumpPressed && dreamTechGraceTimer > 0f &&
-                DashDir.X != 0f && DashDir.Y > 0f)
-            {
-                DashDir = new PointF(Sign(DashDir.X), 0f);
-                Speed.Y = 0f;
-                Ducking = true;
-            }
 
             // Jump cancels dash → Super / Hyper / Ultra / wall jump (vanilla DashUpdate prioritizes jump over everything)
             if (input.JumpPressed)
             {
                 // Jump during ground/horizontal dash → super jump: super=260; crouch dash=hyper=325; landing-frame=ultra
-                if (Math.Abs(DashDir.Y) < 0.1f &&
-                    (jumpGraceTimer > 0 || dreamTechGraceTimer > 0) && CanUnDuck)
+                if (Math.Abs(DashDir.Y) < 0.1f && jumpGraceTimer > 0 && CanUnDuck)
                 {
                     SuperJump();
                     EnterNormal();
@@ -2187,14 +2220,19 @@ namespace DeskMadeline
                     }
                 }
             }
-            if (dashTime <= 0)
-            {
-                if (DashDir.Y <= 0)
-                    Speed = new PointF(DashDir.X * EndDashSpeed, DashDir.Y * EndDashSpeed);
-                if (Speed.Y < 0) Speed.Y *= EndDashUpMult;
-                autoJump = true; // Vanilla DashCoroutine ends with AutoJump=true: keep half-gravity / variable jump
-                EnterNormal();
-            }
+            // Vanilla's dash length is a coroutine wait, and Monocle's Coroutine tests the
+            // wait before decrementing it, so the dash ends on the frame the timer is no
+            // longer positive rather than the frame it reaches zero. Draining it here (after
+            // the jump checks, and never on the pending-aim frame, whose wait has not been
+            // set yet) reproduces vanilla's super/hyper input window frame for frame.
+            if (dashAimPending) return;
+            if (dashTime > 0f) { dashTime -= dt; return; }
+
+            if (DashDir.Y <= 0)
+                Speed = new PointF(DashDir.X * EndDashSpeed, DashDir.Y * EndDashSpeed);
+            if (Speed.Y < 0) Speed.Y *= EndDashUpMult;
+            autoJump = true; // Vanilla DashCoroutine ends with AutoJump=true: keep half-gravity / variable jump
+            EnterNormal();
         }
 
         // Player.DreamDashUpdate: DreamDash movement itself remains collisionless;
@@ -2253,7 +2291,10 @@ namespace DeskMadeline
 
             bool enterClimb = false;
             if (input.JumpPressed && Math.Abs(DashDir.X) > 0.01f)
+            {
+                dreamJump = true;   // vanilla sets it before this jump, for the sfx
                 Jump(input);
+            }
             else
             {
                 autoJump = true;
@@ -2286,8 +2327,15 @@ namespace DeskMadeline
                     }
                 }
             }
-            jumpGraceTimer = Math.Abs(DashDir.X) > 0.01f ? JumpGraceTime : 0f;
-            dreamTechGraceTimer = Math.Abs(DashDir.X) > 0.01f ? JumpGraceTime : 0f;
+            // DreamDashEnd: a horizontal exit re-grants the ordinary coyote window even when
+            // the exit-frame jump above already consumed it. That, and nothing else, is what
+            // makes the vanilla dream double jump possible.
+            if (Math.Abs(DashDir.X) > 0.01f)
+            {
+                jumpGraceTimer = JumpGraceTime;
+                dreamJump = true;
+            }
+            else jumpGraceTimer = 0f;
             RefillDash();
             Stamina = ClimbMaxStamina;
             dreamDashOutTimer = 0.16f;
@@ -2389,7 +2437,7 @@ namespace DeskMadeline
             else if (onGround)
             {
                 fastJump = false;
-                if (moveX != 0 && CollideAt(Pos.X + moveX, Pos.Y))
+                if (Holding == null && moveX != 0 && CollideAt(Pos.X + moveX, Pos.Y))
                 {
                     id = "push";
                 }

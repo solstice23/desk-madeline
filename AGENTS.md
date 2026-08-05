@@ -24,3 +24,73 @@ the named mod's upstream source when implementing mod functionality.
   build Release with zero warnings/errors, and compare observable behavior with the
   original implementation before considering the work complete.
 
+## Behavior is emergent; never special-case it
+
+Most of what a player recognizes as Celeste is not named anywhere in Celeste's source.
+Supers, hypers, wavedashes, ultras, cornerboosts, wallbounces and the dream double jump
+have no code of their own: they fall out of ordinary systems interacting. Reproduce the
+systems and the tech appears by itself.
+
+- When a behavior is missing or feels wrong, find the mismatch in the underlying system
+  and fix that. Never add a mechanism whose only purpose is to reproduce an observation.
+  A special case reproduces one symptom and diverges everywhere else that system is used.
+- Never shadow a vanilla variable with a parallel one. Every site that clears the original
+  must also clear the shadow, and a single missed site is a new exploit. Port the vanilla
+  field, with the vanilla name, lifetime and clear sites.
+- If vanilla stores something as a flag, port it as a flag. Widening it into a timer
+  invents a window that vanilla does not have.
+- Worked example: the dream double jump is `DreamDashEnd` re-granting the ordinary
+  `jumpGraceTimer` on a horizontal exit, even though the exit-frame jump just consumed it.
+  `dreamJump` is only a sound selector. An added parallel "dream grace timer" reproduced
+  the double jump and simultaneously handed out free mid-air jumps after wall jumps,
+  because the wall-jump paths only cleared the vanilla timer.
+
+## The engine is part of the port
+
+Frame counts come from Monocle, not from Celeste's entity code. Porting a `Player` method
+without its engine context silently changes input windows.
+
+- `StateMachine.Update` runs the state update *before* the state coroutine, so a state's
+  update method runs one extra time on the frame its coroutine finishes.
+- `Coroutine.orig_Update` tests the wait timer *before* decrementing it, so a wait ends on
+  the frame the timer is no longer positive, not the frame it reaches zero.
+- `yield return null` costs a real frame, with the state update running during it.
+- Consequence: the dash Super/Hyper window is 12 `DashUpdate` frames. Rewriting
+  `DashCoroutine` as a plain countdown loses two of them.
+- Update order inside `Player.orig_Update` is load-bearing: the wall boost reads the
+  previous frame's `moveX`, retained wall speed is restored before the state machine, and
+  the dash floor snap runs after the state machine and before `MoveH`.
+- Guard conditions are as much a part of the port as the numbers. `onGround` is only
+  evaluated while `Speed.Y >= 0`; `lastClimbMove` is sampled before the slip override.
+- *When* input is sampled is itself a mechanic. Vanilla refreshes `lastAim` every frame and
+  `DashCoroutine` reads it when it resumes, after the freeze - so the aim held about four
+  frames *after* the dash press is the one that counts. Latching input at the press frame
+  looks like a harmless simplification and silently deletes the hand demo dash: press down
+  with dash to duck at `DashBegin`, then swap to a horizontal aim before it is sampled.
+  Never snapshot input early "to keep it stable"; sample it where vanilla samples it.
+
+## Constants
+
+- Trace a constant to where vanilla actually sets it, not to a similar-looking neighbour.
+  Input buffers come from `VirtualButton(binding, pad, bufferTime, triggerThreshold)`:
+  Jump, Dash and CrouchDash all buffer 0.08s, which is not the 0.1s `JumpGraceTime`.
+- Vanilla often reads one binding through several differently tuned accessors.
+  `Input.MoveX`, `MoveY`, `GliderMoveY` and `Aim` are the same buttons at 0.3, 0.7, 0.3 and
+  0.25. Collapsing them is invisible on a keyboard and wrong on a controller: at full
+  diagonal deflection a stick reads ~0.61 after deadzone rescaling, so an up-diagonal dash
+  is impossible if dash aim is gated at the 0.7 movement threshold.
+- Port vanilla's default bindings, including the ones deliberately left unbound.
+
+## Verifying movement
+
+- Prefer a headless harness that drives `Player.Update` at a fixed 60Hz over synthetic
+  `Solid`s and asserts vanilla's numbers: 260/-105 super, 325/-52.5 hyper, 1.2x ultra,
+  170/-160 wallbounce, 130/-105 wall jump, 0.1s coyote, 12-frame dash window, 10/s climb
+  still cost. Frame-level assertions catch what play testing cannot.
+- Feed the harness the same input contract the app uses, or the test measures nothing:
+  `PetWindow.SampleInput` re-derives `JumpPressed`/`DashPressed` from the buffers every
+  frame.
+- Assert a window in the unit the source uses (seconds, or a counted frame span), not a
+  guessed frame index. When a measurement disagrees with expectation, re-derive the
+  expectation from the reference before changing code.
+
