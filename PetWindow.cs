@@ -2182,7 +2182,8 @@ namespace DeskMadeline
             // TheoCrystal.Depth=100, behind Player.Depth=0 while unheld.
             foreach (TheoCrystal theo in theos)
             {
-                if (theo.IsHeld || theo.Removed || trailCount >= trailStamps.Length) continue;
+                // IsDying: TheoCrystal.Die hides the sprite, leaving only the burst.
+                if (theo.IsHeld || theo.Removed || theo.IsDying || trailCount >= trailStamps.Length) continue;
                 // TheoCrystal.orig_ctor sets sprite.Scale.X = -1.
                 Bitmap stamp = Sprites.Get(theo.FrameId, true);
                 if (stamp != null)
@@ -2325,7 +2326,18 @@ namespace DeskMadeline
         {
             foreach (TheoCrystal theo in theos)
             {
-                if (theo.Removed || (heldOnly && !theo.IsHeld)) continue;
+                if (theo.Removed) continue;
+                if (theo.IsDying)
+                {
+                    // TheoCrystal.Die hides the sprite and leaves a DeathEffect in forest
+                    // green -- the burst Madeline dies in, which DrawDeathEffect already
+                    // draws.  A loose crystal is otherwise presented as its own stamp, but
+                    // the burst belongs on the canvas with every other effect, so it is drawn
+                    // here whether he was being carried or not.
+                    DrawDeathEffect(g, camX, camY, theo.DeathPosition, Color.ForestGreen, theo.DeathPercent);
+                    continue;
+                }
+                if (heldOnly && !theo.IsHeld) continue;
                 Bitmap frame = Sprites.Get(theo.FrameId, true);
                 if (frame == null) continue;
                 // Sprites.xml: <Origin x="32" y="42"/>.

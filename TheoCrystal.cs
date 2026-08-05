@@ -25,10 +25,19 @@ namespace DeskMadeline
         public bool SlowFall => false;
         public bool Removed { get; private set; }
         public string FrameId => "theoCrystal/idle00";
+        /// <summary>0 while whole; runs to 1 over DeathEffect.Duration once he breaks.</summary>
+        public float DeathPercent { get; private set; }
+        public bool IsDying => DeathPercent > 0f;
+        /// <summary>Where the death burst is centred: Collider.Center, as TheoCrystal.Die passes it.</summary>
+        public PointF DeathPosition => new PointF(Pos.X, Pos.Y - Height / 2f);
         public readonly Queue<PlayerSoundEvent> SoundEvents = new Queue<PlayerSoundEvent>();
         public readonly Queue<TheoImpactEvent> ImpactEvents = new Queue<TheoImpactEvent>();
 
+        const float DeathEffectDuration = 0.834f;   // DeathEffect.Duration
+
         float noGravityTimer, holdGravityTimer, cannotHoldTimer, hardVerticalHitSoundCooldown, swatTimer;
+        float deathTimer;
+        bool dead;
         PointF counter;
         IList<Solid> lastSolids;
         Seeker hitSeeker;
@@ -125,6 +134,15 @@ namespace DeskMadeline
             if (hardVerticalHitSoundCooldown > 0f) hardVerticalHitSoundCooldown -= dt;
             if (swatTimer > 0f) swatTimer -= dt;
             if (hitSeeker != null && swatTimer <= 0f && !OverlapsSeeker(hitSeeker)) hitSeeker = null;
+            if (dead)
+            {
+                // TheoCrystal.Die hides the sprite and leaves a DeathEffect to play out where
+                // he broke.  He is gone once it has, there being no room to reload here.
+                deathTimer += dt;
+                DeathPercent = Math.Min(1f, deathTimer / DeathEffectDuration);
+                if (DeathPercent >= 1f) Removed = true;
+                return;
+            }
             if (Removed || BeingDragged || IsHeld) return;
 
             bool onGround = !CollidesAt(Pos.X, Pos.Y, solids) && CollidesAt(Pos.X, Pos.Y + 1f, solids);
@@ -159,8 +177,19 @@ namespace DeskMadeline
                     Speed = new PointF(Speed.X, -300f);
                     SoundEvents.Enqueue(new PlayerSoundEvent("event:/game/general/assist_screenbottom"));
                 }
-                else { player.Die(new PointF(-player.Facing, 0f)); Removed = true; }
+                else Die(player);
             }
+        }
+
+        /// <summary>TheoCrystal.Die: he takes the player with him and breaks where he lies.</summary>
+        void Die(Player player)
+        {
+            if (dead) return;
+            dead = true;
+            deathTimer = 0f;
+            Speed = PointF.Empty;
+            player.Die(new PointF(-player.Facing, 0f));
+            SoundEvents.Enqueue(new PlayerSoundEvent("event:/char/madeline/death"));
         }
 
         public bool DangerousTo(Seeker seeker) => !IsHeld && !BeingDragged &&
