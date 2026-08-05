@@ -4,10 +4,10 @@ using System.Text;
 
 namespace DeskMadeline
 {
-    /// <summary>Win32 P/Invoke：窗口枚举、键盘/焦点、分层窗口逐像素渲染。</summary>
+    /// <summary>Win32 P/Invoke: window enum, keyboard/focus, per-pixel layered window rendering.</summary>
     internal static class Win32
     {
-        // ---------------- 基础结构 ----------------
+        // ---------------- Basic structs ----------------
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT
         {
@@ -35,7 +35,7 @@ namespace DeskMadeline
         public const byte AC_SRC_ALPHA = 0x01;
         public const int ULW_ALPHA = 0x02;
 
-        // ---------------- 窗口枚举 ----------------
+        // ---------------- Window enumeration ----------------
         public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
         [DllImport("user32.dll")]
@@ -83,7 +83,7 @@ namespace DeskMadeline
             return sb.ToString();
         }
 
-        /// <summary>取窗口可见区域（优先 DWM 扩展边框，去掉不可见的阴影边框）。</summary>
+        /// <summary>Get the visible window rect (prefer DWM extended frame; drop invisible shadow borders).</summary>
         public static bool TryGetWindowRect(IntPtr hwnd, out RECT rect)
         {
             int hr = DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, out rect, Marshal.SizeOf<RECT>());
@@ -91,7 +91,7 @@ namespace DeskMadeline
             return GetWindowRect(hwnd, out rect);
         }
 
-        // ---------------- 全局键盘 ----------------
+        // ---------------- Global keyboard ----------------
         [DllImport("user32.dll")]
         public static extern IntPtr GetForegroundWindow();
 
@@ -100,11 +100,11 @@ namespace DeskMadeline
 
         public static bool KeyDown(int vKey) => (GetAsyncKeyState(vKey) & 0x8000) != 0;
 
-        // ---------------- 图标 ----------------
+        // ---------------- Icons ----------------
         [DllImport("user32.dll")]
         public static extern bool DestroyIcon(IntPtr hIcon);
 
-        // ---------------- 分层窗口渲染 ----------------
+        // ---------------- Layered window rendering ----------------
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst,
             ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
@@ -146,7 +146,7 @@ namespace DeskMadeline
             public int biClrImportant;
         }
 
-        /// <summary>V5 头部 + BI_BITFIELDS 才能让 GDI DIB 保留 alpha 通道；BI_RGB 32bpp 的 alpha 会被 GDI 丢弃。</summary>
+        /// <summary>V5 header + BI_BITFIELDS is required for GDI DIBs to keep alpha; BI_RGB 32bpp alpha is discarded by GDI.</summary>
         [StructLayout(LayoutKind.Sequential)]
         public struct BITMAPV5HEADER
         {

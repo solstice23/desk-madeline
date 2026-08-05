@@ -1,4 +1,4 @@
-// 自动生成：刘海锚点偏移(相对帧中心x=16,基准y=27) + 刘海朝向帧索引(0左/1中/2右)
+// Auto-generated: bangs anchor offset (relative to frame center x=16, base y=27) + bangs facing frame index (0 left / 1 center / 2 right)
 namespace DeskMadeline
 {
     public static class HairMeta
@@ -252,8 +252,8 @@ namespace DeskMadeline
             { "tired03", new Meta(new System.Drawing.PointF(-2.7f, 0.8f), 1) },
         };
 
-        // ===== 运行时覆盖（hair_tweaks.txt，手调头发用，免重编译）=====
-        // 每行格式：帧名 x y bangs  例如： idle00 -2.5 0.2 1
+        // ===== Runtime overrides (hair_tweaks.txt; hand-tune hair without recompiling) =====
+        // Line format: frameName x y bangs  e.g. idle00 -2.5 0.2 1
         static readonly System.Collections.Generic.Dictionary<string, Meta> Overrides =
             new System.Collections.Generic.Dictionary<string, Meta>(System.StringComparer.OrdinalIgnoreCase);
 
@@ -277,7 +277,7 @@ namespace DeskMadeline
             catch (System.Exception ex) { PetWindow.Log("hair_tweaks: load error " + ex.Message); }
         }
 
-        /// <summary>取某帧头发元数据：优先运行时覆盖，其次默认表。</summary>
+        /// <summary>Get hair metadata for a frame: runtime override first, then the default table.</summary>
         public static bool TryGet(string frameId, out Meta meta)
         {
             if (frameId != null && Overrides.TryGetValue(frameId, out meta)) return true;

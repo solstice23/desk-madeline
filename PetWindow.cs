@@ -13,13 +13,13 @@ using System.Windows.Forms;
 namespace DeskMadeline
 {
     /// <summary>
-    /// 桌宠主窗口：分层透明窗口 + 60FPS 游戏循环 + 窗口平台轮询 + 托盘菜单。
-    /// 所有桌面坐标为物理像素（进程 PerMonitorV2）；物理模拟在游戏像素空间进行（1 游戏像素 = S 物理像素）。
+    /// Desktop pet main window: layered transparent window + 60 FPS game loop + window-platform polling + tray menu.
+    /// All desktop coordinates are physical pixels (process is PerMonitorV2); physics runs in game-pixel space (1 game px = S physical px).
     /// </summary>
     public class PetWindow : Form
     {
-        // ===== 可调参数 =====
-        public int GameScale = 6;               // 整数倍放大（原作 1080p 为 6x）
+        // ===== Tunable parameters =====
+        public int GameScale = 6;               // integer nearest-neighbor scale (vanilla 1080p is 6x)
         public bool InputEnabled = true;
         public bool InputWhenUnfocused;
         public bool AlwaysOnTop = true;
@@ -30,10 +30,10 @@ namespace DeskMadeline
         // 160px-tall strip clipped dash/Elytra particles after fast vertical moves.
         // 1024px retains the same one-second ultra envelope on both axes.
         const int CanvasW = 1024, CanvasH = 1024;
-        const float AnchorX = 512, AnchorY = 512; // 脚底锚点（画布内）
+        const float AnchorX = 512, AnchorY = 512; // foot anchor (inside the canvas)
         const double FixedDt = 1.0 / 60.0;
         static readonly IntPtr FloorId = new IntPtr(-991);
-        const int WindowBorderPx = 8;           // 窗口空心边框厚度（物理像素）
+        const int WindowBorderPx = 8;           // hollow window-border thickness (physical pixels)
         const float EdgeWrapMargin = 12f;       // let the sprite clear the display before wrapping
 
         readonly Player player = new Player();
@@ -58,31 +58,31 @@ namespace DeskMadeline
         readonly Queue<Glider> pendingGliderRemovals = new Queue<Glider>();
         readonly Queue<TheoCrystal> pendingTheoRemovals = new Queue<TheoCrystal>();
         readonly Queue<Seeker> pendingSeekerRemovals = new Queue<Seeker>();
-        bool introWakeUp = true;   // 启动时先播"醒来"动画（wakeUp 00-14），播完切 idle
+        bool introWakeUp = true;   // On startup play the wake-up animation (wakeUp 00-14), then switch to idle
 
-        // 渲染
-        Bitmap small;           // 1x 游戏像素缓冲（CanvasW × CanvasH），整数坐标绘制后整数倍放大
+        // Rendering
+        Bitmap small;           // 1x game-pixel buffer (CanvasW x CanvasH); draw at integer coords then integer upscale
         readonly TrailStamp[] trailStamps = new TrailStamp[1024];
         D3DPresenter presenter;
         CompositionHost compositionHost;
         readonly Rectangle virtualDesktop;
         int renderFrameCount;
 
-        // 平台
+        // Platforms
         readonly Dictionary<IntPtr, Win32.RECT> lastRects = new Dictionary<IntPtr, Win32.RECT>();
         int pollCounter;
 
-        // 输入状态
+        // Input state
         bool prevJump, prevDash, prevCrouchDash;
 
-        // 拖拽
+        // Dragging
         volatile bool dragging;
-        Point dragGrabOffset;      // 物理像素：抓取点相对脚底
-        PointF cursorVel;          // 物理像素/秒
+        Point dragGrabOffset;      // physical pixels: grab point relative to feet
+        PointF cursorVel;          // physical pixels / second
         Point lastCursor;
-        IntPtr trayIconHandle;     // 托盘图标的 HICON（需显式 DestroyIcon）
+        IntPtr trayIconHandle;     // tray icon HICON (must DestroyIcon explicitly)
 
-        // 粒子 / 特效
+        // Particles / effects
         readonly ParticleSystem particles = new ParticleSystem();
         readonly ParticleSystem seekerParticles = new ParticleSystem();
         readonly Dictionary<int, Bitmap> seekerParticleBitmaps = new Dictionary<int, Bitmap>();
@@ -92,7 +92,7 @@ namespace DeskMadeline
         readonly Random effectRng = new Random();
         PType dust, dashBlue, dashRed, dashBadeline, elytraDeploy;
         PType seekerAttack, seekerHitWall, seekerStomp, seekerRegen, theoImpact;
-        bool ParticlesEnabled = true;    // 粒子特效开关（默认开，托盘菜单可关闭）
+        bool ParticlesEnabled = true;    // particle effects toggle (on by default; tray menu can disable)
         float skidDustTimer;
         string observedParticleAnimId;
         int observedParticleAnimFrame = -1;
@@ -221,7 +221,7 @@ namespace DeskMadeline
             else if (settings.Language == "zh") english = false;
             bindings = new KeyBindings(System.IO.Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory, "keybindings.txt"));
-            // 日志防无限增长：超过 5MB 时清空重写（保留最近一次运行记录）
+            // Cap log growth: rewrite when over 5MB (keeps the latest run)
             try
             {
                 var logPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pet_debug.log");
@@ -229,21 +229,21 @@ namespace DeskMadeline
                     System.IO.File.WriteAllText(logPath, "");
             }
             catch { }
-            // ---- 窗口样式：无边框、不在任务栏、DirectComposition 透明 ----
+            // ---- Window style: borderless, no taskbar entry, DirectComposition transparency ----
             FormBorderStyle = FormBorderStyle.None;
             Text = "Desk Madeline";
-            // 分层画布的尺寸由 GameScale 明确控制，不允许 WinForms 在 WM_DPICHANGED
-            // 时再按字体 DPI 缩放一次。
+            // Layered-canvas size is controlled explicitly by GameScale; do not let WinForms
+            // re-scale it again on WM_DPICHANGED via font DPI.
             AutoScaleMode = AutoScaleMode.None;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.Manual;
-            // 注意：不要设置 BackColor/TransparencyKey（色键分层与 ULW 冲突）
+            // Note: do not set BackColor/TransparencyKey (color-key layering conflicts with ULW)
             Size = new Size(24 * GameScale, 33 * GameScale);
             Location = new Point(-10000, -10000);
             BackColor = Color.Black;
             Opacity = 0.01; // nonzero alpha keeps the small body hit target interactive
 
-            // ---- 贴图与动画 ----
+            // ---- Sprites and animations ----
             skinManager = new SkinManager(AppDomain.CurrentDomain.BaseDirectory);
             var initialSkin = skinManager.Find(settings.Skin);
             skinManager.Activate(initialSkin);
@@ -359,13 +359,13 @@ namespace DeskMadeline
             animator = new Animator(anims);
             sweatAnimator = new Animator(BuildSweatAnims());
             sweatAnimator.Play("idle");
-            animator.Play("wakeUp");   // 启动先播醒来动画
+            animator.Play("wakeUp");   // Play wake-up animation on startup
 
-            // ---- 出生点：主屏工作区底部中央 ----
+            // ---- Spawn point: bottom-center of primary working area ----
             var wa = Screen.PrimaryScreen.WorkingArea;
             player.Pos = new PointF((wa.Left + wa.Right) / 2f / GameScale, wa.Bottom / GameScale - 2);
 
-            // ---- 托盘 ----
+            // ---- Tray ----
             trayMenu = BuildMenu();
             tray = new NotifyIcon
             {
@@ -382,8 +382,8 @@ namespace DeskMadeline
             {
                 const int WS_EX_TOPMOST = 0x00000008;
                 var cp = base.CreateParams;
-                // 保持工具窗口（不出现在 Alt+Tab/任务栏），但必须允许激活：点击玛德琳后
-                // 她取得键盘焦点，移动键便不会同时输入到其他程序。
+                // Keep tool-window style (hidden from Alt+Tab/taskbar) but allow activation: after clicking Madeline
+                // she takes keyboard focus so movement keys are not also typed into other apps.
                 cp.ExStyle |= Win32.WS_EX_LAYERED | Win32.WS_EX_TOOLWINDOW;
                 if (AlwaysOnTop) cp.ExStyle |= WS_EX_TOPMOST;
                 return cp;
@@ -421,13 +421,13 @@ namespace DeskMadeline
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            // 窗口真正显示后再启动游戏循环（DirectComposition target 要求 HWND 已就绪）
+            // Start the game loop only after the window is really shown (DirectComposition target needs a ready HWND)
             running = true;
             loopThread = new Thread(GameLoop) { IsBackground = true, Name = "PetLoop" };
             loopThread.Start();
         }
 
-        // ================= 动画定义 =================
+        // ================= Animation definitions =================
         static Dictionary<string, Anim> BuildAnims()
         {
             var d = new Dictionary<string, Anim>(StringComparer.OrdinalIgnoreCase);
@@ -502,7 +502,7 @@ namespace DeskMadeline
             return d;
         }
 
-        // ================= 游戏循环 =================
+        // ================= Game loop =================
         void GameLoop()
         {
             Log("loop start");
@@ -540,7 +540,7 @@ namespace DeskMadeline
             }
             finally
             {
-                TimePeriod.End(1);   // 异常也恢复定时器精度
+                TimePeriod.End(1);   // Restore timer resolution even on exceptions
             }
         }
 
@@ -670,16 +670,16 @@ namespace DeskMadeline
                 }
             }
 
-            // 应用待定的缩放变更
+            // Apply pending scale change
             if (pendingScale > 0)
             {
                 GameScale = pendingScale;
                 pendingScale = -1;
                 presenter.Resize(GameScale);
-                pollCounter = 999; // 立即重取平台（单位变了）
+                pollCounter = 999; // Immediately re-poll platforms (units changed)
             }
 
-            // 平台轮询（每 0.25s）
+            // Platform poll (every 0.25s)
             if (++pollCounter >= 15)
             {
                 pollCounter = 0;
@@ -688,7 +688,7 @@ namespace DeskMadeline
 
             if (introWakeUp)
             {
-                // 启动醒来动画：冻结物理，只播 wakeUp + 头发模拟；播完切 idle。
+                // Startup wake-up: freeze physics, play only wakeUp + hair sim; switch to idle when done.
                 float hx = 0f, hy = 0f;
                 if (HairMeta.TryGet(animator.CurrentFrameId, out var wm)) { hx = wm.Offset.X; hy = wm.Offset.Y; }
                 player.UpdateHairOnly(dt, hx, hy);
@@ -706,7 +706,7 @@ namespace DeskMadeline
                 return;
             }
 
-            // 输入
+            // Input
             var input = SampleInput();
 
             bool frozenAtStart = player.FreezeFramesEnabled && player.IsHitStopped;
@@ -730,7 +730,7 @@ namespace DeskMadeline
                 }
             }
 
-            // 物理
+            // Physics
             int wasState = player.State;
             bool wasDeadOrRespawning = player.IsDead || player.IsRespawning;
             PointF beforeUpdatePosition = player.Pos;
@@ -869,10 +869,10 @@ namespace DeskMadeline
 
             UpdateWavedashWaves(dt);
 
-            // 离开屏幕很远自动重置（防"无限下落"/被甩出虚拟屏幕）
+            // Auto-reset when far off-screen (prevents infinite fall / being thrown off the virtual desktop)
             if (!introWakeUp && !player.IsDead) CheckAutoReset();
 
-            // 粒子（走路/落地/跳跃/冲刺）+ 冲刺斩击计时
+            // Particles (run/land/jump/dash) + dash slash timing
             if (ParticlesEnabled)
             {
                 EmitPlayerParticles(dt, wasState);
@@ -1291,8 +1291,8 @@ namespace DeskMadeline
             return tinted;
         }
 
-        // Celeste Player.Update + SpeedRing：Super/Hyper/Wavedash 起跳后，在速度保持
-        // 140+ 的前 0.5 秒内每 0.15 秒生成一个环；每个环以 3/s 展开并以 10px/s 前移。
+        // Celeste Player.Update + SpeedRing: after Super/Hyper/Wavedash jump, while speed stays
+        // at 140+ for the first 0.5s spawn a ring every 0.15s; each ring expands at 3/s and advances at 10px/s.
         void UpdateWavedashWaves(float dt)
         {
             // Existing SpeedRing entities update before Player can add another one;
@@ -1369,7 +1369,7 @@ namespace DeskMadeline
 
         }
 
-        // 粒子发射（参数移植自 Celeste Player.cs 的 Dust.Burst 调用）
+        // Particle emission (parameters ported from Celeste Player.cs Dust.Burst calls)
         void EmitPlayerParticles(float dt, int wasState)
         {
             float up = (float)-Math.PI / 2f;
@@ -1425,7 +1425,7 @@ namespace DeskMadeline
             }
             else skidDustTimer = 0f;
 
-            // 冲刺
+            // Dash
             if (player.State == Player.StDash)
             {
                 float dashAngle = (float)Math.Atan2(player.DashDir.Y, player.DashDir.X);
@@ -1434,7 +1434,7 @@ namespace DeskMadeline
                     dashParticleTimer = 0f;
                 }
                 dashParticleTimer += dt;
-                // 原作 DashUpdate：运动中每 0.02 秒发射一个 P_DashA/P_DashB。
+                // Vanilla DashUpdate: while moving, emit one P_DashA/P_DashB every 0.02s.
                 while (dashParticleTimer >= 0.02f &&
                        (player.Speed.X != 0f || player.Speed.Y != 0f))
                 {
@@ -1734,25 +1734,25 @@ namespace DeskMadeline
             draggedGlider = null;
         }
 
-        // ================= 平台（窗口即平台，空心边框）=================
+        // ================= Platforms (windows are platforms; hollow borders) =================
         void PollSolids()
         {
             float s = GameScale;
             var cur = new Dictionary<IntPtr, Win32.RECT>();
             IntPtr self = Handle;
 
-            // EnumWindows 按 Z 序从上到下枚举（前→后）；记下顺序用于「前窗遮挡后窗」
+            // EnumWindows enumerates top-to-bottom Z-order (front→back); keep order for front-window occlusion of rear windows
             var zorder = new List<KeyValuePair<IntPtr, Win32.RECT>>();
 
             Win32.EnumWindows((hwnd, _) =>
             {
                 if (hwnd == self) return true;
                 if (!Win32.IsWindowVisible(hwnd) || Win32.IsIconic(hwnd)) return true;
-                // 被 DWM 隐藏的窗口（UWP 后台、虚拟桌面外）
+                // Windows cloaked by DWM (UWP background, off virtual desktop)
                 if (Win32.DwmGetWindowAttribute(hwnd, Win32.DWMWA_CLOAKED, out int cloaked, 4) == 0 && cloaked != 0) return true;
                 int ex = Win32.GetWindowLong(hwnd, Win32.GWL_EXSTYLE);
                 if ((ex & Win32.WS_EX_TOOLWINDOW) != 0) return true;
-                // 透明点击穿透的窗口（其他桌宠/悬浮层）不做平台
+                // Click-through transparent windows (other pets / overlays) are not platforms
                 if ((ex & Win32.WS_EX_LAYERED) != 0 && (ex & Win32.WS_EX_TRANSPARENT) != 0) return true;
                 string cls = Win32.GetClassNameString(hwnd);
                 if (cls == "Progman" || cls == "WorkerW" || cls == "Xaml_WindowedPopupClass") return true;
@@ -1764,8 +1764,8 @@ namespace DeskMadeline
                 return true;
             }, IntPtr.Zero);
 
-            // 组装平台（游戏单位）：窗口只保留「空心边框」；前面（Z 序在上）的窗口
-            // 以整块矩形裁掉后窗边框被盖住的部分，被盖处不再阻挡。
+            // Build platforms (game units): keep only hollow window borders; front (higher Z) windows
+            // subtract their full rect from rear borders so covered segments no longer collide.
             var solids = new List<Solid>(zorder.Count * 4 + 1);
             var occluders = new List<Win32.RECT>(zorder.Count);
             foreach (var kv in zorder)
@@ -1788,7 +1788,7 @@ namespace DeskMadeline
                             solids.Add(new Solid { Id = kv.Key, L = p.Left / s, T = p.Top / s, R = p.Right / s, B = p.Bottom / s });
                     }
                 }
-                occluders.Add(r);   // 本窗口整体遮挡它后面的窗口
+                occluders.Add(r);   // This window as a whole occludes windows behind it
             }
             // Treat the exposed perimeter of the monitor union as solid.  Each edge
             // extends outward, then other monitor rectangles are subtracted from it:
@@ -1837,8 +1837,8 @@ namespace DeskMadeline
                 }
             }
 
-            // Screen 返回的边界在 PerMonitorV2 下与 DWM 一样都是物理像素。
-            // 从实际显示器并集计算左右极值，避免 SystemInformation 的 DPI 虚拟化。
+            // Screen bounds under PerMonitorV2 are physical pixels, same as DWM.
+            // Compute left/right extremes from the real monitor union to avoid SystemInformation DPI virtualization.
             if (virtualLeft != int.MaxValue)
             {
                 if ((edgeWrapMode & 1) != 0)
@@ -1853,7 +1853,7 @@ namespace DeskMadeline
                 }
             }
 
-            // 搭乘：所站窗口移动时跟随
+            // Ride-along: follow the window underfoot when it moves
             if (player.GroundId != IntPtr.Zero && player.GroundId != FloorId &&
                 lastRects.TryGetValue(player.GroundId, out var oldR) &&
                 cur.TryGetValue(player.GroundId, out var newR))
@@ -1945,17 +1945,17 @@ namespace DeskMadeline
             player.WrapBy(offsetX, offsetY);
         }
 
-        /// <summary>窗口四条空心边框（物理像素坐标），厚度 WindowBorderPx。</summary>
+        /// <summary>Four hollow window edges (physical-pixel coords), thickness WindowBorderPx.</summary>
         static IEnumerable<Win32.RECT> WindowEdges(Win32.RECT r)
         {
             int b = WindowBorderPx;
-            yield return new Win32.RECT { Left = r.Left, Top = r.Top, Right = r.Right, Bottom = r.Top + b };                 // 上
-            yield return new Win32.RECT { Left = r.Left, Top = r.Bottom - b, Right = r.Right, Bottom = r.Bottom };          // 下
-            yield return new Win32.RECT { Left = r.Left, Top = r.Top + b, Right = r.Left + b, Bottom = r.Bottom - b };      // 左
-            yield return new Win32.RECT { Left = r.Right - b, Top = r.Top + b, Right = r.Right, Bottom = r.Bottom - b };    // 右
+            yield return new Win32.RECT { Left = r.Left, Top = r.Top, Right = r.Right, Bottom = r.Top + b };                 // top
+            yield return new Win32.RECT { Left = r.Left, Top = r.Bottom - b, Right = r.Right, Bottom = r.Bottom };          // bottom
+            yield return new Win32.RECT { Left = r.Left, Top = r.Top + b, Right = r.Left + b, Bottom = r.Bottom - b };      // left
+            yield return new Win32.RECT { Left = r.Right - b, Top = r.Top + b, Right = r.Right, Bottom = r.Bottom - b };    // right
         }
 
-        /// <summary>矩形 a 减去一组遮挡矩形，返回互不重叠的剩余子矩形。</summary>
+        /// <summary>Subtract occluder rects from rectangle a; return non-overlapping remainders.</summary>
         static List<Win32.RECT> SubtractRects(Win32.RECT a, List<Win32.RECT> occluders)
         {
             var cur = new List<Win32.RECT> { a };
@@ -1984,7 +1984,7 @@ namespace DeskMadeline
             return cur;
         }
 
-        // ================= 渲染 =================
+        // ================= Rendering =================
         void Render()
         {
             int s = GameScale;
@@ -1997,7 +1997,7 @@ namespace DeskMadeline
             float camX = ComputeCameraX();
             float camY = player.Pos.Y - AnchorY;
 
-            // 1x 游戏像素缓冲：整数坐标直接落像素，杜绝亚像素偏移；之后整数倍最近邻放大
+            // 1x game-pixel buffer: integer coords land on pixels (no subpixel drift); then integer nearest-neighbor upscale
             using (var g = Graphics.FromImage(small))
             {
                 g.Clear(Color.Transparent);
@@ -2027,8 +2027,8 @@ namespace DeskMadeline
                 }
                 else
                 {
-                    // 头发画在身体后面（先画头发，再画身体覆盖）。
-                    // wakeUp 帧自带完整头发（蜷着睡觉），不再叠加模拟头发
+                    // Draw hair behind the body (hair first, body on top).
+                    // wakeUp frames already include full hair (curled sleep pose); do not overlay simulated hair
                     if (animator.CurrentId != "wakeUp")
                     {
                         DrawCatTail(g, camX, camY);
@@ -2044,7 +2044,7 @@ namespace DeskMadeline
                 }
 
                 if (ParticlesEnabled) particles.Draw(g, camX, camY);
-                // SlashFx 与 TrailManager 是核心冲刺表现，不受粒子开关控制。
+                // SlashFx and TrailManager are core dash visuals; not gated by the particles toggle.
                 DrawSlash(g, camX, camY);
                 DrawSpeedometer(g, camX, camY);
                 DrawHitboxes(g, camX, camY);
@@ -2147,7 +2147,7 @@ namespace DeskMadeline
             int inputTop = (int)Math.Round(player.Pos.Y * s) - 30 * s;
             Win32.SetWindowPos(Handle, IntPtr.Zero, inputLeft, inputTop,
                 24 * s, 33 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
-            // 每 5 秒记录一次位置 + 速度 + 状态
+            // Log position + speed + state every 5 seconds
             if ((++renderFrameCount % 300) == 0)
                 PetWindow.Log("frame " + renderFrameCount + " pos=" + player.Pos.X.ToString("F1") + "," + player.Pos.Y.ToString("F1") +
                     " sp=" + player.Speed.X.ToString("F0") + "," + player.Speed.Y.ToString("F0") +
@@ -2161,7 +2161,7 @@ namespace DeskMadeline
             return player.Pos.X - AnchorX;
         }
 
-        // 原作 SlashFx：4 帧 × 0.1s，出生于玩家 Center，以冲刺方向 8px/s 移动。
+        // Vanilla SlashFx: 4 frames x 0.1s, spawned at player Center, moves 8px/s along dash direction.
         void DrawSlash(Graphics g, float camX, float camY)
         {
             if (!slash.Active) return;
@@ -2318,7 +2318,7 @@ namespace DeskMadeline
 
         void DrawBody(Graphics g, float anchorX, float anchorY)
         {
-            // 身体（挤压拉伸锚定脚底中心），矩形吸附到整数游戏像素
+            // Body (squash/stretch anchored at foot center); rect snapped to integer game pixels
             bool flip = player.Facing < 0;
             var frame = Sprites.Get(animator.CurrentFrameId, flip);
             if (frame != null)
@@ -2326,7 +2326,7 @@ namespace DeskMadeline
                 float sx = player.SpriteScaleX, sy = player.SpriteScaleY;
                 float x = SnapPx(anchorX - 16 * sx), y = SnapPx(anchorY - 32 * sy);
                 float w = SnapPx(32 * sx), h = SnapPx(32 * sy);
-                // 原作低体力表现：每 0.05 秒红/白闪烁身体。
+                // Vanilla low-stamina look: flash body red/white every 0.05s.
                 if (player.IsLowStamina && tiredFlash)
                     Sprites.DrawTinted(g, frame, Color.Red, x, y, w, h);
                 else
@@ -2412,7 +2412,7 @@ namespace DeskMadeline
             Color color = colorOverride ?? player.HairColor;
             bool flip = player.Facing < 0;
             var blob = Sprites.Get("hair00", false);
-            // 刘海帧：按当前动画帧的朝向元数据选择（0左看/1居中/2右看）；编辑模式下用实时值预览
+            // Bangs frame: pick from current anim frame facing meta (0 look-left / 1 center / 2 look-right); hair editor uses live values
             string bangsId = "bangs00";
             int bangsIdx = -1;
             if (HairMeta.TryGet(player.CurrentFrameId, out var hm) &&
@@ -2424,8 +2424,8 @@ namespace DeskMadeline
             var bangs = Sprites.Get(bangsId, flip);
             if (blob == null || bangs == null) return;
 
-            // 画布坐标（像素完美：原版渲染时 Nodes[0].Floor()，这里把每个节点吸附到整数游戏像素，
-            // ×整数倍放大 = 整数物理像素，避免亚像素模糊）
+            // Canvas coords (pixel-perfect: vanilla floors Nodes[0]; here each node snaps to integer game pixels,
+            // integer upscale = integer physical pixels, avoiding subpixel blur)
             int hairCount = hair.ActiveCount;
             Span<PointF> pt = stackalloc PointF[PlayerHairSim.MaxCount];
             float rootScreenX = SnapPx(hair.Nodes[0].X - camX);
@@ -2435,7 +2435,7 @@ namespace DeskMadeline
                     rootScreenX + hair.Nodes[i].X - hair.Nodes[0].X,
                     rootScreenY + hair.Nodes[i].Y - hair.Nodes[0].Y);
 
-            // 黑色描边（原作：±1px 四方向）
+            // Black outline (vanilla: ±1px in four directions)
             for (int i = 0; i < hairCount; i++)
             {
                 float sc = HairSegmentScale(i, hairCount);
@@ -2447,7 +2447,7 @@ namespace DeskMadeline
                 DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2, pt[i].Y - h / 2 - 1, w, h);
                 DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2, pt[i].Y - h / 2 + 1, w, h);
             }
-            // 本体（后画前面，刘海最后）
+            // Body fill (back to front; bangs last)
             for (int i = hairCount - 1; i >= 0; i--)
             {
                 float sc = HairSegmentScale(i, hairCount);
@@ -2641,14 +2641,14 @@ namespace DeskMadeline
         static float HairSegmentScale(int i, int count)
             => 0.25f + (1f - (float)i / count) * 0.75f;
 
-        // 像素完美：浮点游戏像素吸附到整数（偶数取整保证 w/2 也为整数，矩形边缘不落亚像素）
+        // Pixel-perfect: snap float game pixels to integers (even rounding keeps w/2 integer so edges stay on-pixel)
         static float SnapPx(float v) => (float)Math.Round(v);
         static float SnapEven(float v) => (float)(Math.Round(v / 2f) * 2f);
 
         static void DrawTintedSafe(Graphics g, Bitmap tex, Color c, float x, float y, float w, float h, float alpha = 1f)
             => Sprites.DrawTinted(g, tex, c, x, y, w, h, alpha);
 
-        // ================= 鼠标拖拽 =================
+        // ================= Mouse drag =================
         protected override void WndProc(ref Message m)
         {
             const int WM_LBUTTONDOWN = 0x0201;
@@ -2659,8 +2659,8 @@ namespace DeskMadeline
             switch (m.Msg)
             {
                 case WM_LBUTTONDOWN:
-                    // 正常情况下移除 WS_EX_NOACTIVATE 后鼠标按下已经会激活窗口；显式
-                    // Activate 也覆盖某些分层窗口/窗口管理工具的特殊激活行为。
+                    // Normally removing WS_EX_NOACTIVATE already activates on mouse-down; explicit
+                    // Activate also covers odd activation behavior from some layered windows / window managers.
                     Activate();
                     dragging = true;
                     player.BeingDragged = true;
@@ -2688,7 +2688,7 @@ namespace DeskMadeline
                     {
                         dragging = false;
                         player.BeingDragged = false;
-                        // 投掷：继承鼠标速度（转游戏单位，限速）
+                        // Throw: inherit mouse velocity (convert to game units, clamp)
                         float vx = cursorVel.X / GameScale * 0.6f;
                         float vy = cursorVel.Y / GameScale * 0.6f;
                         float len = (float)Math.Sqrt(vx * vx + vy * vy);
@@ -2704,7 +2704,7 @@ namespace DeskMadeline
             base.WndProc(ref m);
         }
 
-        // ================= 托盘 =================
+        // ================= Tray =================
         string T(string en, string zh) => english ? en : zh;
 
         void SaveSettings()
@@ -2743,7 +2743,7 @@ namespace DeskMadeline
             if (english == useEnglish) return;
             english = useEnglish;
             SaveSettings();
-            // 菜单点击事件结束后重建，避免在 WinForms 正在派发事件时释放当前菜单。
+            // Rebuild after the menu click unwinds so we do not dispose the menu WinForms is still dispatching.
             BeginInvoke(new Action(() =>
             {
                 var old = trayMenu;
@@ -3329,7 +3329,7 @@ namespace DeskMadeline
 
         Icon BuildTrayIcon()
         {
-            // 用玛德琳头像做托盘图标（头像非像素风，平滑缩小）
+            // Build tray icon from Madeline portrait (not pixel art; smooth downscale)
             var path = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "portrait.png");
             try
             {
@@ -3345,7 +3345,7 @@ namespace DeskMadeline
                         g.DrawImage(src, 0, 0, 32, 32);
                     }
                     IntPtr hIcon = bmp.GetHicon();
-                    trayIconHandle = hIcon;   // 记录句柄，退出时 DestroyIcon
+                    trayIconHandle = hIcon;   // Keep handle; DestroyIcon on exit
                     bmp.Dispose();
                     return Icon.FromHandle(hIcon);
                 }
@@ -3353,23 +3353,23 @@ namespace DeskMadeline
             catch { return SystemIcons.Application; }
         }
 
-        // 离开屏幕很远自动重置（防"无限下落" / 被拖拽甩出虚拟屏幕）
+        // Auto-reset when far off-screen (prevents infinite fall / being thrown off the virtual desktop)
         void CheckAutoReset()
         {
             if (dragging || introWakeUp) return;
             var vs = SystemInformation.VirtualScreen;
             float gx = player.Pos.X * GameScale;
             float gy = player.Pos.Y * GameScale;
-            // 阈值：横向超出 1 个屏宽、纵向超出 1.5 个屏高，视为"离开很远"
+            // Threshold: more than 1 screen width horizontally or 1.5 screen heights vertically counts as "far away"
             bool far = gx < vs.Left - vs.Width || gx > vs.Right + vs.Width ||
                        gy < vs.Top - vs.Height * 1.5f || gy > vs.Bottom + vs.Height * 1.5f;
             if (far) ResetPosition();
         }
 
-        // 重置：从当前所在屏幕顶部中央出现，然后自由下落
+        // Reset: appear at top-center of the current screen, then free-fall
         void ResetPosition()
         {
-            // 先钳制到虚拟屏幕范围内（防"无限下落"时坐标溢出选错显示器）
+            // Clamp into the virtual screen first (prevents wrong monitor pick when coords overflow during infinite fall)
             var vs = SystemInformation.VirtualScreen;
             float px = Math.Max(vs.Left, Math.Min(player.Pos.X * GameScale, vs.Right - 1f));
             float py = Math.Max(vs.Top, Math.Min(player.Pos.Y * GameScale, vs.Bottom - 1f));
@@ -3399,13 +3399,13 @@ namespace DeskMadeline
         {
             running = false;
             SaveSettings();
-            // 等游戏循环线程结束当前帧再释放资源，避免渲染线程还在使用 GPU 对象
+            // Wait for the game-loop thread to finish the current frame before releasing resources so the render thread is not still using GPU objects
             if (loopThread != null && loopThread != Thread.CurrentThread)
                 loopThread.Join(1500);
             soundEffects.Dispose();
             tray.Visible = false;
             tray.Dispose();
-            // 释放托盘图标 HICON 与 Direct3D / DirectComposition 资源
+            // Release tray-icon HICON and Direct3D / DirectComposition resources
             if (trayIconHandle != IntPtr.Zero) { Win32.DestroyIcon(trayIconHandle); trayIconHandle = IntPtr.Zero; }
             presenter?.Dispose();
             foreach (var trail in dashTrails) trail.Mask?.Dispose();
@@ -3478,7 +3478,7 @@ namespace DeskMadeline
         }
     }
 
-    /// <summary>提升定时器精度（winmm）。</summary>
+    /// <summary>Raise timer resolution (winmm).</summary>
     static class TimePeriod
     {
         [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint uMilliseconds);

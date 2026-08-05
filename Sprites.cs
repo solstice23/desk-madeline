@@ -8,25 +8,25 @@ using System.Linq;
 
 namespace DeskMadeline
 {
-    /// <summary>一段动画：帧序列 + 延迟 + 播放方式。</summary>
+    /// <summary>One animation: frame sequence + delay + playback mode.</summary>
     public class Anim
     {
         public string[] Frames;
         public float Delay;
-        public bool Loop;      // 循环
-        public bool Manual;    // 帧由代码驱动（攀爬）
-        public string Goto;    // 播完后切换（SpriteBank goto）
+        public bool Loop;      // loop
+        public bool Manual;    // frames driven by code (climb)
+        public string Goto;    // switch after finish (SpriteBank goto)
     }
 
-    /// <summary>动画播放器：跟踪当前动画、帧计时。</summary>
+    /// <summary>Animation player: tracks current anim and frame timing.</summary>
     public class Animator
     {
         public string CurrentId;
         public int Frame;
         public float Timer;
-        public bool Finished;   // 非循环动画播完
-        public float PlayTime;  // 当前动画已播放时长
-        public int LoopCount;   // 当前动画循环完成的次数
+        public bool Finished;   // non-looping animation finished
+        public float PlayTime;  // elapsed time of current animation
+        public int LoopCount;   // times the current animation has fully looped
 
         private Dictionary<string, Anim> _anims;
 
@@ -83,7 +83,7 @@ namespace DeskMadeline
             }
         }
 
-        /// <summary>头发编辑器：在当前动画内前后步进帧（循环）。</summary>
+        /// <summary>Hair editor: step frames forward/back within the current anim (wraps).</summary>
         public void StepFrame(int delta)
         {
             if (CurrentId == null || !_anims.TryGetValue(CurrentId, out var a) || a.Frames.Length == 0) return;
@@ -92,7 +92,7 @@ namespace DeskMadeline
         }
     }
 
-    /// <summary>贴图库：加载 PNG、水平翻转副本、染色绘制。</summary>
+    /// <summary>Sprite library: load PNGs, horizontal flip copies, tinted draw.</summary>
     public static class Sprites
     {
         private static readonly Dictionary<string, Bitmap> _tex = new Dictionary<string, Bitmap>(StringComparer.OrdinalIgnoreCase);
@@ -163,7 +163,7 @@ namespace DeskMadeline
             if (id == null) return null;
             var dict = flipped ? _texFlip : _tex;
             if (dict.TryGetValue(id, out var b)) return b;
-            // 兼容缺帧：去掉尾部数字回退到同前缀 00
+            // Missing-frame fallback: strip trailing digits and fall back to same-prefix 00
             string baseId = id.TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9');
             if (dict.TryGetValue(baseId + "00", out b)) return b;
             if (dict.TryGetValue(baseId, out b)) return b;
@@ -172,7 +172,7 @@ namespace DeskMadeline
 
         public static bool Has(string id) => _tex.ContainsKey(id);
 
-        /// <summary>按帧序列生成帧 id 列表（前缀 + 两位序号，或单个无前缀帧）。</summary>
+        /// <summary>Build frame-id list from a sequence (prefix + two-digit index, or a single unprefixed frame).</summary>
         public static string[] Seq(string prefix, int from, int to)
         {
             var list = new List<string>();
@@ -184,7 +184,7 @@ namespace DeskMadeline
             return list.ToArray();
         }
 
-        // ---------- 染色绘制 ----------
+        // ---------- Tinted drawing ----------
         private static readonly ImageAttributes _tintAttr = new ImageAttributes();
         private static readonly ColorMatrix _tintMatrix = new ColorMatrix();
         private static readonly ImageAttributes _silhouetteAttr = new ImageAttributes();
@@ -198,9 +198,9 @@ namespace DeskMadeline
             new float[] { 1, 1, 1, 1, 0 },
             new float[] { 0, 0, 0, 0, 1 }
         });
-        private static readonly PointF[] _destPts = new PointF[3];   // 缓存，避免每帧分配数组（渲染为单线程）
+        private static readonly PointF[] _destPts = new PointF[3];   // cache to avoid per-frame array alloc (render is single-threaded)
 
-        /// <summary>以乘法染色绘制（贴图应为白色/灰色基底），alpha 可乘（1=不透明）。</summary>
+        /// <summary>Multiplicative tint draw (texture should be white/gray base); alpha multiplies (1 = opaque).</summary>
         public static void DrawTinted(Graphics g, Bitmap src, Color tint, float x, float y, float w, float h, float alpha = 1f)
         {
             _tintMatrix.Matrix00 = tint.R / 255f;

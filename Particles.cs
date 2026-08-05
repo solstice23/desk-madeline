@@ -4,27 +4,27 @@ using System.Drawing;
 
 namespace DeskMadeline
 {
-    /// <summary>粒子行为定义（参数移植自 Celeste ParticleType）。</summary>
+    /// <summary>Particle behavior definition (parameters ported from Celeste ParticleType).</summary>
     public class PType
     {
-        public string[] Tex;        // 纹理 id 组（发射时随机选一个）
+        public string[] Tex;        // texture id set (pick one at random on emit)
         public Color Color = Color.White;
         public Color Color2 = Color.White;
         public bool BlinkColor;
         public bool ChooseColor;
-        public float GravY;         // 重力（px/s²，正=向下）
-        public float Friction;      // 摩擦（px/s²，减速）
+        public float GravY;         // gravity (px/s^2, positive = down)
+        public float Friction;      // friction (px/s^2, slows down)
         public float LifeMin = 0.3f, LifeMax = 0.5f;
-        public float Size = 5f;     // 尺寸（游戏像素）
+        public float Size = 5f;     // size (game pixels)
         public float SizeRange;
         public float SpeedMin = 5f, SpeedMax = 15f;
         public float SpeedMultiplier = 1f;
-        public bool ScaleOut;       // 消亡时缩小
-        public bool FadeOut = true; // 消亡时淡出
-        public bool LateFade;       // 原作 Late：仅最后 25% 生命周期淡出
+        public bool ScaleOut;       // shrink on death
+        public bool FadeOut = true; // fade out on death
+        public bool LateFade;       // vanilla Late: fade only in the last 25% of lifetime
     }
 
-    /// <summary>单个粒子（持有所用贴图引用）。</summary>
+    /// <summary>Single particle (holds its texture reference).</summary>
     public struct Particle
     {
         public float X, Y, VX, VY;
@@ -43,15 +43,15 @@ namespace DeskMadeline
     }
 
     /// <summary>
-    /// 轻量粒子系统：发射/更新/绘制。坐标=游戏像素（世界空间），
-    /// 绘制时相对相机平移并吸附到整数像素（×整数倍放大=像素完美）。
+    /// Lightweight particle system: emit / update / draw. Coordinates = game pixels (world space);
+    /// drawn relative to the camera and snapped to integer pixels (integer upscale = pixel-perfect).
     /// </summary>
     public class ParticleSystem
     {
         readonly Random rng = new Random();
         readonly List<Particle> parts = new List<Particle>();
 
-        /// <summary>在 (x,y) 以方向 dir（弧度）±dirRange 发射 count 个粒子。</summary>
+        /// <summary>Emit count particles at (x,y) with direction dir (radians) ± dirRange.</summary>
         public void Emit(PType t, float x, float y, float dir, float dirRange, int count)
             => Emit(t, x, y, dir, dirRange, count, 0f, 0f);
 
@@ -137,7 +137,7 @@ namespace DeskMadeline
             }
         }
 
-        /// <summary>绘制进 1x 画布（camX/camY = 世界→画布偏移）。</summary>
+        /// <summary>Draw into the 1x canvas (camX/camY = world→canvas offset).</summary>
         public void Draw(Graphics g, float camX, float camY)
         {
             for (int i = 0; i < parts.Count; i++)
