@@ -21,6 +21,7 @@ adding an assertion, and what these need is a fixed timestep and vanilla's const
 | `GridChecks.cs` | Whole-pixel grid: climbing a wall at every window/drag offset, window borders surviving the snap at every scale, landing on a window top, respawn after a Seeker death landing on whole pixels |
 | `DreamChecks.cs` | Dream blocks: death position on straight and diagonal dashes, the display-edge rule on both axes, assist mode bouncing instead of dying, being held silent and still inside a block |
 | `SoundChecks.cs` | Super and hyper at each input timing: one dash sound, the jump, and its super or superslide layer |
+| `DreamHyperChecks.cs` | The dream hyper, and the crouch on the way in that decides whether it lands as a hyper or a super |
 | `SettingsChecks.cs` | Settings defaults on a fresh install, and an existing `settings.txt` still winning |
 | `SnapChecks.cs` | Snapping back onto the displays after a drag, including seams between mismatched monitors and each wrap axis |
 | `SoundBankChecks.cs` | Every event the port plays resolves in Celeste's banks (opt-in, see above) |

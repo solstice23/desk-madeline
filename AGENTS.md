@@ -62,6 +62,11 @@ without its engine context silently changes input windows.
   the dash floor snap runs after the state machine and before `MoveH`.
 - Guard conditions are as much a part of the port as the numbers. `onGround` is only
   evaluated while `Speed.Y >= 0`; `lastClimbMove` is sampled before the slip override.
+- Some correct behaviour looks like a bug from the outside. A dream hyper comes out a super
+  whenever she reached the block already crouched, because `DashBegin` stands up an airborne
+  crouched player and its `else if` cannot crouch her again — which is the whole reason
+  Celeste players say not to demo-dash into the block. Forcing the crouch there would "fix"
+  the report and break the rule. `DreamHyperChecks` pins both outcomes.
 - *When* input is sampled is itself a mechanic. Vanilla refreshes `lastAim` every frame and
   `DashCoroutine` reads it when it resumes, after the freeze - so the aim held about four
   frames *after* the dash press is the one that counts. Latching input at the press frame
