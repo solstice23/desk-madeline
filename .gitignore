@@ -9,3 +9,4 @@ keybindings.txt
 # Local reference dumps used to cross-check Celeste behavior/assets.
 celeste_graphics_dump/
 celeste_reference/
+example_skins/
