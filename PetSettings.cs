@@ -64,8 +64,8 @@ namespace DeskMadeline
                 ReadBool(values, "Invincible", ref result.Invincible);
                 if (values.TryGetValue("DashMode", out string dash) && int.TryParse(dash, out int dashValue))
                     result.DashMode = dashValue < 0 ? -1 : Math.Max(0, Math.Min(2, dashValue));
-                if (values.TryGetValue("Language", out string language) &&
-                    (language == "en" || language == "zh")) result.Language = language;
+                if (values.TryGetValue("Language", out string language) && language.Length > 0)
+                    result.Language = language.Trim();
                 if (values.TryGetValue("Skin", out string skin) && skin.Length > 0) result.Skin = skin;
                 ReadBool(values, "CatTailEnabled", ref result.CatTailEnabled);
                 ReadBool(values, "CatBangsEnabled", ref result.CatBangsEnabled);

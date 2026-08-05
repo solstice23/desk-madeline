@@ -120,7 +120,6 @@ namespace DeskMadeline
         float dashVisualTimer = -1f;
         int dashTrailStage;
         float dreamTrailTimer;
-        bool english = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "zh";
         const int CatTailCount = 8;
         readonly PointF[] catTailNodes = new PointF[CatTailCount];
         readonly Color[] customHairColors = new Color[3];
@@ -217,8 +216,7 @@ namespace DeskMadeline
             soundEffects = new SoundEffects(
                 () => IsPetInputWindow(Win32.GetForegroundWindow()),
                 settings.SfxMode, settings.SfxVolume);
-            if (settings.Language == "en") english = true;
-            else if (settings.Language == "zh") english = false;
+            Loc.SetLanguage(Loc.DetectDefault(settings.Language));
             bindings = new KeyBindings(System.IO.Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory, "keybindings.txt"));
             // Cap log growth: rewrite when over 5MB (keeps the latest run)
@@ -369,7 +367,7 @@ namespace DeskMadeline
             trayMenu = BuildMenu();
             tray = new NotifyIcon
             {
-                Text = T("Madeline", "玛德琳"),
+                Text = Loc.T("App.Name"),
                 Icon = BuildTrayIcon(),
                 ContextMenuStrip = trayMenu,
                 Visible = true
@@ -1677,7 +1675,7 @@ namespace DeskMadeline
             }
         }
 
-        internal string Localize(string en, string zh) => T(en, zh);
+        internal string Localize(string key) => Loc.T(key);
 
         internal void RequestGliderRemoval(Glider glider)
         {
@@ -2705,7 +2703,6 @@ namespace DeskMadeline
         }
 
         // ================= Tray =================
-        string T(string en, string zh) => english ? en : zh;
 
         void SaveSettings()
         {
@@ -2718,7 +2715,7 @@ namespace DeskMadeline
             settings.InfiniteStamina = player.InfiniteStamina;
             settings.Invincible = player.Invincible;
             settings.DashMode = player.DashMode;
-            settings.Language = english ? "en" : "zh";
+            settings.Language = Loc.CurrentCode;
             settings.Skin = skinManager.Active?.Id ?? SkinManager.DefaultId;
             settings.CatTailEnabled = catTailEnabled;
             settings.CatBangsEnabled = catBangsEnabled;
@@ -2738,10 +2735,11 @@ namespace DeskMadeline
             settings.Save();
         }
 
-        void ChangeLanguage(bool useEnglish)
+        void ChangeLanguage(string code)
         {
-            if (english == useEnglish) return;
-            english = useEnglish;
+            if (string.IsNullOrWhiteSpace(code)) return;
+            if (Loc.CurrentCode.Equals(code, StringComparison.OrdinalIgnoreCase)) return;
+            Loc.SetLanguage(code);
             SaveSettings();
             // Rebuild after the menu click unwinds so we do not dispose the menu WinForms is still dispatching.
             BeginInvoke(new Action(() =>
@@ -2749,7 +2747,7 @@ namespace DeskMadeline
                 var old = trayMenu;
                 trayMenu = BuildMenu();
                 tray.ContextMenuStrip = trayMenu;
-                tray.Text = T("Madeline", "玛德琳");
+                tray.Text = Loc.T("App.Name");
                 old?.Dispose();
             }));
         }
@@ -2758,21 +2756,21 @@ namespace DeskMadeline
         {
             return action switch
             {
-                PetAction.Left => T("Left", "左"),
-                PetAction.Right => T("Right", "右"),
-                PetAction.Up => T("Up", "上"),
-                PetAction.Down => T("Down", "下"),
-                PetAction.Jump => T("Jump", "跳跃"),
-                PetAction.Dash => T("Dash", "冲刺"),
-                PetAction.Grab => T("Grab", "抓取"),
-                PetAction.CrouchDash => T("Crouch Dash", "蹲冲"),
-                PetAction.DeployElytra => T("Deploy Elytra", "展开鞘翅"),
+                PetAction.Left => Loc.T("Action.Left"),
+                PetAction.Right => Loc.T("Action.Right"),
+                PetAction.Up => Loc.T("Action.Up"),
+                PetAction.Down => Loc.T("Action.Down"),
+                PetAction.Jump => Loc.T("Action.Jump"),
+                PetAction.Dash => Loc.T("Action.Dash"),
+                PetAction.Grab => Loc.T("Action.Grab"),
+                PetAction.CrouchDash => Loc.T("Action.CrouchDash"),
+                PetAction.DeployElytra => Loc.T("Action.DeployElytra"),
                 _ => action.ToString()
             };
         }
 
         string KeyName(int virtualKey)
-            => virtualKey == 0 ? T("Unbound", "未绑定") : ((Keys)virtualKey).ToString();
+            => virtualKey == 0 ? Loc.T("Keys.Unbound") : ((Keys)virtualKey).ToString();
 
         void RefreshBindingItems(ToolStripMenuItem actionItem, PetAction action)
         {
@@ -2783,7 +2781,7 @@ namespace DeskMadeline
 
         ToolStripMenuItem BuildBindingsMenu()
         {
-            var root = new ToolStripMenuItem(T("Key bindings", "按键绑定"));
+            var root = new ToolStripMenuItem(Loc.T("Keys.Root"));
             foreach (PetAction action in KeyBindings.Actions)
             {
                 var actionItem = new ToolStripMenuItem(ActionName(action));
@@ -2792,19 +2790,18 @@ namespace DeskMadeline
                 {
                     int slot = i;
                     var slotItem = new ToolStripMenuItem((i + 1) + ": " + KeyName(values[i]));
-                    slotItem.DropDownItems.Add(new ToolStripMenuItem(T("Change…", "更改…"), null, (_, __) =>
+                    slotItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.Change"), null, (_, __) =>
                     {
                         using var capture = new KeyCaptureDialog(
-                            T("Bind " + ActionName(action), "绑定" + ActionName(action)),
-                            T("Press a key. Backspace/Delete clears this slot; Esc cancels.",
-                              "请按一个键。Backspace/Delete 清除此栏；Esc 取消。"));
+                            Loc.Format("Keys.BindTitle", ActionName(action)),
+                            Loc.T("Keys.CaptureHint"));
                         if (capture.ShowDialog(this) == DialogResult.OK)
                         {
                             bindings.Set(action, slot, capture.CapturedKey);
                             RefreshBindingItems(actionItem, action);
                         }
                     }));
-                    slotItem.DropDownItems.Add(new ToolStripMenuItem(T("Unbind", "解除绑定"), null, (_, __) =>
+                    slotItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.Unbind"), null, (_, __) =>
                     {
                         bindings.Set(action, slot, 0);
                         RefreshBindingItems(actionItem, action);
@@ -2814,7 +2811,7 @@ namespace DeskMadeline
                 root.DropDownItems.Add(actionItem);
             }
             root.DropDownItems.Add(new ToolStripSeparator());
-            root.DropDownItems.Add(new ToolStripMenuItem(T("Reset defaults", "恢复默认"), null, (_, __) =>
+            root.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.ResetDefaults"), null, (_, __) =>
             {
                 bindings.ResetDefaults();
                 // Rebuild so every open slot label reflects the reset values.
@@ -2833,14 +2830,21 @@ namespace DeskMadeline
         {
             var menu = new ContextMenuStrip();
 
-            var languageItem = new ToolStripMenuItem(T("Language", "语言"));
-            languageItem.DropDownItems.Add(new ToolStripMenuItem("English", null, (_, __) => ChangeLanguage(true))
-                { Checked = english });
-            languageItem.DropDownItems.Add(new ToolStripMenuItem("中文", null, (_, __) => ChangeLanguage(false))
-                { Checked = !english });
+            var languageItem = new ToolStripMenuItem(Loc.T("Menu.Language"));
+            foreach (LanguageInfo lang in Loc.Languages)
+            {
+                string code = lang.Code;
+                var choice = new ToolStripMenuItem(lang.NativeName)
+                {
+                    Checked = Loc.CurrentCode.Equals(code, StringComparison.OrdinalIgnoreCase),
+                    Tag = code
+                };
+                choice.Click += (_, __) => ChangeLanguage(code);
+                languageItem.DropDownItems.Add(choice);
+            }
             menu.Items.Add(languageItem);
 
-            var skinItem = new ToolStripMenuItem(T("Skin", "皮肤"));
+            var skinItem = new ToolStripMenuItem(Loc.T("Menu.Skin"));
             void AddSkinChoice(string id, string label)
             {
                 var choice = new ToolStripMenuItem(label)
@@ -2858,10 +2862,10 @@ namespace DeskMadeline
                 };
                 skinItem.DropDownItems.Add(choice);
             }
-            AddSkinChoice(SkinManager.DefaultId, T("Default Madeline", "默认玛德琳"));
+            AddSkinChoice(SkinManager.DefaultId, Loc.T("Skin.Default"));
             foreach (var skin in skinManager.Skins) AddSkinChoice(skin.Id, skin.DisplayName);
             skinItem.DropDownItems.Add(new ToolStripSeparator());
-            skinItem.DropDownItems.Add(new ToolStripMenuItem(T("Refresh skins", "刷新皮肤"), null, (_, __) =>
+            skinItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Skin.Refresh"), null, (_, __) =>
             {
                 // Re-scan archives and reload the selected skin as well.  Reloading
                 // matters when an existing zip was replaced, not just when a new one
@@ -2879,7 +2883,7 @@ namespace DeskMadeline
                     old?.Dispose();
                 }));
             }));
-            skinItem.DropDownItems.Add(new ToolStripMenuItem(T("Open skins folder", "打开皮肤文件夹"), null, (_, __) =>
+            skinItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Skin.OpenFolder"), null, (_, __) =>
             {
                 string skinsDirectory = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "skins");
                 try
@@ -2893,14 +2897,14 @@ namespace DeskMadeline
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(ex.Message, T("Could not open skins folder", "无法打开皮肤文件夹"),
+                    MessageBox.Show(ex.Message, Loc.T("Skin.OpenFolderFailed"),
                         MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }));
             menu.Items.Add(skinItem);
 
-            var cosmeticsItem = new ToolStripMenuItem(T("Cosmetics", "装饰"));
-            var catTailItem = new ToolStripMenuItem(T("Cat tail", "猫尾")) { Checked = catTailEnabled };
+            var cosmeticsItem = new ToolStripMenuItem(Loc.T("Menu.Cosmetics"));
+            var catTailItem = new ToolStripMenuItem(Loc.T("Cosmetics.CatTail")) { Checked = catTailEnabled };
             catTailItem.Click += (_, __) =>
             {
                 catTailEnabled = !catTailEnabled;
@@ -2909,7 +2913,7 @@ namespace DeskMadeline
                 SaveSettings();
             };
             cosmeticsItem.DropDownItems.Add(catTailItem);
-            var catBangsItem = new ToolStripMenuItem(T("Cat bangs", "猫耳刘海")) { Checked = catBangsEnabled };
+            var catBangsItem = new ToolStripMenuItem(Loc.T("Cosmetics.CatBangs")) { Checked = catBangsEnabled };
             catBangsItem.Click += (_, __) =>
             {
                 catBangsEnabled = !catBangsEnabled;
@@ -2919,8 +2923,8 @@ namespace DeskMadeline
             cosmeticsItem.DropDownItems.Add(catBangsItem);
             menu.Items.Add(cosmeticsItem);
 
-            var hairColorsItem = new ToolStripMenuItem(T("Hair colors", "头发颜色"));
-            var hairColorsEnabledItem = new ToolStripMenuItem(T("Use custom colors", "使用自定义颜色"))
+            var hairColorsItem = new ToolStripMenuItem(Loc.T("Menu.HairColors"));
+            var hairColorsEnabledItem = new ToolStripMenuItem(Loc.T("Hair.UseCustom"))
                 { Checked = customHairColorsEnabled };
             hairColorsEnabledItem.Click += (_, __) =>
             {
@@ -2930,7 +2934,7 @@ namespace DeskMadeline
             };
             hairColorsItem.DropDownItems.Add(hairColorsEnabledItem);
             hairColorsItem.DropDownItems.Add(new ToolStripSeparator());
-            string[] colorNames = { T("No dashes", "无冲刺"), T("One dash", "一次冲刺"), T("Two dashes", "两次冲刺") };
+            string[] colorNames = { Loc.T("Hair.NoDashes"), Loc.T("Hair.OneDash"), Loc.T("Hair.TwoDashes") };
             var colorItems = new ToolStripMenuItem[3];
             void RefreshColorLabels()
             {
@@ -2960,7 +2964,7 @@ namespace DeskMadeline
             }
             RefreshColorLabels();
             hairColorsItem.DropDownItems.Add(new ToolStripSeparator());
-            hairColorsItem.DropDownItems.Add(new ToolStripMenuItem(T("Reset Celeste colors", "恢复原版颜色"), null, (_, __) =>
+            hairColorsItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Hair.ResetCeleste"), null, (_, __) =>
             {
                 customHairColors[0] = Player.UsedHairColor;
                 customHairColors[1] = Player.NormalHairColor;
@@ -2970,7 +2974,7 @@ namespace DeskMadeline
             }));
             menu.Items.Add(hairColorsItem);
 
-            var scaleItem = new ToolStripMenuItem(T("Scale (nearest-neighbor)", "缩放（等比放大）"));
+            var scaleItem = new ToolStripMenuItem(Loc.T("Menu.Scale"));
             foreach (var v in new[] { 2, 3, 4, 5, 6, 8 })
             {
                 var item = new ToolStripMenuItem(v + "x") { Tag = v, Checked = v == GameScale };
@@ -2985,12 +2989,12 @@ namespace DeskMadeline
             menu.Items.Add(scaleItem);
 
             ToolStripMenuItem inputItem = null;
-            inputItem = new ToolStripMenuItem(T("Keyboard controls", "键盘控制"), null, (_, __) =>
+            inputItem = new ToolStripMenuItem(Loc.T("Menu.KeyboardControls"), null, (_, __) =>
             { InputEnabled = !InputEnabled; inputItem.Checked = InputEnabled; SaveSettings(); })
             { Checked = InputEnabled };
             menu.Items.Add(inputItem);
             ToolStripMenuItem unfocusedInputItem = null;
-            unfocusedInputItem = new ToolStripMenuItem(T("Respond while unfocused", "失焦时也响应输入"), null, (_, __) =>
+            unfocusedInputItem = new ToolStripMenuItem(Loc.T("Menu.RespondUnfocused"), null, (_, __) =>
             {
                 InputWhenUnfocused = !InputWhenUnfocused;
                 unfocusedInputItem.Checked = InputWhenUnfocused;
@@ -3000,7 +3004,7 @@ namespace DeskMadeline
             menu.Items.Add(BuildBindingsMenu());
 
             ToolStripMenuItem topItem = null;
-            topItem = new ToolStripMenuItem(T("Always on top", "总是置顶"), null, (_, __) =>
+            topItem = new ToolStripMenuItem(Loc.T("Menu.AlwaysOnTop"), null, (_, __) =>
             {
                 AlwaysOnTop = !AlwaysOnTop;
                 topItem.Checked = AlwaysOnTop;
@@ -3014,7 +3018,7 @@ namespace DeskMadeline
             { Checked = AlwaysOnTop };
             menu.Items.Add(topItem);
 
-            var startupItem = new ToolStripMenuItem(T("Launch at sign-in", "登录时启动"))
+            var startupItem = new ToolStripMenuItem(Loc.T("Menu.LaunchAtSignIn"))
             {
                 Checked = StartupRegistration.IsEnabled()
             };
@@ -3028,18 +3032,18 @@ namespace DeskMadeline
                 catch (Exception ex)
                 {
                     MessageBox.Show(ex.Message,
-                        T("Could not change sign-in startup", "无法更改登录启动设置"),
+                        Loc.T("Startup.ChangeFailed"),
                         MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             };
             menu.Items.Add(startupItem);
 
-            var sfxItem = new ToolStripMenuItem(T("Sound effects", "音效"));
+            var sfxItem = new ToolStripMenuItem(Loc.T("Menu.SoundEffects"));
             foreach (var option in new[]
             {
-                new KeyValuePair<int, string>(0, T("Off", "关闭")),
-                new KeyValuePair<int, string>(1, T("Only when focused", "仅聚焦时")),
-                new KeyValuePair<int, string>(2, T("On", "开启"))
+                new KeyValuePair<int, string>(0, Loc.T("Common.Off")),
+                new KeyValuePair<int, string>(1, Loc.T("Sfx.OnlyWhenFocused")),
+                new KeyValuePair<int, string>(2, Loc.T("Common.On"))
             })
             {
                 int mode = option.Key;
@@ -3061,7 +3065,7 @@ namespace DeskMadeline
             sfxItem.DropDownItems.Add(new ToolStripSeparator());
             var volumeItem = new ToolStripMenuItem();
             void RefreshVolumeLabel() => volumeItem.Text =
-                T("Volume", "音量") + ": " + soundEffects.Volume + "%";
+                Loc.T("Sfx.Volume") + ": " + soundEffects.Volume + "%";
             for (int volume = 0; volume <= 100; volume += 10)
             {
                 int value = volume;
@@ -3083,43 +3087,43 @@ namespace DeskMadeline
             RefreshVolumeLabel();
             sfxItem.DropDownItems.Add(volumeItem);
             sfxItem.DropDownItems.Add(new ToolStripSeparator());
-            var surfaceItem = new ToolStripMenuItem(T("Surface material", "表面材质"));
+            var surfaceItem = new ToolStripMenuItem(Loc.T("Sfx.SurfaceMaterial"));
             foreach (var option in new[]
             {
-                new KeyValuePair<int, string>(1, T("Asphalt", "沥青")),
-                new KeyValuePair<int, string>(2, T("Car", "汽车")),
-                new KeyValuePair<int, string>(3, T("Dirt", "泥土")),
-                new KeyValuePair<int, string>(4, T("Snow", "雪地")),
-                new KeyValuePair<int, string>(5, T("Wood", "木材")),
-                new KeyValuePair<int, string>(6, T("Stone bridge", "石桥")),
-                new KeyValuePair<int, string>(7, T("Girder", "钢梁")),
-                new KeyValuePair<int, string>(8, T("Brick (Default)", "砖块（默认）")),
-                new KeyValuePair<int, string>(9, T("Zip mover", "轨道方块")),
-                new KeyValuePair<int, string>(11, T("Inactive Dream Block", "未激活梦境方块")),
-                new KeyValuePair<int, string>(12, T("Active Dream Block", "激活梦境方块")),
-                new KeyValuePair<int, string>(13, T("Resort wood", "度假村木材")),
-                new KeyValuePair<int, string>(14, T("Resort roof", "度假村屋顶")),
-                new KeyValuePair<int, string>(15, T("Resort sinking platform", "度假村下沉平台")),
-                new KeyValuePair<int, string>(16, T("Resort basement tile", "度假村地下室")),
-                new KeyValuePair<int, string>(17, T("Resort linens", "度假村布料")),
-                new KeyValuePair<int, string>(18, T("Resort boxes", "度假村纸箱")),
-                new KeyValuePair<int, string>(19, T("Resort books", "度假村书本")),
-                new KeyValuePair<int, string>(20, T("Clutter door", "杂物门")),
-                new KeyValuePair<int, string>(21, T("Clutter switch", "杂物开关")),
-                new KeyValuePair<int, string>(22, T("Resort elevator", "度假村电梯")),
-                new KeyValuePair<int, string>(23, T("Cliffside snow", "山脊雪地")),
-                new KeyValuePair<int, string>(25, T("Cliffside grass", "山脊草地")),
-                new KeyValuePair<int, string>(27, T("Cliffside white block", "山脊白块")),
-                new KeyValuePair<int, string>(28, T("Gondola", "缆车")),
-                new KeyValuePair<int, string>(32, T("Aurora glass", "极光玻璃")),
-                new KeyValuePair<int, string>(33, T("Grass", "草地")),
-                new KeyValuePair<int, string>(35, T("Cassette block", "磁带方块")),
-                new KeyValuePair<int, string>(36, T("Core ice", "核心冰面")),
-                new KeyValuePair<int, string>(37, T("Core molten rock", "核心熔岩")),
-                new KeyValuePair<int, string>(40, T("Glitch", "故障方块")),
-                new KeyValuePair<int, string>(42, T("Moon cafe", "月球咖啡馆")),
-                new KeyValuePair<int, string>(43, T("Dream clouds", "梦境云层")),
-                new KeyValuePair<int, string>(44, T("Moon", "月球"))
+                new KeyValuePair<int, string>(1, Loc.T("Surface.Asphalt")),
+                new KeyValuePair<int, string>(2, Loc.T("Surface.Car")),
+                new KeyValuePair<int, string>(3, Loc.T("Surface.Dirt")),
+                new KeyValuePair<int, string>(4, Loc.T("Surface.Snow")),
+                new KeyValuePair<int, string>(5, Loc.T("Surface.Wood")),
+                new KeyValuePair<int, string>(6, Loc.T("Surface.StoneBridge")),
+                new KeyValuePair<int, string>(7, Loc.T("Surface.Girder")),
+                new KeyValuePair<int, string>(8, Loc.T("Surface.BrickDefault")),
+                new KeyValuePair<int, string>(9, Loc.T("Surface.ZipMover")),
+                new KeyValuePair<int, string>(11, Loc.T("Surface.InactiveDreamBlock")),
+                new KeyValuePair<int, string>(12, Loc.T("Surface.ActiveDreamBlock")),
+                new KeyValuePair<int, string>(13, Loc.T("Surface.ResortWood")),
+                new KeyValuePair<int, string>(14, Loc.T("Surface.ResortRoof")),
+                new KeyValuePair<int, string>(15, Loc.T("Surface.ResortSinkingPlatform")),
+                new KeyValuePair<int, string>(16, Loc.T("Surface.ResortBasementTile")),
+                new KeyValuePair<int, string>(17, Loc.T("Surface.ResortLinens")),
+                new KeyValuePair<int, string>(18, Loc.T("Surface.ResortBoxes")),
+                new KeyValuePair<int, string>(19, Loc.T("Surface.ResortBooks")),
+                new KeyValuePair<int, string>(20, Loc.T("Surface.ClutterDoor")),
+                new KeyValuePair<int, string>(21, Loc.T("Surface.ClutterSwitch")),
+                new KeyValuePair<int, string>(22, Loc.T("Surface.ResortElevator")),
+                new KeyValuePair<int, string>(23, Loc.T("Surface.CliffsideSnow")),
+                new KeyValuePair<int, string>(25, Loc.T("Surface.CliffsideGrass")),
+                new KeyValuePair<int, string>(27, Loc.T("Surface.CliffsideWhiteBlock")),
+                new KeyValuePair<int, string>(28, Loc.T("Surface.Gondola")),
+                new KeyValuePair<int, string>(32, Loc.T("Surface.AuroraGlass")),
+                new KeyValuePair<int, string>(33, Loc.T("Surface.Grass")),
+                new KeyValuePair<int, string>(35, Loc.T("Surface.CassetteBlock")),
+                new KeyValuePair<int, string>(36, Loc.T("Surface.CoreIce")),
+                new KeyValuePair<int, string>(37, Loc.T("Surface.CoreMoltenRock")),
+                new KeyValuePair<int, string>(40, Loc.T("Surface.Glitch")),
+                new KeyValuePair<int, string>(42, Loc.T("Surface.MoonCafe")),
+                new KeyValuePair<int, string>(43, Loc.T("Surface.DreamClouds")),
+                new KeyValuePair<int, string>(44, Loc.T("Surface.Moon"))
             })
             {
                 int index = option.Key;
@@ -3140,7 +3144,7 @@ namespace DeskMadeline
             sfxItem.DropDownItems.Add(surfaceItem);
             menu.Items.Add(sfxItem);
 
-            var particleItem = new ToolStripMenuItem(T("Particle effects", "粒子特效"), null, (sender, __) =>
+            var particleItem = new ToolStripMenuItem(Loc.T("Menu.ParticleEffects"), null, (sender, __) =>
             {
                 ParticlesEnabled = !ParticlesEnabled;
                 ((ToolStripMenuItem)sender).Checked = ParticlesEnabled;
@@ -3149,7 +3153,7 @@ namespace DeskMadeline
             { Checked = ParticlesEnabled };
             menu.Items.Add(particleItem);
 
-            var freezeItem = new ToolStripMenuItem(T("Freeze frames", "冻结帧"), null, (sender, __) =>
+            var freezeItem = new ToolStripMenuItem(Loc.T("Menu.FreezeFrames"), null, (sender, __) =>
             {
                 player.SetFreezeFramesEnabled(!player.FreezeFramesEnabled);
                 ((ToolStripMenuItem)sender).Checked = player.FreezeFramesEnabled;
@@ -3159,7 +3163,7 @@ namespace DeskMadeline
             menu.Items.Add(freezeItem);
 
             var respawnReversalItem = new ToolStripMenuItem(
-                T("Respawn reversal animation", "重生逆向动画"), null, (sender, __) =>
+                Loc.T("Menu.RespawnReversal"), null, (sender, __) =>
             {
                 player.RespawnReversalEnabled = !player.RespawnReversalEnabled;
                 ((ToolStripMenuItem)sender).Checked = player.RespawnReversalEnabled;
@@ -3167,7 +3171,7 @@ namespace DeskMadeline
             }) { Checked = player.RespawnReversalEnabled };
             menu.Items.Add(respawnReversalItem);
 
-            var dreamItem = new ToolStripMenuItem(T("Dream Block windows", "梦境方块窗口"), null, (sender, __) =>
+            var dreamItem = new ToolStripMenuItem(Loc.T("Menu.DreamBlockWindows"), null, (sender, __) =>
             {
                 dreamBlockMode = !dreamBlockMode;
                 ((ToolStripMenuItem)sender).Checked = dreamBlockMode;
@@ -3177,13 +3181,13 @@ namespace DeskMadeline
             menu.Items.Add(dreamItem);
 
             var edgeWrapItem = new ToolStripMenuItem(
-                T("Infinite screen edges (Experimental)", "无限屏幕边缘（实验性）"));
+                Loc.T("Menu.EdgeWrap"));
             foreach (var option in new[]
             {
-                new KeyValuePair<int, string>(0, T("Off", "关闭")),
-                new KeyValuePair<int, string>(1, T("Horizontal", "水平")),
-                new KeyValuePair<int, string>(2, T("Vertical", "垂直")),
-                new KeyValuePair<int, string>(3, T("Both", "水平和垂直"))
+                new KeyValuePair<int, string>(0, Loc.T("Common.Off")),
+                new KeyValuePair<int, string>(1, Loc.T("Common.Horizontal")),
+                new KeyValuePair<int, string>(2, Loc.T("Common.Vertical")),
+                new KeyValuePair<int, string>(3, Loc.T("EdgeWrap.Both"))
             })
             {
                 int mode = option.Key;
@@ -3205,7 +3209,7 @@ namespace DeskMadeline
             menu.Items.Add(edgeWrapItem);
 
             var elytraItem = new ToolStripMenuItem(
-                T("Elytra mode (CommunalHelper)", "鞘翅模式（CommunalHelper）"), null, (sender, __) =>
+                Loc.T("Menu.Elytra"), null, (sender, __) =>
             {
                 player.ElytraEnabled = !player.ElytraEnabled;
                 ((ToolStripMenuItem)sender).Checked = player.ElytraEnabled;
@@ -3213,14 +3217,14 @@ namespace DeskMadeline
             }) { Checked = player.ElytraEnabled };
             menu.Items.Add(elytraItem);
 
-            var overlaysItem = new ToolStripMenuItem(T("Extra overlays", "额外叠加层"));
-            var speedometerItem = new ToolStripMenuItem(T("Speedometer", "速度计"));
+            var overlaysItem = new ToolStripMenuItem(Loc.T("Menu.ExtraOverlays"));
+            var speedometerItem = new ToolStripMenuItem(Loc.T("Menu.Speedometer"));
             foreach (var option in new[]
             {
-                new KeyValuePair<int, string>(0, T("Off", "关闭")),
-                new KeyValuePair<int, string>(1, T("Horizontal", "水平")),
-                new KeyValuePair<int, string>(2, T("Vertical", "垂直")),
-                new KeyValuePair<int, string>(3, T("Both", "合速度"))
+                new KeyValuePair<int, string>(0, Loc.T("Common.Off")),
+                new KeyValuePair<int, string>(1, Loc.T("Common.Horizontal")),
+                new KeyValuePair<int, string>(2, Loc.T("Common.Vertical")),
+                new KeyValuePair<int, string>(3, Loc.T("Speedometer.Both"))
             })
             {
                 int mode = option.Key;
@@ -3239,7 +3243,7 @@ namespace DeskMadeline
                 speedometerItem.DropDownItems.Add(choice);
             }
             overlaysItem.DropDownItems.Add(speedometerItem);
-            var hitboxesItem = new ToolStripMenuItem(T("Hitboxes", "碰撞箱")) { Checked = hitboxesEnabled };
+            var hitboxesItem = new ToolStripMenuItem(Loc.T("Menu.Hitboxes")) { Checked = hitboxesEnabled };
             hitboxesItem.Click += (_, __) =>
             {
                 hitboxesEnabled = !hitboxesEnabled;
@@ -3249,7 +3253,7 @@ namespace DeskMadeline
             overlaysItem.DropDownItems.Add(hitboxesItem);
             menu.Items.Add(overlaysItem);
 
-            var staminaItem = new ToolStripMenuItem(T("Infinite stamina", "无限体力"), null, (sender, __) =>
+            var staminaItem = new ToolStripMenuItem(Loc.T("Menu.InfiniteStamina"), null, (sender, __) =>
             {
                 player.InfiniteStamina = !player.InfiniteStamina;
                 ((ToolStripMenuItem)sender).Checked = player.InfiniteStamina;
@@ -3257,7 +3261,7 @@ namespace DeskMadeline
             }) { Checked = player.InfiniteStamina };
             menu.Items.Add(staminaItem);
 
-            var invincibleItem = new ToolStripMenuItem(T("Invincible", "无敌模式"), null, (sender, __) =>
+            var invincibleItem = new ToolStripMenuItem(Loc.T("Menu.Invincible"), null, (sender, __) =>
             {
                 player.Invincible = !player.Invincible;
                 ((ToolStripMenuItem)sender).Checked = player.Invincible;
@@ -3265,7 +3269,7 @@ namespace DeskMadeline
             }) { Checked = player.Invincible };
             menu.Items.Add(invincibleItem);
 
-            var dashItem = new ToolStripMenuItem(T("Dash count", "冲刺次数"));
+            var dashItem = new ToolStripMenuItem(Loc.T("Menu.DashCount"));
             foreach (var option in new[]
             {
                 new KeyValuePair<int, string>(0, "0"),
@@ -3292,38 +3296,36 @@ namespace DeskMadeline
             menu.Items.Add(dashItem);
 
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripMenuItem(T("Replay wake-up animation", "回放醒来动画"), null, (_, __) =>
+            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.ReplayWakeUp"), null, (_, __) =>
             {
                 introWakeUp = true;
                 animator.Play("wakeUp", true);
             }));
-            menu.Items.Add(new ToolStripMenuItem(T("Reset position", "重置位置"), null, (_, __) => ResetPosition()));
-            menu.Items.Add(new ToolStripMenuItem(T("Spawn jellyfish", "生成水母"), null, (_, __) =>
+            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.ResetPosition"), null, (_, __) => ResetPosition()));
+            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.SpawnJellyfish"), null, (_, __) =>
                 Interlocked.Increment(ref pendingGliderSpawns)));
-            menu.Items.Add(new ToolStripMenuItem(T("Spawn Seeker", "生成追踪者"), null, (_, __) =>
+            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.SpawnSeeker"), null, (_, __) =>
                 Interlocked.Increment(ref pendingSeekerSpawns)));
-            menu.Items.Add(new ToolStripMenuItem(T("Spawn Theo crystal", "生成西奥水晶"), null, (_, __) =>
+            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.SpawnTheo"), null, (_, __) =>
                 Interlocked.Increment(ref pendingTheoSpawns)));
-            var removeEntitiesItem = new ToolStripMenuItem(T("Remove spawned entities", "移除生成的实体"));
-            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(T("Remove all jellyfish", "移除所有水母"), null,
+            var removeEntitiesItem = new ToolStripMenuItem(Loc.T("Menu.RemoveEntities"));
+            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllJellyfish"), null,
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 1)));
-            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(T("Remove all Seekers", "移除所有追踪者"), null,
+            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllSeekers"), null,
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 2)));
-            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(T("Remove all Theo crystals", "移除所有西奥水晶"), null,
+            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllTheo"), null,
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 4)));
             removeEntitiesItem.DropDownItems.Add(new ToolStripSeparator());
-            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(T("Remove everything", "全部移除"), null,
+            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveEverything"), null,
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 7)));
             menu.Items.Add(removeEntitiesItem);
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripMenuItem(T("Controls", "操作说明"), null, (_, __) =>
+            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.Controls"), null, (_, __) =>
                 MessageBox.Show(
-                    T(
-                        "Click Madeline first to focus her, or enable Respond while unfocused. Keys can be changed under Key bindings (three slots per action). Crouch Dash is separate and unbound by default.\n\nMove: Arrow keys / A D\nJump: C (coyote time + variable height)\nDash: X (8 directions; refills on landing)\nClimb / carry: Hold Grab against a wall, jellyfish, or Theo crystal\n\nTech:\n· Super: press Jump during a grounded dash\n· Hyper: down-diagonal grounded dash, then Jump\n· Wavedash/Ultra: down-diagonal air dash, then Jump on landing\n· Cornerboost: Grab + wall-jump within 0.06s after hitting a wall\n· Left-drag Madeline to throw her\n\nWindows are hollow platforms: stand on borders or climb their sides.",
-                        "先点击玛德琳取得键盘焦点，或启用“失焦时也响应输入”。可在“按键绑定”中修改按键（每项三栏）。蹲冲为独立按键，默认未绑定。\n\n移动：方向键 / AD\n跳跃：C（土狼时间+可变跳高）\n冲刺：X（8方向，着地恢复）\n攀爬/携带：对准墙、靠近水母或西奥水晶时按住抓取\n\n技巧：\n· Super：地面冲刺中按跳跃\n· Hyper：地面斜下冲后按跳跃\n· Wavedash/Ultra：空中斜下冲，落地时按跳跃\n· Cornerboost：冲刺撞墙后 0.06s 内抓墙+蹬墙跳\n· 左键拖着玛德琳甩出去\n\n窗口是空心平台：可站边框、爬侧边。"),
-                    T("Desk Madeline", "玛德琳桌宠"), MessageBoxButtons.OK, MessageBoxIcon.Information)));
+                    Loc.T("Help.ControlsBody"),
+                    Loc.T("App.Title"), MessageBoxButtons.OK, MessageBoxIcon.Information)));
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripMenuItem(T("Exit", "退出"), null, (_, __) => ExitApp()));
+            menu.Items.Add(new ToolStripMenuItem(Loc.T("Common.Exit"), null, (_, __) => ExitApp()));
             return menu;
         }
 

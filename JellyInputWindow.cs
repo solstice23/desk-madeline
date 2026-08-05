@@ -27,7 +27,7 @@ namespace DeskMadeline
 
             var menu = new ContextMenuStrip();
             menu.Items.Add(new ToolStripMenuItem(
-                ownerWindow.Localize("Remove", "移除"), null,
+                ownerWindow.Localize("Common.Remove"), null,
                 (_, __) => ownerWindow.RequestGliderRemoval(Glider)));
             ContextMenuStrip = menu;
         }

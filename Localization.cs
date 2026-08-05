@@ -1,0 +1,327 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+
+namespace DeskMadeline
+{
+    /// <summary>Supported UI language metadata.</summary>
+    internal sealed class LanguageInfo
+    {
+        public string Code { get; }
+        public string NativeName { get; }
+        public LanguageInfo(string code, string nativeName)
+        {
+            Code = code;
+            NativeName = nativeName;
+        }
+    }
+
+    /// <summary>
+    /// Key-based UI localization. English is the fallback; other languages are
+    /// in-code tables below. To add a language: append a <see cref="LanguageInfo"/>,
+    /// add a dictionary entry in <c>translations</c>, and fill every key.
+    /// </summary>
+    internal static class Loc
+    {
+        public const string DefaultCode = "en";
+
+        static readonly LanguageInfo[] languages =
+        {
+            new LanguageInfo("en", "English"),
+            new LanguageInfo("zh", "中文"),
+        };
+
+        // English fallback table (also the canonical key list).
+        static readonly Dictionary<string, string> english = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["App.Name"] = "Madeline",
+            ["App.Title"] = "Desk Madeline",
+            ["Common.Remove"] = "Remove",
+            ["Common.Off"] = "Off",
+            ["Common.On"] = "On",
+            ["Common.Horizontal"] = "Horizontal",
+            ["Common.Vertical"] = "Vertical",
+            ["Common.Exit"] = "Exit",
+            ["Action.Left"] = "Left",
+            ["Action.Right"] = "Right",
+            ["Action.Up"] = "Up",
+            ["Action.Down"] = "Down",
+            ["Action.Jump"] = "Jump",
+            ["Action.Dash"] = "Dash",
+            ["Action.Grab"] = "Grab",
+            ["Action.CrouchDash"] = "Crouch Dash",
+            ["Action.DeployElytra"] = "Deploy Elytra",
+            ["Keys.Root"] = "Key bindings",
+            ["Keys.Unbound"] = "Unbound",
+            ["Keys.Change"] = "Change…",
+            ["Keys.Unbind"] = "Unbind",
+            ["Keys.ResetDefaults"] = "Reset defaults",
+            ["Keys.BindTitle"] = "Bind {0}",
+            ["Keys.CaptureHint"] = "Press a key. Backspace/Delete clears this slot; Esc cancels.",
+            ["Menu.Language"] = "Language",
+            ["Menu.Skin"] = "Skin",
+            ["Skin.Default"] = "Default Madeline",
+            ["Skin.Refresh"] = "Refresh skins",
+            ["Skin.OpenFolder"] = "Open skins folder",
+            ["Skin.OpenFolderFailed"] = "Could not open skins folder",
+            ["Menu.Cosmetics"] = "Cosmetics",
+            ["Cosmetics.CatTail"] = "Cat tail",
+            ["Cosmetics.CatBangs"] = "Cat bangs",
+            ["Menu.HairColors"] = "Hair colors",
+            ["Hair.UseCustom"] = "Use custom colors",
+            ["Hair.NoDashes"] = "No dashes",
+            ["Hair.OneDash"] = "One dash",
+            ["Hair.TwoDashes"] = "Two dashes",
+            ["Hair.ResetCeleste"] = "Reset Celeste colors",
+            ["Menu.Scale"] = "Scale (nearest-neighbor)",
+            ["Menu.KeyboardControls"] = "Keyboard controls",
+            ["Menu.RespondUnfocused"] = "Respond while unfocused",
+            ["Menu.AlwaysOnTop"] = "Always on top",
+            ["Menu.LaunchAtSignIn"] = "Launch at sign-in",
+            ["Startup.ChangeFailed"] = "Could not change sign-in startup",
+            ["Menu.SoundEffects"] = "Sound effects",
+            ["Sfx.OnlyWhenFocused"] = "Only when focused",
+            ["Sfx.Volume"] = "Volume",
+            ["Sfx.SurfaceMaterial"] = "Surface material",
+            ["Surface.Asphalt"] = "Asphalt",
+            ["Surface.Car"] = "Car",
+            ["Surface.Dirt"] = "Dirt",
+            ["Surface.Snow"] = "Snow",
+            ["Surface.Wood"] = "Wood",
+            ["Surface.StoneBridge"] = "Stone bridge",
+            ["Surface.Girder"] = "Girder",
+            ["Surface.BrickDefault"] = "Brick (Default)",
+            ["Surface.ZipMover"] = "Zip mover",
+            ["Surface.InactiveDreamBlock"] = "Inactive Dream Block",
+            ["Surface.ActiveDreamBlock"] = "Active Dream Block",
+            ["Surface.ResortWood"] = "Resort wood",
+            ["Surface.ResortRoof"] = "Resort roof",
+            ["Surface.ResortSinkingPlatform"] = "Resort sinking platform",
+            ["Surface.ResortBasementTile"] = "Resort basement tile",
+            ["Surface.ResortLinens"] = "Resort linens",
+            ["Surface.ResortBoxes"] = "Resort boxes",
+            ["Surface.ResortBooks"] = "Resort books",
+            ["Surface.ClutterDoor"] = "Clutter door",
+            ["Surface.ClutterSwitch"] = "Clutter switch",
+            ["Surface.ResortElevator"] = "Resort elevator",
+            ["Surface.CliffsideSnow"] = "Cliffside snow",
+            ["Surface.CliffsideGrass"] = "Cliffside grass",
+            ["Surface.CliffsideWhiteBlock"] = "Cliffside white block",
+            ["Surface.Gondola"] = "Gondola",
+            ["Surface.AuroraGlass"] = "Aurora glass",
+            ["Surface.Grass"] = "Grass",
+            ["Surface.CassetteBlock"] = "Cassette block",
+            ["Surface.CoreIce"] = "Core ice",
+            ["Surface.CoreMoltenRock"] = "Core molten rock",
+            ["Surface.Glitch"] = "Glitch",
+            ["Surface.MoonCafe"] = "Moon cafe",
+            ["Surface.DreamClouds"] = "Dream clouds",
+            ["Surface.Moon"] = "Moon",
+            ["Menu.ParticleEffects"] = "Particle effects",
+            ["Menu.FreezeFrames"] = "Freeze frames",
+            ["Menu.RespawnReversal"] = "Respawn reversal animation",
+            ["Menu.DreamBlockWindows"] = "Dream Block windows",
+            ["Menu.EdgeWrap"] = "Infinite screen edges (Experimental)",
+            ["EdgeWrap.Both"] = "Both",
+            ["Menu.Elytra"] = "Elytra mode (CommunalHelper)",
+            ["Menu.ExtraOverlays"] = "Extra overlays",
+            ["Menu.Speedometer"] = "Speedometer",
+            ["Speedometer.Both"] = "Both",
+            ["Menu.Hitboxes"] = "Hitboxes",
+            ["Menu.InfiniteStamina"] = "Infinite stamina",
+            ["Menu.Invincible"] = "Invincible",
+            ["Menu.DashCount"] = "Dash count",
+            ["Menu.ReplayWakeUp"] = "Replay wake-up animation",
+            ["Menu.ResetPosition"] = "Reset position",
+            ["Menu.SpawnJellyfish"] = "Spawn jellyfish",
+            ["Menu.SpawnSeeker"] = "Spawn Seeker",
+            ["Menu.SpawnTheo"] = "Spawn Theo crystal",
+            ["Menu.RemoveEntities"] = "Remove spawned entities",
+            ["Menu.RemoveAllJellyfish"] = "Remove all jellyfish",
+            ["Menu.RemoveAllSeekers"] = "Remove all Seekers",
+            ["Menu.RemoveAllTheo"] = "Remove all Theo crystals",
+            ["Menu.RemoveEverything"] = "Remove everything",
+            ["Menu.Controls"] = "Controls",
+            ["Help.ControlsBody"] = "Click Madeline first to focus her, or enable Respond while unfocused. Keys can be changed under Key bindings (three slots per action). Crouch Dash is separate and unbound by default.\n\nMove: Arrow keys / A D\nJump: C (coyote time + variable height)\nDash: X (8 directions; refills on landing)\nClimb / carry: Hold Grab against a wall, jellyfish, or Theo crystal\n\nTech:\n· Super: press Jump during a grounded dash\n· Hyper: down-diagonal grounded dash, then Jump\n· Wavedash/Ultra: down-diagonal air dash, then Jump on landing\n· Cornerboost: Grab + wall-jump within 0.06s after hitting a wall\n· Left-drag Madeline to throw her\n\nWindows are hollow platforms: stand on borders or climb their sides.",
+        };
+
+        // Non-English catalogs. Key set should match <see cref="english"/>.
+        static readonly Dictionary<string, Dictionary<string, string>> translations =
+            new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["zh"] = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["App.Name"] = "玛德琳",
+                ["App.Title"] = "玛德琳桌宠",
+                ["Common.Remove"] = "移除",
+                ["Common.Off"] = "关闭",
+                ["Common.On"] = "开启",
+                ["Common.Horizontal"] = "水平",
+                ["Common.Vertical"] = "垂直",
+                ["Common.Exit"] = "退出",
+                ["Action.Left"] = "左",
+                ["Action.Right"] = "右",
+                ["Action.Up"] = "上",
+                ["Action.Down"] = "下",
+                ["Action.Jump"] = "跳跃",
+                ["Action.Dash"] = "冲刺",
+                ["Action.Grab"] = "抓取",
+                ["Action.CrouchDash"] = "蹲冲",
+                ["Action.DeployElytra"] = "展开鞘翅",
+                ["Keys.Root"] = "按键绑定",
+                ["Keys.Unbound"] = "未绑定",
+                ["Keys.Change"] = "更改…",
+                ["Keys.Unbind"] = "解除绑定",
+                ["Keys.ResetDefaults"] = "恢复默认",
+                ["Keys.BindTitle"] = "绑定{0}",
+                ["Keys.CaptureHint"] = "请按一个键。Backspace/Delete 清除此栏；Esc 取消。",
+                ["Menu.Language"] = "语言",
+                ["Menu.Skin"] = "皮肤",
+                ["Skin.Default"] = "默认玛德琳",
+                ["Skin.Refresh"] = "刷新皮肤",
+                ["Skin.OpenFolder"] = "打开皮肤文件夹",
+                ["Skin.OpenFolderFailed"] = "无法打开皮肤文件夹",
+                ["Menu.Cosmetics"] = "装饰",
+                ["Cosmetics.CatTail"] = "猫尾",
+                ["Cosmetics.CatBangs"] = "猫耳刘海",
+                ["Menu.HairColors"] = "头发颜色",
+                ["Hair.UseCustom"] = "使用自定义颜色",
+                ["Hair.NoDashes"] = "无冲刺",
+                ["Hair.OneDash"] = "一次冲刺",
+                ["Hair.TwoDashes"] = "两次冲刺",
+                ["Hair.ResetCeleste"] = "恢复原版颜色",
+                ["Menu.Scale"] = "缩放（等比放大）",
+                ["Menu.KeyboardControls"] = "键盘控制",
+                ["Menu.RespondUnfocused"] = "失焦时也响应输入",
+                ["Menu.AlwaysOnTop"] = "总是置顶",
+                ["Menu.LaunchAtSignIn"] = "登录时启动",
+                ["Startup.ChangeFailed"] = "无法更改登录启动设置",
+                ["Menu.SoundEffects"] = "音效",
+                ["Sfx.OnlyWhenFocused"] = "仅聚焦时",
+                ["Sfx.Volume"] = "音量",
+                ["Sfx.SurfaceMaterial"] = "表面材质",
+                ["Surface.Asphalt"] = "沥青",
+                ["Surface.Car"] = "汽车",
+                ["Surface.Dirt"] = "泥土",
+                ["Surface.Snow"] = "雪地",
+                ["Surface.Wood"] = "木材",
+                ["Surface.StoneBridge"] = "石桥",
+                ["Surface.Girder"] = "钢梁",
+                ["Surface.BrickDefault"] = "砖块（默认）",
+                ["Surface.ZipMover"] = "轨道方块",
+                ["Surface.InactiveDreamBlock"] = "未激活梦境方块",
+                ["Surface.ActiveDreamBlock"] = "激活梦境方块",
+                ["Surface.ResortWood"] = "度假村木材",
+                ["Surface.ResortRoof"] = "度假村屋顶",
+                ["Surface.ResortSinkingPlatform"] = "度假村下沉平台",
+                ["Surface.ResortBasementTile"] = "度假村地下室",
+                ["Surface.ResortLinens"] = "度假村布料",
+                ["Surface.ResortBoxes"] = "度假村纸箱",
+                ["Surface.ResortBooks"] = "度假村书本",
+                ["Surface.ClutterDoor"] = "杂物门",
+                ["Surface.ClutterSwitch"] = "杂物开关",
+                ["Surface.ResortElevator"] = "度假村电梯",
+                ["Surface.CliffsideSnow"] = "山脊雪地",
+                ["Surface.CliffsideGrass"] = "山脊草地",
+                ["Surface.CliffsideWhiteBlock"] = "山脊白块",
+                ["Surface.Gondola"] = "缆车",
+                ["Surface.AuroraGlass"] = "极光玻璃",
+                ["Surface.Grass"] = "草地",
+                ["Surface.CassetteBlock"] = "磁带方块",
+                ["Surface.CoreIce"] = "核心冰面",
+                ["Surface.CoreMoltenRock"] = "核心熔岩",
+                ["Surface.Glitch"] = "故障方块",
+                ["Surface.MoonCafe"] = "月球咖啡馆",
+                ["Surface.DreamClouds"] = "梦境云层",
+                ["Surface.Moon"] = "月球",
+                ["Menu.ParticleEffects"] = "粒子特效",
+                ["Menu.FreezeFrames"] = "冻结帧",
+                ["Menu.RespawnReversal"] = "重生逆向动画",
+                ["Menu.DreamBlockWindows"] = "梦境方块窗口",
+                ["Menu.EdgeWrap"] = "无限屏幕边缘（实验性）",
+                ["EdgeWrap.Both"] = "水平和垂直",
+                ["Menu.Elytra"] = "鞘翅模式（CommunalHelper）",
+                ["Menu.ExtraOverlays"] = "额外叠加层",
+                ["Menu.Speedometer"] = "速度计",
+                ["Speedometer.Both"] = "合速度",
+                ["Menu.Hitboxes"] = "碰撞箱",
+                ["Menu.InfiniteStamina"] = "无限体力",
+                ["Menu.Invincible"] = "无敌模式",
+                ["Menu.DashCount"] = "冲刺次数",
+                ["Menu.ReplayWakeUp"] = "回放醒来动画",
+                ["Menu.ResetPosition"] = "重置位置",
+                ["Menu.SpawnJellyfish"] = "生成水母",
+                ["Menu.SpawnSeeker"] = "生成 Seeker",
+                ["Menu.SpawnTheo"] = "生成 Theo 水晶",
+                ["Menu.RemoveEntities"] = "移除生成的实体",
+                ["Menu.RemoveAllJellyfish"] = "移除所有水母",
+                ["Menu.RemoveAllSeekers"] = "移除所有 Seeker",
+                ["Menu.RemoveAllTheo"] = "移除所有 Theo 水晶",
+                ["Menu.RemoveEverything"] = "全部移除",
+                ["Menu.Controls"] = "操作说明",
+                ["Help.ControlsBody"] = "先点击玛德琳取得键盘焦点，或启用“失焦时也响应输入”。可在“按键绑定”中修改按键（每项三栏）。蹲冲为独立按键，默认未绑定。\n\n移动：方向键 / AD\n跳跃：C（土狼时间+可变跳高）\n冲刺：X（8方向，着地恢复）\n攀爬/携带：对准墙、靠近水母或 Theo 水晶时按住抓取\n\n技巧：\n· Super：地面冲刺中按跳跃\n· Hyper：地面斜下冲后按跳跃\n· Wavedash/Ultra：空中斜下冲，落地时按跳跃\n· Cornerboost：冲刺撞墙后 0.06s 内抓墙+蹬墙跳\n· 左键拖着玛德琳甩出去\n\n窗口是空心平台：可站边框、爬侧边。",
+            },
+        };
+
+        static string currentCode = DefaultCode;
+
+        public static string CurrentCode => currentCode;
+
+        public static IReadOnlyList<LanguageInfo> Languages => languages;
+
+        public static bool IsKnown(string code)
+        {
+            if (string.IsNullOrWhiteSpace(code)) return false;
+            foreach (var lang in languages)
+                if (lang.Code.Equals(code, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>Pick initial language from settings or UI culture (zh* → zh, else en).</summary>
+        public static string DetectDefault(string settingsCode = null)
+        {
+            if (IsKnown(settingsCode)) return Normalize(settingsCode);
+            string ui = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+            if (IsKnown(ui)) return Normalize(ui);
+            return DefaultCode;
+        }
+
+        public static void SetLanguage(string code)
+        {
+            currentCode = IsKnown(code) ? Normalize(code) : DefaultCode;
+        }
+
+        /// <summary>Translate a catalog key. Missing keys fall back to English, then the key itself.</summary>
+        public static string T(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return key;
+            if (TryGet(currentCode, key, out string value)) return value;
+            if (english.TryGetValue(key, out value)) return value;
+            return key;
+        }
+
+        /// <summary>Translate and format with <see cref="string.Format(IFormatProvider, string, object[])"/>.</summary>
+        public static string Format(string key, params object[] args)
+        {
+            string template = T(key);
+            if (args == null || args.Length == 0) return template;
+            try { return string.Format(CultureInfo.CurrentCulture, template, args); }
+            catch (FormatException) { return template; }
+        }
+
+        static bool TryGet(string code, string key, out string value)
+        {
+            value = null;
+            if (code.Equals(DefaultCode, StringComparison.OrdinalIgnoreCase))
+                return english.TryGetValue(key, out value);
+            return translations.TryGetValue(code, out var table) && table.TryGetValue(key, out value);
+        }
+
+        static string Normalize(string code)
+        {
+            foreach (var lang in languages)
+                if (lang.Code.Equals(code, StringComparison.OrdinalIgnoreCase)) return lang.Code;
+            return code.Trim().ToLowerInvariant();
+        }
+    }
+}
