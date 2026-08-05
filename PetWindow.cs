@@ -876,6 +876,8 @@ namespace DeskMadeline
 
             UpdateWavedashWaves(dt);
 
+            // Back onto a display first; only a position no display can account for resets.
+            SnapIntoView();
             // Auto-reset when far off-screen (prevents infinite fall / being thrown off the virtual desktop)
             if (!introWakeUp && !player.IsDead) CheckAutoReset();
 
@@ -3652,6 +3654,72 @@ namespace DeskMadeline
                 }
             }
             catch { return SystemIcons.Application; }
+        }
+
+        /// <summary>Put her back on the displays if she ended up off them.</summary>
+        /// <remarks>
+        /// The perimeter of the monitors is solid, so she can neither walk nor fall off it, but
+        /// a drag sets her position outright and can leave her anywhere -- past the edge she
+        /// would simply keep falling out of sight.  An axis set to wrap is left alone, leaving
+        /// the screen being the whole point of it.
+        /// </remarks>
+        void SnapIntoView()
+        {
+            if (dragging || introWakeUp || player.IsDead || player.IsRespawning) return;
+            PointF onView = ClampIntoDisplays(
+                player.Pos, player.CurrentHitHeight, monitorGameBounds, edgeWrapMode);
+            // WrapBy carries her hair and anything she is holding along with her.
+            if (onView != player.Pos)
+                player.WrapBy(onView.X - player.Pos.X, onView.Y - player.Pos.Y);
+        }
+
+        /// <summary>Where she belongs if she has ended up off the displays; unchanged if not.</summary>
+        internal static PointF ClampIntoDisplays(
+            PointF pos, float height, List<RectangleF> displays, int edgeWrapMode)
+        {
+            if (displays.Count == 0 || edgeWrapMode == 3) return pos;
+
+            // Wholly on one display is the answer almost every frame, and worth having before
+            // the general test below, which allocates to handle straddling a seam.
+            foreach (RectangleF display in displays)
+                if (pos.X - 4f >= display.Left && pos.X + 4f <= display.Right &&
+                    pos.Y - height >= display.Top && pos.Y <= display.Bottom)
+                    return pos;
+
+            var box = new Win32.RECT
+            {
+                Left = (int)Math.Floor(pos.X - 4f),
+                Top = (int)Math.Floor(pos.Y - height),
+                Right = (int)Math.Ceiling(pos.X + 4f),
+                Bottom = (int)Math.Ceiling(pos.Y),
+            };
+            var rects = new List<Win32.RECT>(displays.Count);
+            foreach (RectangleF display in displays)
+                rects.Add(new Win32.RECT
+                {
+                    Left = (int)display.Left, Top = (int)display.Top,
+                    Right = (int)display.Right, Bottom = (int)display.Bottom,
+                });
+            // Nothing left of her once the displays are taken away means she is wholly on them,
+            // which is also how straddling the seam between two of them comes out fine.
+            if (SubtractRects(box, rects).Count == 0) return pos;
+
+            RectangleF nearest = displays[0];
+            float nearestDistance = float.MaxValue;
+            foreach (RectangleF display in displays)
+            {
+                float dx = pos.X - Math.Max(display.Left, Math.Min(display.Right, pos.X));
+                float dy = pos.Y - Math.Max(display.Top, Math.Min(display.Bottom, pos.Y));
+                float distance = dx * dx + dy * dy;
+                if (distance < nearestDistance) { nearestDistance = distance; nearest = display; }
+            }
+
+            float x = pos.X, y = pos.Y;
+            if ((edgeWrapMode & 1) == 0)
+                x = Math.Max(nearest.Left + 4f, Math.Min(nearest.Right - 4f, x));
+            if ((edgeWrapMode & 2) == 0)
+                y = Math.Max(nearest.Top + height, Math.Min(nearest.Bottom, y));
+            return new PointF(x, y);
         }
 
         // Auto-reset when far off-screen (prevents infinite fall / being thrown off the virtual desktop)
