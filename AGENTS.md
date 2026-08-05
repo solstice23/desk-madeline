@@ -93,4 +93,27 @@ without its engine context silently changes input windows.
 - Assert a window in the unit the source uses (seconds, or a counted frame span), not a
   guessed frame index. When a measurement disagrees with expectation, re-derive the
   expectation from the reference before changing code.
+- The checks live in `tests/DeskMadeline.Tests`; add to them rather than starting over.
+
+## Sound
+
+- Sounds are the original Celeste FMOD events, played from an installed copy of the game.
+  There are no substitute samples, so an event path is either vanilla's or nothing.
+- Which events fire, and in what order, is part of the port. `Play` calls in the reference
+  are as load-bearing as the numbers beside them: `SuperJump` plays `jump` *and then* its
+  `jump_super` / `jump_superslide` layer, and a move that plays one of a pair plays both.
+- `Player.PlaySound` only queues onto `SoundEvents`, which `PetWindow` drains. That makes
+  sound headless-testable: drive the move and read the queue, exactly as `SoundChecks` does.
+  Assert what was heard *and* how many times, since a doubled sound is as wrong as a missing
+  one.
+- Watch for effects vanilla fires from two places. `CallDashEvents` is reached by
+  `DashCoroutine` on the dash's second frame *and* by `DashEnd`, guarded by
+  `calledDashEvents`, precisely so a dash cut short on frame one still sounds. Any move that
+  leaves a state early is a candidate for this; port the End callback, not just the
+  coroutine.
+- Sound is gated on state that is easy to get subtly wrong: `orig_Update` sounds a duck
+  wherever it happens but a stand only while `onGround`. Read the guard, not just the call.
+- A missing event is silent rather than loud: `SoundEffects.Play` logs and swallows. Nothing
+  will look broken, so verify against the queue, and use the opt-in bank check
+  (`SFXCHECK=1`) when an event path itself is in question.
 

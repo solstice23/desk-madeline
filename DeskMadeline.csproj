@@ -21,6 +21,8 @@
     <Compile Remove="obj\**" />
     <!-- Source material for comparison only; it is not part of the desktop-pet app. -->
     <Compile Remove="celeste_reference\**" />
+    <!-- The checks compile these same sources into their own assembly; see tests\README.md. -->
+    <Compile Remove="tests\**" />
     <None Include="assets\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

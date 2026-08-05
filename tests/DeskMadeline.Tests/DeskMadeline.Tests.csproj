@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>DeskMadeline.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DirectComposition" Version="3.8.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The app's own sources, compiled into this assembly rather than referenced, for two
+         reasons: internals such as PetSettings and SoundEffects are reachable, and building
+         the tests never writes to bin\Release, so a running DeskMadeline.exe cannot block
+         them (and they cannot disturb it). Its entry point is left out in favour of ours. -->
+    <Compile Include="..\..\*.cs" Exclude="..\..\Program.cs" />
+  </ItemGroup>
+
+</Project>

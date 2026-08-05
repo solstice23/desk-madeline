@@ -19,6 +19,8 @@ shell around it (window platforms, tray menu, focus gating, persistence, skins) 
 - `celeste_reference/` — decompiled Celeste (`Celeste/`) and engine (`Monocle/`) source.
   Not compiled: excluded in the csproj. This is the authority for every gameplay question.
 - `celeste_graphics_dump/` — original sprites, the authority for visuals.
+- `tests/DeskMadeline.Tests/` — frame-level checks for the ported gameplay; see
+  `tests/README.md`. Excluded from the app's csproj.
 
 ## Build and run
 
@@ -27,23 +29,37 @@ dotnet build DeskMadeline.csproj -c Release      # must be 0 warnings, 0 errors
 bin\Release\net8.0-windows\DeskMadeline.exe
 ```
 
-Keep exactly one build output (`bin\Release`). Do not add a second output directory.
+Keep exactly one build output for the app (`bin\Release`). Do not add a second output
+directory. The checks under `tests/` build to their own, which is theirs and not the app's.
 
 **A running `DeskMadeline.exe` locks `bin\Release` and the build fails with MSB3027.**
 Close it first. If the instance is the user's, ask before killing it — they may be
 mid-test. Also stop any instance you start yourself, and verify it actually exited.
 
-## Checking movement changes
+## Checking gameplay changes
 
-There is no test project. For anything touching `Player.cs`, build a throwaway harness in
-the scratchpad that references `DeskMadeline.csproj`, drives `Player.Update` at a fixed
-60Hz over synthetic `Solid`s, and asserts vanilla's numbers. See "Verifying movement" in
-`AGENTS.md` for the values and the input contract. Run the app afterwards as a smoke test;
-frame-level assertions and a smoke test together are the bar for "verified".
+```
+dotnet run --project tests\DeskMadeline.Tests -c Release    # exits non-zero on failure
+```
+
+The checks drive the real `Player.Update` at a fixed 60Hz over synthetic `Solid`s and assert
+vanilla's numbers. They compile the app's sources into their own assembly, so they reach
+internals like `PetSettings`, and they never touch `bin\Release` — a running
+`DeskMadeline.exe` cannot block them. See `tests/README.md` for what each file covers and
+"Verifying movement" in `AGENTS.md` for the values and the input contract.
+
+For anything touching `Player.cs`, add a check there rather than a throwaway harness, then
+run the app as a smoke test: frame-level assertions and a smoke test together are the bar
+for "verified".
 
 `Player` exposes most state publicly (`Pos`, `Speed`, `Ducking`, `Dashes`, `Stamina`,
 `onGround`); read the few private timers with reflection rather than widening the API for
 a test.
+
+Sound is testable the same way, without a speaker: `Player.PlaySound` queues onto the public
+`SoundEvents`, so a check can drive a move and assert exactly which events came out, in
+order and how many times. `SFXCHECK=1` additionally plays every event once against the
+installed Celeste to confirm the paths resolve. See "Sound" in `AGENTS.md`.
 
 ## Cross-checking against the reference
 
