@@ -73,12 +73,12 @@ namespace DeskMadeline
         {
             lock (sync)
             {
-                // Preserve this pet's established WASD alternatives while using Celeste's C/X and
-                // Z/V/Left Shift defaults. Crouch Dash is unbound by default in Celeste.
-                keys[PetAction.Left] = new[] { 0x25, 0x41, 0 };
-                keys[PetAction.Right] = new[] { 0x27, 0x44, 0 };
-                keys[PetAction.Up] = new[] { 0x26, 0x57, 0 };
-                keys[PetAction.Down] = new[] { 0x28, 0x53, 0 };
+                // Celeste's keyboard defaults: arrows to move, C/X, and Z/V/Left Shift to grab.
+                // Crouch Dash is unbound by default in Celeste.
+                keys[PetAction.Left] = new[] { 0x25, 0, 0 };
+                keys[PetAction.Right] = new[] { 0x27, 0, 0 };
+                keys[PetAction.Up] = new[] { 0x26, 0, 0 };
+                keys[PetAction.Down] = new[] { 0x28, 0, 0 };
                 keys[PetAction.Jump] = new[] { 0x43, 0, 0 };
                 keys[PetAction.Dash] = new[] { 0x58, 0, 0 };
                 keys[PetAction.Grab] = new[] { 0x5A, 0x56, 0xA0 };

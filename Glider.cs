@@ -199,8 +199,9 @@ namespace DeskMadeline
                 // colored expansion frames while the holder is falling.
                 if (opening) { ScaleX = 1.5f; ScaleY = 0.6f; }
                 float targetX = 1f, targetY = 1f;
-                if (open && input.MoveY > 0) { targetX = 0.7f; targetY = 1.4f; }
-                else if (open && input.MoveY < 0) { targetX = 1.2f; targetY = 0.8f; }
+                // vanilla reads Input.GliderMoveY here, not Input.MoveY
+                if (open && input.GliderMoveY > 0) { targetX = 0.7f; targetY = 1.4f; }
+                else if (open && input.GliderMoveY < 0) { targetX = 1.2f; targetY = 0.8f; }
                 ScaleX = Approach(ScaleX, targetX, 2f * dt);
                 ScaleY = Approach(ScaleY, targetY, 2f * dt);
             }

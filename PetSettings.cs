@@ -10,6 +10,7 @@ namespace DeskMadeline
     {
         public int Scale = 6;
         public bool InputEnabled = true;
+        public bool PadInputEnabled = true;
         public bool InputWhenUnfocused;
         public bool AlwaysOnTop = true;
         public bool ParticlesEnabled = true;
@@ -56,6 +57,7 @@ namespace DeskMadeline
                 if (values.TryGetValue("Scale", out string scale) && int.TryParse(scale, out int scaleValue))
                     result.Scale = Math.Max(2, Math.Min(8, scaleValue));
                 ReadBool(values, "InputEnabled", ref result.InputEnabled);
+                ReadBool(values, "PadInputEnabled", ref result.PadInputEnabled);
                 ReadBool(values, "InputWhenUnfocused", ref result.InputWhenUnfocused);
                 ReadBool(values, "AlwaysOnTop", ref result.AlwaysOnTop);
                 ReadBool(values, "ParticlesEnabled", ref result.ParticlesEnabled);
@@ -119,6 +121,7 @@ namespace DeskMadeline
                     "# DeskMadeline settings",
                     "Scale=" + Scale,
                     "InputEnabled=" + InputEnabled,
+                    "PadInputEnabled=" + PadInputEnabled,
                     "InputWhenUnfocused=" + InputWhenUnfocused,
                     "AlwaysOnTop=" + AlwaysOnTop,
                     "ParticlesEnabled=" + ParticlesEnabled,

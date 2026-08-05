@@ -17,6 +17,12 @@ namespace DeskMadeline
     {
         public int MoveX;      // -1/0/1
         public int MoveY;      // -1 up / 0 / 1 down
+        // Celeste reads three separate virtual axes off the same bindings, each with its own
+        // controller deadzone: MoveX/MoveY, GliderMoveY (jellyfish fall), and Aim (dash
+        // direction). On a keyboard all of them equal MoveX/MoveY.
+        public int AimX;       // Input.Aim.X
+        public int AimY;       // Input.Aim.Y
+        public int GliderMoveY;
         public bool JumpHeld;
         public bool GrabHeld;
         public bool JumpPressed;  // already input-buffered (valid this frame)
@@ -1495,7 +1501,8 @@ namespace DeskMadeline
             // Max fall speed
             if (Holding != null && Holding.SlowFall)
             {
-                float gliderTarget = input.MoveY > 0 ? 120f : input.MoveY < 0 ? 24f : 40f;
+                // vanilla reads Input.GliderMoveY here, not Input.MoveY
+                float gliderTarget = input.GliderMoveY > 0 ? 120f : input.GliderMoveY < 0 ? 24f : 40f;
                 maxFall = Approach(maxFall, gliderTarget, FastMaxAccel * dt);
             }
             else
@@ -2082,7 +2089,7 @@ namespace DeskMadeline
 
             // Lock lastAim on the dash-press frame. Releasing or changing a direction
             // during the 0.05s freeze must not curve a normal dash into another vector.
-            float ax = input.MoveX, ay = input.MoveY;
+            float ax = input.AimX, ay = input.AimY;
             if (ax == 0 && ay == 0) pendingDashDir = new PointF(Facing, 0);
             else
             {

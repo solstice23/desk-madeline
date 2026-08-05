@@ -21,6 +21,7 @@ namespace DeskMadeline
         // ===== Tunable parameters =====
         public int GameScale = 6;               // integer nearest-neighbor scale (vanilla 1080p is 6x)
         public bool InputEnabled = true;
+        public bool PadInputEnabled = true;
         public bool InputWhenUnfocused;
         public bool AlwaysOnTop = true;
         public static PetWindow Instance;
@@ -38,6 +39,7 @@ namespace DeskMadeline
 
         readonly Player player = new Player();
         readonly KeyBindings bindings;
+        readonly PadBindings padBindings;
         readonly PetSettings settings;
         readonly SoundEffects soundEffects;
         internal readonly SkinManager skinManager;
@@ -192,6 +194,7 @@ namespace DeskMadeline
             virtualDesktop = GetVirtualDesktopBounds();
             GameScale = settings.Scale;
             InputEnabled = settings.InputEnabled;
+            PadInputEnabled = settings.PadInputEnabled;
             InputWhenUnfocused = settings.InputWhenUnfocused;
             AlwaysOnTop = settings.AlwaysOnTop;
             ParticlesEnabled = settings.ParticlesEnabled;
@@ -219,6 +222,8 @@ namespace DeskMadeline
             Loc.SetLanguage(Loc.DetectDefault(settings.Language));
             bindings = new KeyBindings(System.IO.Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory, "keybindings.txt"));
+            padBindings = new PadBindings(System.IO.Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory, "padbindings.txt"));
             // Cap log growth: rewrite when over 5MB (keeps the latest run)
             try
             {
@@ -1480,28 +1485,43 @@ namespace DeskMadeline
         PetInput SampleInput()
         {
             var input = new PetInput();
-            // GetAsyncKeyState is global. By default it is gated to this pet's
-            // focus; the explicit menu opt-in permits reading it while unfocused.
-            // No hook is installed and keys are never swallowed from other apps.
-            if (!InputEnabled || dragging || draggedGlider != null || draggedTheo != null || draggedSeeker != null ||
-                (!InputWhenUnfocused && !IsPetInputWindow(Win32.GetForegroundWindow())))
+            // GetAsyncKeyState and XInput are both global. By default they are gated to
+            // this pet's focus; the explicit menu opt-in permits reading them while
+            // unfocused. No hook is installed and keys are never swallowed from other apps.
+            bool blocked = dragging || draggedGlider != null || draggedTheo != null || draggedSeeker != null ||
+                (!InputWhenUnfocused && !IsPetInputWindow(Win32.GetForegroundWindow()));
+            bool useKeys = InputEnabled && !blocked;
+            bool usePad = PadInputEnabled && !blocked;
+            if (!useKeys && !usePad)
             {
                 prevJump = prevDash = prevCrouchDash = false;
                 return input;
             }
 
-            bool left = bindings.IsDown(PetAction.Left);
-            bool right = bindings.IsDown(PetAction.Right);
-            bool up = bindings.IsDown(PetAction.Up);
-            bool down = bindings.IsDown(PetAction.Down);
-            bool jump = bindings.IsDown(PetAction.Jump);
-            bool dash = bindings.IsDown(PetAction.Dash);
-            bool grab = bindings.IsDown(PetAction.Grab);
-            bool crouchDash = bindings.IsDown(PetAction.CrouchDash);
-            bool elytra = bindings.IsDown(PetAction.DeployElytra);
+            PadState pad = usePad ? XInputPad.Poll() : default;
+            // Keyboard bindings are digital, so the threshold only ever affects the controller;
+            // it reproduces Celeste's per-virtual-input deadzones.
+            bool Held(PetAction action, float threshold)
+                => (useKeys && bindings.IsDown(action)) || (usePad && padBindings.IsDown(pad, action, threshold));
+
+            bool left = Held(PetAction.Left, PadBindings.MoveXThreshold);
+            bool right = Held(PetAction.Right, PadBindings.MoveXThreshold);
+            bool up = Held(PetAction.Up, PadBindings.MoveYThreshold);
+            bool down = Held(PetAction.Down, PadBindings.MoveYThreshold);
+            bool jump = Held(PetAction.Jump, PadBindings.ButtonThreshold);
+            bool dash = Held(PetAction.Dash, PadBindings.ButtonThreshold);
+            bool grab = Held(PetAction.Grab, PadBindings.ButtonThreshold);
+            bool crouchDash = Held(PetAction.CrouchDash, PadBindings.ButtonThreshold);
+            bool elytra = Held(PetAction.DeployElytra, PadBindings.ButtonThreshold);
 
             input.MoveX = (right ? 1 : 0) - (left ? 1 : 0);
             input.MoveY = (down ? 1 : 0) - (up ? 1 : 0);
+            input.AimX = (Held(PetAction.Right, PadBindings.AimThreshold) ? 1 : 0)
+                - (Held(PetAction.Left, PadBindings.AimThreshold) ? 1 : 0);
+            input.AimY = (Held(PetAction.Down, PadBindings.AimThreshold) ? 1 : 0)
+                - (Held(PetAction.Up, PadBindings.AimThreshold) ? 1 : 0);
+            input.GliderMoveY = (Held(PetAction.Down, PadBindings.GliderMoveYThreshold) ? 1 : 0)
+                - (Held(PetAction.Up, PadBindings.GliderMoveYThreshold) ? 1 : 0);
             input.JumpHeld = jump;
             input.GrabHeld = grab;
             input.ElytraHeld = elytra;
@@ -2708,6 +2728,7 @@ namespace DeskMadeline
         {
             settings.Scale = pendingScale > 0 ? pendingScale : GameScale;
             settings.InputEnabled = InputEnabled;
+            settings.PadInputEnabled = PadInputEnabled;
             settings.InputWhenUnfocused = InputWhenUnfocused;
             settings.AlwaysOnTop = AlwaysOnTop;
             settings.ParticlesEnabled = ParticlesEnabled;
@@ -2815,15 +2836,102 @@ namespace DeskMadeline
             {
                 bindings.ResetDefaults();
                 // Rebuild so every open slot label reflects the reset values.
-                BeginInvoke(new Action(() =>
-                {
-                    var old = trayMenu;
-                    trayMenu = BuildMenu();
-                    tray.ContextMenuStrip = trayMenu;
-                    old?.Dispose();
-                }));
+                RebuildTrayMenu();
             }));
             return root;
+        }
+
+        static string PadButtonName(PadButton button)
+        {
+            return button switch
+            {
+                PadButton.None => Loc.T("Keys.Unbound"),
+                PadButton.A => Loc.T("Pad.A"),
+                PadButton.B => Loc.T("Pad.B"),
+                PadButton.X => Loc.T("Pad.X"),
+                PadButton.Y => Loc.T("Pad.Y"),
+                PadButton.LeftShoulder => Loc.T("Pad.LeftShoulder"),
+                PadButton.RightShoulder => Loc.T("Pad.RightShoulder"),
+                PadButton.LeftTrigger => Loc.T("Pad.LeftTrigger"),
+                PadButton.RightTrigger => Loc.T("Pad.RightTrigger"),
+                PadButton.LeftStick => Loc.T("Pad.LeftStick"),
+                PadButton.RightStick => Loc.T("Pad.RightStick"),
+                PadButton.Start => Loc.T("Pad.Start"),
+                PadButton.Back => Loc.T("Pad.Back"),
+                PadButton.DPadUp => Loc.T("Pad.DPadUp"),
+                PadButton.DPadDown => Loc.T("Pad.DPadDown"),
+                PadButton.DPadLeft => Loc.T("Pad.DPadLeft"),
+                PadButton.DPadRight => Loc.T("Pad.DPadRight"),
+                PadButton.LeftThumbstickUp => Loc.T("Pad.LeftStickUp"),
+                PadButton.LeftThumbstickDown => Loc.T("Pad.LeftStickDown"),
+                PadButton.LeftThumbstickLeft => Loc.T("Pad.LeftStickLeft"),
+                PadButton.LeftThumbstickRight => Loc.T("Pad.LeftStickRight"),
+                PadButton.RightThumbstickUp => Loc.T("Pad.RightStickUp"),
+                PadButton.RightThumbstickDown => Loc.T("Pad.RightStickDown"),
+                PadButton.RightThumbstickLeft => Loc.T("Pad.RightStickLeft"),
+                PadButton.RightThumbstickRight => Loc.T("Pad.RightStickRight"),
+                _ => button.ToString()
+            };
+        }
+
+        void RefreshPadBindingItems(ToolStripMenuItem actionItem, PetAction action)
+        {
+            PadButton[] values = padBindings.Get(action);
+            for (int i = 0; i < 3; i++)
+                actionItem.DropDownItems[i].Text = (i + 1) + ": " + PadButtonName(values[i]);
+        }
+
+        ToolStripMenuItem BuildPadBindingsMenu()
+        {
+            var root = new ToolStripMenuItem(Loc.T("Pad.Root"));
+            foreach (PetAction action in KeyBindings.Actions)
+            {
+                var actionItem = new ToolStripMenuItem(ActionName(action));
+                PadButton[] values = padBindings.Get(action);
+                for (int i = 0; i < 3; i++)
+                {
+                    int slot = i;
+                    var slotItem = new ToolStripMenuItem((i + 1) + ": " + PadButtonName(values[i]));
+                    slotItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.Change"), null, (_, __) =>
+                    {
+                        using var capture = new PadCaptureDialog(
+                            Loc.Format("Keys.BindTitle", ActionName(action)),
+                            Loc.T("Pad.CaptureHint"));
+                        if (capture.ShowDialog(this) == DialogResult.OK)
+                        {
+                            padBindings.Set(action, slot, capture.CapturedButton);
+                            RefreshPadBindingItems(actionItem, action);
+                        }
+                    }));
+                    slotItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.Unbind"), null, (_, __) =>
+                    {
+                        padBindings.Set(action, slot, PadButton.None);
+                        RefreshPadBindingItems(actionItem, action);
+                    }));
+                    actionItem.DropDownItems.Add(slotItem);
+                }
+                root.DropDownItems.Add(actionItem);
+            }
+            root.DropDownItems.Add(new ToolStripSeparator());
+            root.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.ResetDefaults"), null, (_, __) =>
+            {
+                padBindings.ResetDefaults();
+                // Rebuild so every open slot label reflects the reset values.
+                RebuildTrayMenu();
+            }));
+            return root;
+        }
+
+        /// <summary>Rebuild after the menu click unwinds so WinForms is not mid-dispatch on the old strip.</summary>
+        void RebuildTrayMenu()
+        {
+            BeginInvoke(new Action(() =>
+            {
+                var old = trayMenu;
+                trayMenu = BuildMenu();
+                tray.ContextMenuStrip = trayMenu;
+                old?.Dispose();
+            }));
         }
 
         ContextMenuStrip BuildMenu()
@@ -2993,6 +3101,11 @@ namespace DeskMadeline
             { InputEnabled = !InputEnabled; inputItem.Checked = InputEnabled; SaveSettings(); })
             { Checked = InputEnabled };
             menu.Items.Add(inputItem);
+            ToolStripMenuItem padInputItem = null;
+            padInputItem = new ToolStripMenuItem(Loc.T("Menu.ControllerControls"), null, (_, __) =>
+            { PadInputEnabled = !PadInputEnabled; padInputItem.Checked = PadInputEnabled; SaveSettings(); })
+            { Checked = PadInputEnabled };
+            menu.Items.Add(padInputItem);
             ToolStripMenuItem unfocusedInputItem = null;
             unfocusedInputItem = new ToolStripMenuItem(Loc.T("Menu.RespondUnfocused"), null, (_, __) =>
             {
@@ -3002,6 +3115,7 @@ namespace DeskMadeline
             }) { Checked = InputWhenUnfocused };
             menu.Items.Add(unfocusedInputItem);
             menu.Items.Add(BuildBindingsMenu());
+            menu.Items.Add(BuildPadBindingsMenu());
 
             ToolStripMenuItem topItem = null;
             topItem = new ToolStripMenuItem(Loc.T("Menu.AlwaysOnTop"), null, (_, __) =>
@@ -3531,6 +3645,115 @@ namespace DeskMadeline
                 DialogResult = DialogResult.OK;
             }
             Close();
+        }
+    }
+
+    /// <summary>Modal controller-button capture window used by the tray binding editor.</summary>
+    sealed class PadCaptureDialog : Form
+    {
+        // Capture-only: a bind must be deliberate, so a stick or trigger has to travel
+        // well past the gameplay thresholds before it counts as a press.
+        const float CaptureThreshold = 0.5f;
+
+        static readonly PadButton[] Candidates = (PadButton[])Enum.GetValues(typeof(PadButton));
+
+        readonly System.Windows.Forms.Timer poll;
+        readonly HashSet<PadButton> heldOnOpen = new HashSet<PadButton>();
+        readonly Label hint;
+        readonly string instructionText;
+        bool sampledOpenState;
+        bool showingDisconnected;
+
+        public PadButton CapturedButton { get; private set; }
+
+        public PadCaptureDialog(string title, string instructions)
+        {
+            Text = title;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterScreen;
+            ShowInTaskbar = false;
+            MinimizeBox = false;
+            MaximizeBox = false;
+            TopMost = true;
+            KeyPreview = true;
+            ClientSize = new Size(430, 120);
+            instructionText = instructions;
+            hint = new Label
+            {
+                Dock = DockStyle.Fill,
+                Text = instructions,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = SystemFonts.MessageBoxFont,
+                Padding = new Padding(16)
+            };
+            Controls.Add(hint);
+            poll = new System.Windows.Forms.Timer { Interval = 16 };
+            poll.Tick += (_, __) => Sample();
+            poll.Start();
+        }
+
+        void Sample()
+        {
+            PadState state = XInputPad.Poll();
+            if (!state.Connected)
+            {
+                // Otherwise an unplugged controller just looks like a dialog that ignores input.
+                if (!showingDisconnected)
+                {
+                    showingDisconnected = true;
+                    hint.Text = Loc.T("Pad.NoController") + "\n\n" + instructionText;
+                }
+                return;
+            }
+            if (showingDisconnected)
+            {
+                showingDisconnected = false;
+                hint.Text = instructionText;
+            }
+            // Buttons already held when the dialog opened (a trigger still down from the
+            // menu click, a resting stick) only arm once they have been released.
+            if (!sampledOpenState)
+            {
+                sampledOpenState = true;
+                foreach (PadButton button in Candidates)
+                    if (button != PadButton.None && state.Check(button, CaptureThreshold))
+                        heldOnOpen.Add(button);
+                return;
+            }
+            foreach (PadButton button in Candidates)
+            {
+                if (button == PadButton.None) continue;
+                if (!state.Check(button, CaptureThreshold)) { heldOnOpen.Remove(button); continue; }
+                if (heldOnOpen.Contains(button)) continue;
+                CapturedButton = button;
+                DialogResult = DialogResult.OK;
+                Close();
+                return;
+            }
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            e.SuppressKeyPress = true;
+            e.Handled = true;
+            if (e.KeyCode == Keys.Back || e.KeyCode == Keys.Delete)
+            {
+                CapturedButton = PadButton.None;
+                DialogResult = DialogResult.OK;
+            }
+            else if (e.KeyCode == Keys.Escape)
+            {
+                DialogResult = DialogResult.Cancel;
+            }
+            else return;
+            Close();
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            poll.Stop();
+            poll.Dispose();
+            base.OnFormClosed(e);
         }
     }
 }
