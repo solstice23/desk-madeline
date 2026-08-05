@@ -133,6 +133,7 @@ namespace DeskMadeline
         int speedometerMode;
         bool hitboxesEnabled;
         bool dreamBlockMode;
+        volatile bool ignoreMaximizedWindows;   // read by the poll on the game-loop thread
         int edgeWrapMode;
         readonly List<RectangleF> monitorGameBounds = new List<RectangleF>();
         readonly Bitmap[] picoDigits = new Bitmap[10];
@@ -209,6 +210,7 @@ namespace DeskMadeline
             speedometerMode = settings.SpeedometerMode;
             hitboxesEnabled = settings.HitboxesEnabled;
             dreamBlockMode = settings.DreamBlockMode;
+            ignoreMaximizedWindows = settings.IgnoreMaximizedWindows;
             edgeWrapMode = settings.EdgeWrapMode;
             player.ElytraEnabled = settings.ElytraEnabled;
             player.SetFreezeFramesEnabled(settings.FreezeFramesEnabled);
@@ -1813,6 +1815,7 @@ namespace DeskMadeline
                 if (dreamBlockMode && (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd")) return true;
                 if (!Win32.TryGetWindowRect(hwnd, out var r)) return true;
                 if (r.Width < 24 || r.Height < 18) return true;
+                if (ignoreMaximizedWindows && IsMaximizedOrFullscreen(hwnd, r)) return true;
                 cur[hwnd] = r;
                 zorder.Add(new KeyValuePair<IntPtr, Win32.RECT>(hwnd, r));
                 return true;
@@ -2005,6 +2008,22 @@ namespace DeskMadeline
                 }
             }
             player.WrapBy(offsetX, offsetY);
+        }
+
+        /// <summary>Maximized, or covering a whole monitor the way borderless fullscreen does.</summary>
+        /// <remarks>
+        /// A window this size offers nothing to stand on but its own outline around the screen,
+        /// and it is usually what the user is actually working in or watching, so treating it
+        /// as a platform is mostly in the way.
+        /// </remarks>
+        static bool IsMaximizedOrFullscreen(IntPtr hwnd, in Win32.RECT r)
+        {
+            // Maximized frames stop at the working area, so only IsZoomed catches those;
+            // fullscreen ones are not zoomed but cover their monitor exactly.
+            if (Win32.IsZoomed(hwnd)) return true;
+            Rectangle monitor = Screen.FromHandle(hwnd).Bounds;
+            return r.Left <= monitor.Left && r.Top <= monitor.Top &&
+                   r.Right >= monitor.Right && r.Bottom >= monitor.Bottom;
         }
 
         /// <summary>Four hollow window edges (physical-pixel coords), thickness WindowBorderPx.</summary>
@@ -2794,6 +2813,7 @@ namespace DeskMadeline
             settings.SpeedometerMode = speedometerMode;
             settings.HitboxesEnabled = hitboxesEnabled;
             settings.DreamBlockMode = dreamBlockMode;
+            settings.IgnoreMaximizedWindows = ignoreMaximizedWindows;
             settings.RespawnReversalEnabled = player.RespawnReversalEnabled;
             settings.EdgeWrapMode = edgeWrapMode;
             settings.ElytraEnabled = player.ElytraEnabled;
@@ -3331,6 +3351,16 @@ namespace DeskMadeline
                 SaveSettings();
             }) { Checked = player.RespawnReversalEnabled };
             menu.Items.Add(respawnReversalItem);
+
+            var ignoreMaximizedItem = new ToolStripMenuItem(
+                Loc.T("Menu.IgnoreMaximizedWindows"), null, (sender, __) =>
+            {
+                ignoreMaximizedWindows = !ignoreMaximizedWindows;
+                ((ToolStripMenuItem)sender).Checked = ignoreMaximizedWindows;
+                pollCounter = 999;
+                SaveSettings();
+            }) { Checked = ignoreMaximizedWindows };
+            menu.Items.Add(ignoreMaximizedItem);
 
             var dreamItem = new ToolStripMenuItem(Loc.T("Menu.DreamBlockWindows"), null, (sender, __) =>
             {

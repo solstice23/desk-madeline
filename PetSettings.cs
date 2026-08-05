@@ -29,6 +29,7 @@ namespace DeskMadeline
         public int SpeedometerMode;
         public bool HitboxesEnabled;
         public bool DreamBlockMode;
+        public bool IgnoreMaximizedWindows = true;
         public bool RespawnReversalEnabled = true;
         public int EdgeWrapMode;
         public bool ElytraEnabled;
@@ -80,6 +81,7 @@ namespace DeskMadeline
                     result.SpeedometerMode = Math.Max(0, Math.Min(3, speedometerValue));
                 ReadBool(values, "HitboxesEnabled", ref result.HitboxesEnabled);
                 ReadBool(values, "DreamBlockMode", ref result.DreamBlockMode);
+                ReadBool(values, "IgnoreMaximizedWindows", ref result.IgnoreMaximizedWindows);
                 ReadBool(values, "RespawnReversalEnabled", ref result.RespawnReversalEnabled);
                 if (values.TryGetValue("EdgeWrapMode", out string edgeWrap) &&
                     int.TryParse(edgeWrap, out int edgeWrapValue))
@@ -140,6 +142,7 @@ namespace DeskMadeline
                     "SpeedometerMode=" + SpeedometerMode,
                     "HitboxesEnabled=" + HitboxesEnabled,
                     "DreamBlockMode=" + DreamBlockMode,
+                    "IgnoreMaximizedWindows=" + IgnoreMaximizedWindows,
                     "RespawnReversalEnabled=" + RespawnReversalEnabled,
                     "EdgeWrapMode=" + EdgeWrapMode,
                     "ElytraEnabled=" + ElytraEnabled,
