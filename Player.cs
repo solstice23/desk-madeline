@@ -10,6 +10,8 @@ namespace DeskMadeline
         public IntPtr Id;
         public float L, T, R, B;
         public bool Dream;
+        /// <summary>Fills the area beyond the monitors; nothing here can be seen.</summary>
+        public bool OffScreen;
     }
 
     /// <summary>Per-frame input snapshot.</summary>
@@ -368,10 +370,13 @@ namespace DeskMadeline
             foreach (float offset in angleOffsets)
             {
                 float angle = baseAngle + offset;
+                // Whole pixels: a Celeste Actor never holds a sub-pixel position, and both the
+                // collision checks below and the climb checks she will face after respawning
+                // assume the whole-pixel grid.  A polar offset lands between pixels.
                 PointF candidate = new PointF(
-                    Math.Max(MinX + 4f, Math.Min(MaxX - 4f,
-                        origin.X + (float)Math.Cos(angle) * radius)),
-                    origin.Y + (float)Math.Sin(angle) * radius);
+                    (float)Math.Round(Math.Max(MinX + 4f, Math.Min(MaxX - 4f,
+                        origin.X + (float)Math.Cos(angle) * radius))),
+                    (float)Math.Round(origin.Y + (float)Math.Sin(angle) * radius));
                 if (CollideAt(candidate.X, candidate.Y, 11f)) continue;
                 PointF candidateCenter = new PointF(candidate.X, candidate.Y - 5.5f);
                 float tx = candidateCenter.X - threat.X, ty = candidateCenter.Y - threat.Y;
@@ -456,8 +461,6 @@ namespace DeskMadeline
         float gliderBoostTimer;
         PointF gliderBoostDir;
         PointF dreamDashEntryPos;
-        Solid dreamDashBlock;
-        bool hasDreamDashBlock;
         PointF deathRespawnPos;
         PointF deathDirection, deathBodyStart;
         float deathPreTimer;
@@ -556,6 +559,20 @@ namespace DeskMadeline
                     return true;
                 }
             dream = default;
+            return false;
+        }
+
+        /// <summary>The area past the monitors, if the hitbox at (x,y) has reached it.</summary>
+        bool TryGetOffScreenAt(float x, float y, out Solid edge)
+        {
+            HitboxAt(x, y, out float l, out float t, out float r, out float b);
+            foreach (var solid in Solids)
+                if (solid.OffScreen && Overlap(l, t, r, b, solid))
+                {
+                    edge = solid;
+                    return true;
+                }
+            edge = default;
             return false;
         }
 
@@ -727,7 +744,6 @@ namespace DeskMadeline
             }
 
             dreamDashEntryPos = Pos;
-            hasDreamDashBlock = TryGetDreamAt(x, y, out dreamDashBlock);
             State = StDreamDash;
             dreamDashCanEndTimer = 0.1f;
             dreamDashAnimTimer = 0.16f;
@@ -980,7 +996,6 @@ namespace DeskMadeline
             gliderBoostTimer = 0f;
             gliderBoostDir = PointF.Empty;
             dreamDashEntryPos = pos;
-            hasDreamDashBlock = false;
             deathTimer = 0f;
             respawnTimer = 0f;
             IsDead = false;
@@ -2247,13 +2262,18 @@ namespace DeskMadeline
             MoveH(Speed.X * dt);
             MoveV(Speed.Y * dt);
             dreamDashCanEndTimer -= dt;
-            if (TryGetDreamAt(Pos.X, Pos.Y, out Solid currentDream))
+            // Desktop rule, deliberately not vanilla: a window can hang past the edge of the
+            // display, and dream dashing on inside it would carry her where the user can
+            // neither see nor follow.  The area beyond the display is already solid, so
+            // refusing to treat it as somewhere the dash may continue is the whole rule: she
+            // falls through to the ordinary "dashed into a solid" path below and meets the
+            // display boundary exactly as she would any other wall, assist-mode bounce
+            // included.
+            if (!TryGetOffScreenAt(Pos.X, Pos.Y, out _))
             {
-                dreamDashBlock = currentDream;
-                hasDreamDashBlock = true;
-                return;
+                if (DreamAt(Pos.X, Pos.Y)) return;
+                if (dreamDashCanEndTimer > 0f) return;
             }
-            if (dreamDashCanEndTimer > 0f) return;
 
             if (NonDreamAt(Pos.X, Pos.Y))
             {
@@ -2283,7 +2303,6 @@ namespace DeskMadeline
                         return;
                     }
                     Pos = original;
-                    SnapDreamDeathToExitFace();
                     DieFromDreamDash();
                     return;
                 }
@@ -2348,18 +2367,6 @@ namespace DeskMadeline
             else
                 EnterNormal();
             PlaySound("event:/char/madeline/dreamblock_exit");
-        }
-
-        void SnapDreamDeathToExitFace()
-        {
-            if (!hasDreamDashBlock) return;
-            // A desktop monitor edge cannot scroll into view like a Celeste room.
-            // Keep the death body's center on the last DreamBlock face instead of
-            // leaving it one full player collider beyond the physical display.
-            if (DashDir.X > 0f) Pos.X = dreamDashBlock.R - 4f;
-            else if (DashDir.X < 0f) Pos.X = dreamDashBlock.L + 4f;
-            if (DashDir.Y > 0f) Pos.Y = dreamDashBlock.B;
-            else if (DashDir.Y < 0f) Pos.Y = dreamDashBlock.T + HitH;
         }
 
         void DieFromDreamDash()

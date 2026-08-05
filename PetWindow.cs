@@ -1878,7 +1878,11 @@ namespace DeskMadeline
                 {
                     if (edge.Key ? (edgeWrapMode & 1) != 0 : (edgeWrapMode & 2) != 0) continue;
                     foreach (var p in SubtractRects(edge.Value, screenRects))
-                        if (TryToSolid(FloorId, p, false, out Solid piece)) solids.Add(piece);
+                        if (TryToSolid(FloorId, p, false, out Solid piece))
+                        {
+                            piece.OffScreen = true;
+                            solids.Add(piece);
+                        }
                 }
             }
 
