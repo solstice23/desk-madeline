@@ -67,7 +67,15 @@ namespace DeskMadeline
             Bounds(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
             Bounds(x, y, out float l, out float t, out float r, out float b);
             foreach (Solid solid in solids)
-                if (Overlap(l, t, r, b, solid) && !Overlap(l0, t0, r0, b0, solid)) return true;
+            {
+                if (!Overlap(l, t, r, b, solid)) continue;
+                // A window border only collides from the outside, so one opening around him
+                // does not swallow him.  A DreamBlock is a plain Solid to everything but a
+                // dashing player -- Celeste has no exemption for a crystal inside one, and
+                // DreamBlock.BlockedCheck treats him as an actor it is blocked by -- so it
+                // holds him where he lies, the way it holds her.  A drag is the way out.
+                if (solid.Dream || !Overlap(l0, t0, r0, b0, solid)) return true;
+            }
             return false;
         }
 

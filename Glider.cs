@@ -69,7 +69,13 @@ namespace DeskMadeline
             Bounds(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
             Bounds(x, y, out float l, out float t, out float r, out float b);
             foreach (Solid solid in solids)
-                if (Overlap(l, t, r, b, solid) && !Overlap(l0, t0, r0, b0, solid)) return true;
+            {
+                if (!Overlap(l, t, r, b, solid)) continue;
+                // See TheoCrystal.BlocksMove: window borders collide only from the outside so
+                // one opening around her cannot swallow her, but a DreamBlock is an ordinary
+                // Solid to every actor except a dashing player, and holds her where she lies.
+                if (solid.Dream || !Overlap(l0, t0, r0, b0, solid)) return true;
+            }
             return false;
         }
 

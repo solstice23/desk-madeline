@@ -20,7 +20,8 @@ static class Program
         failed += DreamChecks.Run();      // dream blocks: death position, display edge, being held
         failed += SoundChecks.Run();      // super and hyper, at the timings people play them
         failed += DreamHyperChecks.Run(); // the dream hyper, and the crouch that decides it
-        failed += TheoChecks.Run();      // how the Theo crystal breaks
+        failed += TheoChecks.Run();       // how the Theo crystal breaks
+        failed += EntityDreamChecks.Run();// crystal, jelly and seeker dropped inside a block
         failed += SettingsChecks.Run();   // settings defaults, and snapping back onto the displays
         failed += SoundBankChecks.Run();  // opt-in: every event resolves in Celeste's banks
 
