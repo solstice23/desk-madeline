@@ -49,8 +49,51 @@ namespace DeskMadeline
             => !string.IsNullOrWhiteSpace(path) &&
                File.Exists(Path.Combine(path, "Celeste.exe"));
 
-        /// <summary>Whether a build carries the game's own content and so needs no install.</summary>
+        /// <summary>Everything the pet reads out of an install, and so everything one needs.</summary>
+        /// <remarks>
+        /// Celeste.exe alone says only that a folder is Celeste's. A half-copied, half-deleted
+        /// or half-updated one has it and little else, and taking that for an install is how
+        /// the pet ends up with no sprites or no sound and nothing said about why. Her portrait
+        /// is not here: assets\portrait.png ships beside the app and is what the tray icon uses.
+        /// </remarks>
+        static readonly string[] Required =
+        {
+            "Celeste.exe",
+            "Content/Graphics/Atlases/Gameplay.meta",
+            "Content/Graphics/Atlases/Gameplay0.data",
+            "lib64-win-x64/fmod64.dll",
+            "lib64-win-x64/fmodstudio.dll",
+            "Content/FMOD/Desktop/Master Bank.bank",
+            "Content/FMOD/Desktop/Master Bank.strings.bank",
+            "Content/FMOD/Desktop/sfx.bank",
+            "Content/FMOD/Desktop/dlc_sfx.bank",   // the jellyfish is a Farewell mechanic
+        };
+
+        /// <summary>What an install is missing of those, in the game's own layout.</summary>
+        public static List<string> MissingFrom(string path)
+        {
+            var missing = new List<string>();
+            foreach (string file in Required)
+                if (string.IsNullOrWhiteSpace(path) ||
+                    !File.Exists(Path.Combine(path, file.Replace('/', Path.DirectorySeparatorChar))))
+                    missing.Add(file.Replace('/', Path.DirectorySeparatorChar));
+            return missing;
+        }
+
+        /// <summary>Whether an install has everything the pet reads.</summary>
+        public static bool IsComplete(string path) => MissingFrom(path).Count == 0;
+
+        /// <summary>Whether a build carries the game's artwork and so needs no install for it.</summary>
         public static bool HasBundledContent => File.Exists(Path.Combine(BundledAtlases, "Gameplay.meta"));
+
+        /// <summary>The same for the FMOD runtime and banks, which travel separately.</summary>
+        public static bool HasBundledAudio => HasAudio(AppDomain.CurrentDomain.BaseDirectory);
+
+        /// <summary>Whether a folder holds the FMOD runtime and banks, bundled or installed.</summary>
+        public static bool HasAudio(string directory)
+            => !string.IsNullOrWhiteSpace(directory) &&
+               File.Exists(Path.Combine(directory, "lib64-win-x64", "fmod64.dll")) &&
+               System.IO.Directory.Exists(Path.Combine(directory, "Content", "FMOD", "Desktop"));
 
         static string BundledAtlases => Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
             "Content", "Graphics", "Atlases");
@@ -103,11 +146,33 @@ namespace DeskMadeline
             return null;
         }
 
-        static string Find()
+        /// <summary>
+        /// DESKMADELINE_NO_CELESTE=1 makes looking find nothing, so what a machine without the
+        /// game sees -- the explanation, the folder picker, the setting being written -- can be
+        /// walked through on one that has it. A folder actually chosen still counts, since the
+        /// point of choosing one is that it then works.
+        /// </summary>
+        static bool PretendMissing
+            => Environment.GetEnvironmentVariable("DESKMADELINE_NO_CELESTE") == "1";
+
+        static string Find() => Search(false);
+
+        /// <summary>
+        /// Where looking alone says the game is, with no regard for anything named. Nothing is
+        /// remembered, so this is what the tray menu shows and offers next to what is in use.
+        /// </summary>
+        public static string Detected() => Search(true);
+
+        static string Search(bool ignoreNamed)
         {
+            // A folder someone named wins outright, whole or not: it was an answer to this
+            // question, and quietly using a different copy of the game instead of saying what
+            // is wrong with the named one would be no answer at all.
+            string explicitPath = ignoreNamed ? null : Configured();
+            if (IsInstall(explicitPath)) return Path.GetFullPath(explicitPath);
+            if (PretendMissing) return null;
+
             var candidates = new List<string>();
-            string explicitPath = Configured();
-            if (!string.IsNullOrWhiteSpace(explicitPath)) candidates.Add(explicitPath);
             candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
                 "Steam", "steamapps", "common", "Celeste"));
 
@@ -137,9 +202,13 @@ namespace DeskMadeline
                     candidates.Add(Path.Combine(drive.RootDirectory.FullName,
                         "SteamLibrary", "steamapps", "common", "Celeste"));
 
+            // A whole install first, wherever it is; a broken one only if there is no other,
+            // and then it is still worth returning, so that what is wrong with it can be said
+            // rather than reporting no Celeste at all with one plainly sitting there.
             foreach (string path in candidates)
-                if (!string.IsNullOrWhiteSpace(path) && File.Exists(Path.Combine(path, "Celeste.exe")))
-                    return Path.GetFullPath(path);
+                if (IsComplete(path)) return Path.GetFullPath(path);
+            foreach (string path in candidates)
+                if (IsInstall(path)) return Path.GetFullPath(path);
             return null;
         }
     }

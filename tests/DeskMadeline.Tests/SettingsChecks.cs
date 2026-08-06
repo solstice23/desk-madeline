@@ -79,8 +79,45 @@ static class SettingsChecks
                 CelesteInstall.Chosen = real;
                 Check("the remembered folder is the one used", CelesteInstall.Directory == real);
                 Check("it is an install", CelesteInstall.IsInstall(real));
+                // The list of files an install must have is only right if a real one has them
+                // all: a typo in it would turn every install into a broken one.
+                Check("a real install is complete" +
+                    (CelesteInstall.IsComplete(real) ? "" :
+                        ", missing " + string.Join(", ", CelesteInstall.MissingFrom(real))),
+                    CelesteInstall.IsComplete(real));
             }
             else Console.WriteLine("    ..    no Celeste installed; the rest is untestable here");
+
+            // Celeste.exe and nothing else: a half-copied or half-deleted install, which used
+            // to pass for one and leave her with no sprites and no sound and nothing said.
+            string broken = Path.Combine(dir, "broken-install");
+            Directory.CreateDirectory(broken);
+            File.WriteAllText(Path.Combine(broken, "Celeste.exe"), "");
+            Check("a folder with only Celeste.exe is an install", CelesteInstall.IsInstall(broken));
+            Check("but not a complete one", !CelesteInstall.IsComplete(broken));
+            Check("and it says the atlas is what it is missing",
+                CelesteInstall.MissingFrom(broken).Contains(
+                    Path.Combine("Content", "Graphics", "Atlases", "Gameplay.meta")));
+            CelesteInstall.Chosen = broken;
+            Check("a broken one that was named is still the one used, so what is wrong with it " +
+                "can be said instead of another copy being used behind the user's back",
+                CelesteInstall.Directory == broken);
+
+            foreach (string file in new[]
+            {
+                @"Content\Graphics\Atlases\Gameplay.meta", @"Content\Graphics\Atlases\Gameplay0.data",
+                @"lib64-win-x64\fmod64.dll", @"lib64-win-x64\fmodstudio.dll",
+                @"Content\FMOD\Desktop\Master Bank.bank", @"Content\FMOD\Desktop\Master Bank.strings.bank",
+                @"Content\FMOD\Desktop\sfx.bank", @"Content\FMOD\Desktop\dlc_sfx.bank",
+            })
+            {
+                string full = Path.Combine(broken, file);
+                Directory.CreateDirectory(Path.GetDirectoryName(full));
+                File.WriteAllText(full, "");
+            }
+            Check("filling in what it lacked makes it complete", CelesteInstall.IsComplete(broken));
+            CelesteInstall.Chosen = broken;
+            Check("and then it is the one used", CelesteInstall.Directory == broken);
         }
         finally { CelesteInstall.Chosen = wasChosen; }
 

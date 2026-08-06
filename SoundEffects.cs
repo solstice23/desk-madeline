@@ -84,7 +84,7 @@ namespace DeskMadeline
             {
                 // A bundled build carries the runtime and banks beside the exe, in the layout
                 // they have inside Celeste; otherwise they come from an install, as ever.
-                string game = HasBundledAudio(AppDomain.CurrentDomain.BaseDirectory)
+                string game = CelesteInstall.HasBundledAudio
                     ? AppDomain.CurrentDomain.BaseDirectory
                     : CelesteInstall.Directory;
                 if (game == null)
@@ -221,10 +221,6 @@ namespace DeskMadeline
         }
 
         /// <summary>Whether a directory holds the FMOD runtime and banks in Celeste's layout.</summary>
-        static bool HasBundledAudio(string directory)
-            => File.Exists(Path.Combine(directory, "lib64-win-x64", "fmod64.dll")) &&
-               Directory.Exists(Path.Combine(directory, "Content", "FMOD", "Desktop"));
-
         public void Dispose()
         {
             if (disposed) return;
