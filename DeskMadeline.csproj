@@ -76,12 +76,13 @@
                              $(CelesteDir)\Content\Graphics\Atlases\Gameplay*.data" />
       <CelestePortrait Include="$(CelesteDir)\Content\Graphics\Atlases\Portraits\madeline\normal00.data" />
       <CelesteFmodLib Include="$(CelesteDir)\lib64-win-x64\fmod*.dll" />
-      <!-- Only the four SoundEffects actually loads. The music banks are another 440MB of
-           soundtrack that nothing here ever plays. -->
+      <!-- The three that carry something this app asks for. SoundEffects would load
+           dlc_sfx.bank as well, but every event the pet plays resolves without it, and it is
+           33MB; the music banks are another 440MB of soundtrack nothing here can play.
+           SFXCHECK=1 is what says whether that is still true. -->
       <CelesteFmodBank Include="$(CelesteDir)\Content\FMOD\Desktop\Master Bank.bank;
                                 $(CelesteDir)\Content\FMOD\Desktop\Master Bank.strings.bank;
-                                $(CelesteDir)\Content\FMOD\Desktop\sfx.bank;
-                                $(CelesteDir)\Content\FMOD\Desktop\dlc_sfx.bank" />
+                                $(CelesteDir)\Content\FMOD\Desktop\sfx.bank" />
     </ItemGroup>
     <Copy SourceFiles="@(CelesteAtlas)" DestinationFolder="$(OutDir)Content\Graphics\Atlases"
           SkipUnchangedFiles="true" Condition="'@(CelesteAtlas)' != ''" />
