@@ -878,6 +878,7 @@ namespace DeskMadeline
 
             // Back onto a display first; only a position no display can account for resets.
             SnapIntoView();
+            SnapEntitiesIntoView();
             // Auto-reset when far off-screen (prevents infinite fall / being thrown off the virtual desktop)
             if (!introWakeUp && !player.IsDead) CheckAutoReset();
 
@@ -3681,31 +3682,71 @@ namespace DeskMadeline
         {
             if (dragging || introWakeUp || player.IsDead || player.IsRespawning) return;
             PointF onView = ClampIntoDisplays(
-                player.Pos, player.CurrentHitHeight, monitorGameBounds, edgeWrapMode);
+                player.Pos, 4f, player.CurrentHitHeight, 0f, monitorGameBounds, edgeWrapMode);
             // WrapBy carries her hair and anything she is holding along with her.
             if (onView != player.Pos)
                 player.WrapBy(onView.X - player.Pos.X, onView.Y - player.Pos.Y);
         }
 
-        /// <summary>Where she belongs if she has ended up off the displays; unchanged if not.</summary>
-        internal static PointF ClampIntoDisplays(
-            PointF pos, float height, List<RectangleF> displays, int edgeWrapMode)
+        /// <summary>The same for everything else loose on the desktop.</summary>
+        /// <remarks>
+        /// They can all be dragged, so they can all be dropped past an edge, and none of them
+        /// has anything that would bring them back: the crystal would break, and the jelly and
+        /// the seeker would drift off wherever they were let go.  Anything being carried or
+        /// held by the cursor is left alone, its position belonging to whoever has it.
+        /// </remarks>
+        void SnapEntitiesIntoView()
+        {
+            if (introWakeUp || monitorGameBounds.Count == 0) return;
+
+            foreach (TheoCrystal theo in theos)
+            {
+                if (theo.Removed || theo.IsHeld || theo.BeingDragged || theo.IsDying) continue;
+                PointF onView = ClampIntoDisplays(theo.Pos, TheoCrystal.HalfWidth,
+                    TheoCrystal.ColliderHeight, 0f, monitorGameBounds, edgeWrapMode);
+                if (onView != theo.Pos) theo.SnapIntoView(onView);
+            }
+            foreach (Glider glider in gliders)
+            {
+                if (glider.IsHeld || glider.BeingDragged) continue;
+                PointF onView = ClampIntoDisplays(glider.Pos, Glider.HalfWidth,
+                    Glider.ColliderHeight, 0f, monitorGameBounds, edgeWrapMode);
+                if (onView != glider.Pos) glider.SnapIntoView(onView);
+            }
+            foreach (Seeker seeker in seekers)
+            {
+                if (seeker.Removed || seeker.BeingDragged) continue;
+                // The seeker's 6x6 collider is centred on its position, not hung below it.
+                PointF onView = ClampIntoDisplays(seeker.Pos, Seeker.HalfSize, Seeker.HalfSize,
+                    Seeker.HalfSize, monitorGameBounds, edgeWrapMode);
+                if (onView != seeker.Pos) seeker.SnapIntoView(onView);
+            }
+        }
+
+        /// <summary>Where it belongs if it has ended up off the displays; unchanged if not.</summary>
+        /// <remarks>
+        /// The collider is given as its reach from the position rather than assumed, since the
+        /// crystal and the jelly hang below theirs like she does while the seeker is centred
+        /// on its own.
+        /// </remarks>
+        internal static PointF ClampIntoDisplays(PointF pos, float halfWidth, float above,
+            float below, List<RectangleF> displays, int edgeWrapMode)
         {
             if (displays.Count == 0 || edgeWrapMode == 3) return pos;
 
             // Wholly on one display is the answer almost every frame, and worth having before
             // the general test below, which allocates to handle straddling a seam.
             foreach (RectangleF display in displays)
-                if (pos.X - 4f >= display.Left && pos.X + 4f <= display.Right &&
-                    pos.Y - height >= display.Top && pos.Y <= display.Bottom)
+                if (pos.X - halfWidth >= display.Left && pos.X + halfWidth <= display.Right &&
+                    pos.Y - above >= display.Top && pos.Y + below <= display.Bottom)
                     return pos;
 
             var box = new Win32.RECT
             {
-                Left = (int)Math.Floor(pos.X - 4f),
-                Top = (int)Math.Floor(pos.Y - height),
-                Right = (int)Math.Ceiling(pos.X + 4f),
-                Bottom = (int)Math.Ceiling(pos.Y),
+                Left = (int)Math.Floor(pos.X - halfWidth),
+                Top = (int)Math.Floor(pos.Y - above),
+                Right = (int)Math.Ceiling(pos.X + halfWidth),
+                Bottom = (int)Math.Ceiling(pos.Y + below),
             };
             var rects = new List<Win32.RECT>(displays.Count);
             foreach (RectangleF display in displays)
@@ -3730,9 +3771,9 @@ namespace DeskMadeline
 
             float x = pos.X, y = pos.Y;
             if ((edgeWrapMode & 1) == 0)
-                x = Math.Max(nearest.Left + 4f, Math.Min(nearest.Right - 4f, x));
+                x = Math.Max(nearest.Left + halfWidth, Math.Min(nearest.Right - halfWidth, x));
             if ((edgeWrapMode & 2) == 0)
-                y = Math.Max(nearest.Top + height, Math.Min(nearest.Bottom, y));
+                y = Math.Max(nearest.Top + above, Math.Min(nearest.Bottom - below, y));
             return new PointF(x, y);
         }
 

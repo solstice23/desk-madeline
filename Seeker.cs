@@ -140,9 +140,13 @@ namespace DeskMadeline
         static bool Overlap(float l, float t, float r, float b, in Solid s)
             => l < s.R && r > s.L && t < s.B && b > s.T;
 
+        /// <summary>Collider reach from Pos, which it sits in the middle of.</summary>
+        public const float HalfSize = 3f;
+
         bool CollidesAt(float x, float y, IList<Solid> solids)
         {
-            foreach (Solid s in solids) if (Overlap(x - 3, y - 3, x + 3, y + 3, s)) return true;
+            foreach (Solid s in solids)
+                if (Overlap(x - HalfSize, y - HalfSize, x + HalfSize, y + HalfSize, s)) return true;
             return false;
         }
 
@@ -243,6 +247,13 @@ namespace DeskMadeline
         public void DragTo(PointF position)
         {
             if (!BeingDragged) return;
+            Pos = position;
+            counter = PointF.Empty;
+        }
+
+        /// <summary>Desktop: put it back on the displays after a drag left it off them.</summary>
+        public void SnapIntoView(PointF position)
+        {
             Pos = position;
             counter = PointF.Empty;
         }

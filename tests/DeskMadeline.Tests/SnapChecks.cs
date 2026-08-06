@@ -22,7 +22,18 @@ static class SnapChecks
 
     static void Check(string what, PointF from, PointF expected, int edgeWrapMode = 0)
     {
-        PointF got = PetWindow.ClampIntoDisplays(from, Height, Displays, edgeWrapMode);
+        PointF got = PetWindow.ClampIntoDisplays(from, 4f, Height, 0f, Displays, edgeWrapMode);
+        bool ok = Math.Abs(got.X - expected.X) < 0.01f && Math.Abs(got.Y - expected.Y) < 0.01f;
+        if (!ok) failed++;
+        Console.WriteLine($"    {(ok ? "ok  " : "FAIL")}  {what,-46} " +
+                          $"({from.X,6:0.#},{from.Y,6:0.#}) -> ({got.X,6:0.#},{got.Y,6:0.#})" +
+                          (ok ? "" : $"   expected ({expected.X:0.#},{expected.Y:0.#})"));
+    }
+
+    static void CheckBox(string what, PointF from, PointF expected,
+        float halfWidth, float above, float below)
+    {
+        PointF got = PetWindow.ClampIntoDisplays(from, halfWidth, above, below, Displays, 0);
         bool ok = Math.Abs(got.X - expected.X) < 0.01f && Math.Abs(got.Y - expected.Y) < 0.01f;
         if (!ok) failed++;
         Console.WriteLine($"    {(ok ? "ok  " : "FAIL")}  {what,-46} " +
@@ -55,6 +66,20 @@ static class SnapChecks
         Check("half off the left edge", new PointF(1f, 100f), new PointF(4f, 100f));
         // In the notch beside the taller display, off every display.
         Check("in the notch above the shorter display", new PointF(150f, -30f), new PointF(150f, 11f));
+
+        // Everything else loose on the desktop is brought back the same way. The crystal and
+        // the jelly hang below their position as she does; the seeker sits in the middle of
+        // its own, so its clamp has to keep its lower half on the display too.
+        CheckBox("crystal dropped below the bottom", new PointF(150f, 400f), new PointF(150f, 200f),
+            TheoCrystal.HalfWidth, TheoCrystal.ColliderHeight, 0f);
+        CheckBox("jelly dropped off the left", new PointF(-120f, 100f), new PointF(4f, 100f),
+            Glider.HalfWidth, Glider.ColliderHeight, 0f);
+        CheckBox("seeker dropped below the bottom", new PointF(150f, 400f), new PointF(150f, 197f),
+            Seeker.HalfSize, Seeker.HalfSize, Seeker.HalfSize);
+        CheckBox("seeker dropped above the top", new PointF(150f, -80f), new PointF(150f, 3f),
+            Seeker.HalfSize, Seeker.HalfSize, Seeker.HalfSize);
+        CheckBox("seeker already on a display is left alone", new PointF(150f, 150f), new PointF(150f, 150f),
+            Seeker.HalfSize, Seeker.HalfSize, Seeker.HalfSize);
 
         // A wrapping axis is left alone; the other still snaps.
         Check("horizontal wrap: x free, y still clamped",

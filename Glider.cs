@@ -13,6 +13,8 @@ namespace DeskMadeline
     {
         const float Width = 8f;
         const float Height = 10f;
+        /// <summary>Collider reach from Pos, for the desktop shell's bounds handling.</summary>
+        public const float HalfWidth = Width / 2f, ColliderHeight = Height;
 
         public PointF Pos;
         public PointF Speed;
@@ -147,6 +149,13 @@ namespace DeskMadeline
         public void DragTo(PointF position)
         {
             if (!BeingDragged) return;
+            Pos = position;
+            counter = PointF.Empty;
+        }
+
+        /// <summary>Desktop: put her back on the displays after a drag left her off them.</summary>
+        public void SnapIntoView(PointF position)
+        {
             Pos = position;
             counter = PointF.Empty;
         }

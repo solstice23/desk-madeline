@@ -16,6 +16,8 @@ namespace DeskMadeline
     public sealed class TheoCrystal : IPetHoldable
     {
         const float Width = 8f, Height = 10f;
+        /// <summary>Collider reach from Pos, for the desktop shell's bounds handling.</summary>
+        public const float HalfWidth = Width / 2f, ColliderHeight = Height;
         public PointF Pos { get; private set; }
         public PointF Speed { get; private set; }
         public Player Holder { get; private set; }
@@ -126,6 +128,8 @@ namespace DeskMadeline
             BeingDragged = true; Holder = null; Speed = counter = PointF.Empty;
         }
         public void DragTo(PointF position) { if (BeingDragged) { Pos = position; counter = PointF.Empty; } }
+        /// <summary>Desktop: put him back on the displays after a drag left him off them.</summary>
+        public void SnapIntoView(PointF position) { Pos = position; counter = PointF.Empty; }
         public void EndDrag(PointF velocity)
         {
             if (!BeingDragged) return;
