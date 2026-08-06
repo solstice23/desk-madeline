@@ -1,49 +1,33 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
 using DeskMadeline;
 
-/// <summary>Do the events the port asks for resolve in the installed Celeste banks?</summary>
+/// <summary>Does every event the code names resolve in the banks a build carries?</summary>
 /// <remarks>
 /// SoundEffects.Play logs "SFX event failed" and swallows the error, so an event that is not
 /// there is silent rather than obvious -- indistinguishable from a move that forgot to play
 /// one. Opt in with SFXCHECK=1, since this really does play each event, at 1% volume, and
 /// needs Celeste installed.
+///
+/// The list is read out of the source rather than written here. A hand-kept one silently went
+/// stale: it had no jellyfish in it, so it said every event resolved without dlc_sfx.bank and
+/// nearly cost a bundled build the jellyfish's sounds, that being a Farewell mechanic whose
+/// events live under event:/new_content/.
 /// </remarks>
 static class SoundBankChecks
 {
-    static readonly string[] Events =
+    /// <summary>Every event: string literal in the app's own sources.</summary>
+    static List<string> EventsNamedInSource()
     {
-        "event:/char/madeline/jump",
-        "event:/char/madeline/jump_super",        // super
-        "event:/char/madeline/jump_superslide",   // hyper
-        "event:/char/madeline/jump_superwall",
-        "event:/char/madeline/jump_wall_left",
-        "event:/char/madeline/jump_wall_right",
-        "event:/char/madeline/jump_climb_left",
-        "event:/char/madeline/jump_climb_right",
-        "event:/char/madeline/jump_dreamblock",
-        "event:/char/madeline/dash_red_left",
-        "event:/char/madeline/dash_red_right",
-        "event:/char/madeline/dash_pink_left",
-        "event:/char/madeline/dash_pink_right",
-        "event:/char/madeline/landing",
-        "event:/char/madeline/footstep",
-        "event:/char/madeline/duck",
-        "event:/char/madeline/stand",
-        "event:/char/madeline/grab",
-        "event:/char/madeline/grab_letgo",
-        "event:/char/madeline/handhold",
-        "event:/char/madeline/wallslide",
-        "event:/char/madeline/death",
-        "event:/char/madeline/predeath",
-        "event:/char/madeline/revive",
-        "event:/char/madeline/dreamblock_enter",
-        "event:/char/madeline/dreamblock_travel",
-        "event:/char/madeline/dreamblock_exit",
-        "event:/char/madeline/climb_ledge",
-        "event:/char/madeline/campfire_stand",
-        "event:/game/general/assist_dreamblockbounce",
-    };
+        var events = new SortedSet<string>(StringComparer.Ordinal);
+        string repo = "D:\\dev\\deskmadeline";
+        foreach (string file in Directory.GetFiles(repo, "*.cs"))
+            foreach (Match match in Regex.Matches(File.ReadAllText(file), "\"(event:/[^\"]+)\""))
+                events.Add(match.Groups[1].Value);
+        return new List<string>(events);
+    }
 
     public static int Run()
     {
@@ -56,8 +40,16 @@ static class SoundBankChecks
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 74));
-        Console.WriteLine("SOUND EVENTS against the installed Celeste banks");
+        Console.WriteLine("SOUND EVENTS against the banks");
         Console.WriteLine(new string('=', 74));
+
+        List<string> events = EventsNamedInSource();
+        Console.WriteLine($"  {events.Count} events named in the sources");
+        if (events.Count < 20)
+        {
+            Console.WriteLine("  suspiciously few -- the sources were not found");
+            return 1;
+        }
 
         string log = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pet_debug.log");
         if (File.Exists(log)) File.Delete(log);
@@ -70,7 +62,7 @@ static class SoundBankChecks
         }
 
         int failed = 0;
-        foreach (string path in Events)
+        foreach (string path in events)
         {
             long before = Failures(log);
             sfx.Play(path);

@@ -76,13 +76,14 @@
                              $(CelesteDir)\Content\Graphics\Atlases\Gameplay*.data" />
       <CelestePortrait Include="$(CelesteDir)\Content\Graphics\Atlases\Portraits\madeline\normal00.data" />
       <CelesteFmodLib Include="$(CelesteDir)\lib64-win-x64\fmod*.dll" />
-      <!-- The three that carry something this app asks for. SoundEffects would load
-           dlc_sfx.bank as well, but every event the pet plays resolves without it, and it is
-           33MB; the music banks are another 440MB of soundtrack nothing here can play.
-           SFXCHECK=1 is what says whether that is still true. -->
+      <!-- The four SoundEffects loads. dlc_sfx.bank is needed despite its name: the jellyfish
+           is a Farewell mechanic, so its sounds are under event:/new_content/. The music
+           banks are 440MB of soundtrack nothing here can play, and stay out. SFXCHECK=1
+           plays every event the code names, which is what says whether this list is right. -->
       <CelesteFmodBank Include="$(CelesteDir)\Content\FMOD\Desktop\Master Bank.bank;
                                 $(CelesteDir)\Content\FMOD\Desktop\Master Bank.strings.bank;
-                                $(CelesteDir)\Content\FMOD\Desktop\sfx.bank" />
+                                $(CelesteDir)\Content\FMOD\Desktop\sfx.bank;
+                                $(CelesteDir)\Content\FMOD\Desktop\dlc_sfx.bank" />
     </ItemGroup>
     <Copy SourceFiles="@(CelesteAtlas)" DestinationFolder="$(OutDir)Content\Graphics\Atlases"
           SkipUnchangedFiles="true" Condition="'@(CelesteAtlas)' != ''" />
