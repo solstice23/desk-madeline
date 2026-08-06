@@ -15,7 +15,8 @@
     Where to write it. Defaults to celeste_graphics_dump beside this repository.
 
 .PARAMETER CelestePath
-    An install to unpack. Defaults to CELESTE_PATH, then wherever CelesteInstall finds one.
+    An install to unpack. Defaults to CELESTE_PATH, then celeste-path.txt at the repo root,
+    then wherever CelesteInstall finds one.
 
 .EXAMPLE
     tools\dump-graphics.ps1
@@ -31,6 +32,15 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 
 if ($CelestePath) { $env:CELESTE_PATH = $CelestePath }
+# The app does not read celeste-path.txt -- it is a development file -- so hand it over as
+# the variable it does read, the way tools\dump-reference.ps1 does.
+if (-not $env:CELESTE_PATH) {
+    $pathFile = Join-Path $repo 'celeste-path.txt'
+    if (Test-Path $pathFile) {
+        $env:CELESTE_PATH = (Get-Content $pathFile |
+            Where-Object { $_.Trim() -and -not $_.StartsWith('#') } | Select-Object -First 1).Trim()
+    }
+}
 if ($Destination) { $env:GRAPHICSDUMP_OUT = $Destination }
 $env:GRAPHICSDUMP = '1'
 
