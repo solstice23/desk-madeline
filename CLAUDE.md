@@ -41,17 +41,17 @@ Two builds come out of this tree, and the difference is only what travels with t
 | | ships | needs Celeste installed |
 | --- | --- | --- |
 | `-c Release` | nothing of Celeste's (3 MB) | yes, for both artwork and sound |
-| `-c Release -p:BundleAssets=true` | its atlas, portrait and the four SFX banks, copied from `CELESTE_PATH` (204 MB) | no |
+| `-c Release -p:BundleAssets=true` | its atlas, portrait and the four SFX banks, copied from the install named below (204 MB) | no |
 
 The app needs no flag to tell them apart, and looks in the same two places for both kinds of
 content: beside the exe first, then the install. `CelesteInstall.AtlasesDirectory` and
 `SoundEffects` each do that. `CelesteAtlas` reads the atlas formats, both ported from
 `celeste_reference/Monocle/`.
 
-Where that install is, for a build, is `CELESTE_PATH` or a `celeste-path.txt` beside the
-project holding the path on one line — gitignored, since a path from one machine means
-nothing on another, and a development file only: the app never reads it. At run time an
-install is `CELESTE_PATH` or a setting, `CelestePath` in `settings.txt`,
+Where that install is, for a build, is `-p:CelestePath=…`, then `CELESTE_PATH`, then a
+`celeste-path.txt` beside the project holding the path on one line — gitignored, since a path
+from one machine means nothing on another, and a development file only: the app never reads
+it. At run time an install is `CELESTE_PATH` or a setting, `CelestePath` in `settings.txt`,
 which `PetWindow.ResolveCelesteInstall` fills in on the first run with whatever
 `CelesteInstall` finds and only asks for, with a folder picker, when it finds nothing. The
 tray menu's **Celeste folder…** changes it later; her sprites and the banks are read once at

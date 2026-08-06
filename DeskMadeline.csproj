@@ -64,18 +64,21 @@
     A bundled build carries Celeste's own artwork and audio so it can run on a machine without
     the game. Neither belongs in this repository, so both are copied out of an install at
     build time, in the layout the game uses and the app already knows how to read: the
-    gameplay atlas, her portrait, and the FMOD runtime and banks. Point CELESTE_PATH at an
-    install; without it the bundled build has nothing to carry, and says so.
+    gameplay atlas, her portrait, and the FMOD runtime and banks. Name an install with
+    -p:CelestePath=...; without one the bundled build has nothing to carry, and says so.
   -->
   <Target Name="BundleCelesteContent" AfterTargets="Build" Condition="'$(BundleAssets)' == 'true'">
     <PropertyGroup>
-      <!-- CELESTE_PATH, or celeste-path.txt beside this project holding the path on one
-           line, which saves naming an install on every build. CelesteInstall reads the same
-           file at run time. -->
+      <!-- Three ways to say where Celeste is, in the order they are taken:
+           -p:CelestePath=..., the CELESTE_PATH environment variable, or a celeste-path.txt
+           beside this project holding the path on one line, which saves saying it at all. -->
       <CelestePathFile>$(MSBuildProjectDirectory)\celeste-path.txt</CelestePathFile>
-      <CelesteDir>$(CELESTE_PATH)</CelesteDir>
+      <CelesteDir>$(CelestePath)</CelesteDir>
+      <CelesteDir Condition="'$(CelesteDir)' == ''">$(CELESTE_PATH)</CelesteDir>
       <CelesteDir Condition="'$(CelesteDir)' == '' And Exists('$(CelestePathFile)')"
                   >$([System.String]::Copy('$([System.IO.File]::ReadAllText($(CelestePathFile)))').Trim())</CelesteDir>
+      <!-- A path pasted with a trailing slash arrives with the closing quote stuck to it. -->
+      <CelesteDir>$(CelesteDir.TrimEnd('"').TrimEnd('\'))</CelesteDir>
     </PropertyGroup>
     <ItemGroup Condition="'$(CelesteDir)' != '' And Exists('$(CelesteDir)')">
       <CelesteAtlas Include="$(CelesteDir)\Content\Graphics\Atlases\Gameplay.meta;
@@ -99,7 +102,7 @@
           SkipUnchangedFiles="true" Condition="'@(CelesteFmodLib)' != ''" />
     <Copy SourceFiles="@(CelesteFmodBank)" DestinationFolder="$(OutDir)Content\FMOD\Desktop"
           SkipUnchangedFiles="true" Condition="'@(CelesteFmodBank)' != ''" />
-    <Warning Text="BundleAssets is on but CELESTE_PATH is not set to an install, so this build carries neither artwork nor audio."
+    <Warning Text="BundleAssets is on but '$(CelesteDir)' is not a Celeste install, so this build carries neither artwork nor audio. Name one with -p:CelestePath=..."
              Condition="'@(CelesteAtlas)' == ''" />
   </Target>
 
