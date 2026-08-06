@@ -25,7 +25,8 @@ static class Program
         failed += SettingsChecks.Run();   // settings defaults, and snapping back onto the displays
         failed += AtlasChecks.Run();      // sprites read out of an installed Celeste
         failed += SoundBankChecks.Run();
-        failed += AtlasIndexTool.Run();   // opt-in: regenerate docs/celeste-atlas-index.tsv  // opt-in: every event resolves in Celeste's banks
+        failed += AtlasIndexTool.Run();   // opt-in: regenerate docs/celeste-atlas-index.tsv
+        failed += GraphicsDumpTool.Run(); // opt-in: unpack the atlases, see tools/dump-graphics.ps1  // opt-in: every event resolves in Celeste's banks
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 74));

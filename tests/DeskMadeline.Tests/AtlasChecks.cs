@@ -17,6 +17,21 @@ static class AtlasChecks
 {
     static int failed;
 
+    /// <summary>
+    /// Where the unpacked art is. DUMPROOT points this at a freshly written one, which is how
+    /// tools\dump-graphics.ps1 gets checked against the atlas it came from.
+    /// </summary>
+    static string DumpRoot
+    {
+        get
+        {
+            string root = Environment.GetEnvironmentVariable("DUMPROOT");
+            return string.IsNullOrWhiteSpace(root)
+                ? Path.Combine("D:\\dev\\deskmadeline", "celeste_graphics_dump")
+                : root;
+        }
+    }
+
     static void Check(string what, bool ok)
     {
         Console.WriteLine($"    {(ok ? "ok  " : "FAIL")}  {what}");
@@ -60,8 +75,7 @@ static class AtlasChecks
     /// </summary>
     static void CheckDumpIsOneToOne(string celeste)
     {
-        string atlasRoot = Path.Combine("D:\\dev\\deskmadeline", "celeste_graphics_dump",
-            "Graphics", "Atlases");
+        string atlasRoot = Path.Combine(DumpRoot, "Graphics", "Atlases");
         string installed = Path.Combine(celeste, "Content", "Graphics", "Atlases");
         if (!Directory.Exists(atlasRoot)) return;
 
@@ -126,8 +140,7 @@ static class AtlasChecks
         Check("the atlas index reads", entries.Count > 1000 && pages.Count >= 1);
         Check("a known sprite is indexed", entries.ContainsKey("characters/player/idle00"));
 
-        string dump = Path.Combine("D:\\dev\\deskmadeline", "celeste_graphics_dump",
-            "Graphics", "Atlases", "Gameplay");
+        string dump = Path.Combine(DumpRoot, "Graphics", "Atlases", "Gameplay");
         if (!Directory.Exists(dump))
         {
             Console.WriteLine("  no celeste_graphics_dump to compare against -- index only");
@@ -181,7 +194,7 @@ static class AtlasChecks
         // and produce the very ids the animations ask for.
         Sprites.LoadAll(Path.Combine(Path.GetTempPath(), "deskmadeline-no-assets"),
             null, "characters/player_badeline");
-        Check("with no assets folder, sprites come from Celeste", Sprites.LoadedFromCeleste);
+        Check($"the atlases supply the sprites ({Sprites.LoadedFromCeleste} of them)", Sprites.LoadedFromCeleste > 500);
         foreach (string id in new[]
         {
             "idle00", "runFast00", "climb00", "jumpFast00", "dash00", "hair00", "bangs00",
