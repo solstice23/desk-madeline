@@ -85,6 +85,7 @@ namespace DeskMadeline
         PointF cursorVel;          // physical pixels / second
         Point lastCursor;
         IntPtr trayIconHandle;     // tray icon HICON (must DestroyIcon explicitly)
+        bool restartAfterExit;     // start a fresh copy once this one has let go of everything
 
         // Particles / effects
         readonly ParticleSystem particles = new ParticleSystem();
@@ -220,10 +221,13 @@ namespace DeskMadeline
             player.SetDashMode(settings.DashMode);
             player.NormalSurfaceSoundIndex = settings.SurfaceSoundIndex;
             player.Holdables = holdables;
+            Loc.SetLanguage(Loc.DetectDefault(settings.Language));
+            // Both the sounds below and the sprites further down are read out of Celeste, so
+            // where it is has to be settled before either of them looks.
+            ResolveCelesteInstall();
             soundEffects = new SoundEffects(
                 () => IsPetInputWindow(Win32.GetForegroundWindow()),
                 settings.SfxMode, settings.SfxVolume);
-            Loc.SetLanguage(Loc.DetectDefault(settings.Language));
             bindings = new KeyBindings(System.IO.Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory, "keybindings.txt"));
             padBindings = new PadBindings(System.IO.Path.Combine(
@@ -2954,6 +2958,59 @@ namespace DeskMadeline
             settings.Save();
         }
 
+        /// <summary>Settle which Celeste the artwork and sound come from, before they are read.</summary>
+        /// <remarks>
+        /// It is a setting rather than only a search so that a copy in an unusual place, or one
+        /// of several, can be named once and kept. The first run fills it in with whatever
+        /// looking around turns up, which is the whole answer for an ordinary Steam install;
+        /// only when that finds nothing is the user asked, and a bundled build carries the
+        /// game's files beside it and so is never asked at all.
+        /// </remarks>
+        void ResolveCelesteInstall()
+        {
+            CelesteInstall.Chosen = settings.CelestePath;
+            string found = CelesteInstall.Directory;   // the setting first, then the usual places
+            if (found == null && !CelesteInstall.HasBundledContent)
+            {
+                if (MessageBox.Show(Loc.T("Celeste.NotFound"), Loc.T("App.Title"),
+                        MessageBoxButtons.OKCancel, MessageBoxIcon.Information) == DialogResult.OK)
+                    found = AskForCelesteFolder();
+                if (found == null)
+                {
+                    Log("no Celeste install: running without her sprites or sounds");
+                    MessageBox.Show(Loc.T("Celeste.Without"), Loc.T("App.Title"),
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+            if (found == null || found.Equals(settings.CelestePath, StringComparison.OrdinalIgnoreCase))
+                return;
+            settings.CelestePath = found;
+            CelesteInstall.Chosen = found;
+            settings.Save();
+            Log("Celeste install: " + found);
+        }
+
+        /// <summary>Ask for the folder Celeste.exe is in, until it is one or the user gives up.</summary>
+        string AskForCelesteFolder()
+        {
+            while (true)
+            {
+                using var dialog = new FolderBrowserDialog
+                {
+                    Description = Loc.T("Celeste.PickFolder"),
+                    UseDescriptionForTitle = true,
+                    ShowNewFolderButton = false,
+                    SelectedPath = CelesteInstall.Directory ?? settings.CelestePath ?? ""
+                };
+                if (dialog.ShowDialog() != DialogResult.OK) return null;
+                if (CelesteInstall.IsInstall(dialog.SelectedPath))
+                    return System.IO.Path.GetFullPath(dialog.SelectedPath);
+                if (MessageBox.Show(Loc.T("Celeste.NoExeThere"), Loc.T("App.Title"),
+                        MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning) != DialogResult.Retry)
+                    return null;
+            }
+        }
+
         void ChangeLanguage(string code)
         {
             if (string.IsNullOrWhiteSpace(code)) return;
@@ -3642,6 +3699,31 @@ namespace DeskMadeline
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 7)));
             menu.Items.Add(removeEntitiesItem);
             menu.Items.Add(new ToolStripSeparator());
+
+            var celesteFolderItem = new ToolStripMenuItem(Loc.T("Menu.CelesteFolder"))
+            {
+                ToolTipText = CelesteInstall.Directory ?? Loc.T("Celeste.NoneFound")
+            };
+            celesteFolderItem.Click += (_, __) =>
+            {
+                string folder = AskForCelesteFolder();
+                if (folder == null ||
+                    folder.Equals(CelesteInstall.Directory, StringComparison.OrdinalIgnoreCase)) return;
+                settings.CelestePath = folder;
+                CelesteInstall.Chosen = folder;
+                SaveSettings();
+                Log("Celeste install: " + folder);
+                // Her sprites and the sound banks are both read once, at startup, so a new
+                // folder only really takes over at the next one.
+                if (MessageBox.Show(Loc.T("Celeste.RestartToApply"), Loc.T("App.Title"),
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                {
+                    restartAfterExit = true;
+                    ExitApp();
+                }
+            };
+            menu.Items.Add(celesteFolderItem);
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.Controls"), null, (_, __) =>
                 MessageBox.Show(
                     Loc.T("Help.ControlsBody"),
@@ -3872,6 +3954,21 @@ namespace DeskMadeline
             foreach (var digit in picoDigits) digit?.Dispose();
             compositionHost?.Close();
             compositionHost?.Dispose();
+            // Started here rather than at the click so the new copy finds settings.txt written,
+            // the tray icon gone and the sound device free, instead of racing this one for them.
+            if (restartAfterExit)
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = Environment.ProcessPath,
+                        WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory,
+                        UseShellExecute = true
+                    });
+                }
+                catch (Exception ex) { Log("restart failed: " + ex.Message); }
+            }
             base.OnFormClosing(e);
         }
     }

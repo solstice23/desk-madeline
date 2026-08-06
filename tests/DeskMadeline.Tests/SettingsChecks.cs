@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using DeskMadeline;
 
 // Settings defaults: what a fresh install gets, and -- more importantly -- that changing a
@@ -53,7 +55,59 @@ static class SettingsChecks
         Check("missing RespawnReversalEnabled key uses the new default", mixed.RespawnReversalEnabled);
         Check("missing IgnoreMaximizedWindows key uses the new default", mixed.IgnoreMaximizedWindows);
 
+        Console.WriteLine();
+        Console.WriteLine("  Celeste folder");
+        string celeste = Path.Combine(dir, "celeste.txt");
+        var pointed = PetSettings.Load(celeste);
+        Check("no folder is remembered until one is found or chosen", pointed.CelestePath == "");
+        pointed.CelestePath = @"C:\Games\Celeste";
+        pointed.Save();
+        Check("the chosen folder survives a restart",
+            PetSettings.Load(celeste).CelestePath == @"C:\Games\Celeste");
+
+        string wasChosen = CelesteInstall.Chosen;
+        try
+        {
+            CelesteInstall.Chosen = null;
+            string real = CelesteInstall.Directory;
+            Check("a folder without Celeste.exe is not an install", !CelesteInstall.IsInstall(dir));
+            CelesteInstall.Chosen = dir;
+            Check("a remembered folder that no longer holds the game is not used",
+                CelesteInstall.Directory != dir);
+            if (real != null)
+            {
+                CelesteInstall.Chosen = real;
+                Check("the remembered folder is the one used", CelesteInstall.Directory == real);
+                Check("it is an install", CelesteInstall.IsInstall(real));
+            }
+            else Console.WriteLine("    ..    no Celeste installed; the rest is untestable here");
+        }
+        finally { CelesteInstall.Chosen = wasChosen; }
+
         try { Directory.Delete(dir, true); } catch { }
+
+        Console.WriteLine();
+        Console.WriteLine("  Localization");
+        // Every key must exist in every language: a missing one shows up as an English word
+        // in the middle of a translated menu, and only when that menu is opened.
+        var english = (Dictionary<string, string>)typeof(Loc)
+            .GetField("english", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+        var translations = (Dictionary<string, Dictionary<string, string>>)typeof(Loc)
+            .GetField("translations", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+        foreach (var language in translations)
+        {
+            var missingKeys = new List<string>();
+            foreach (string key in english.Keys)
+                if (!language.Value.ContainsKey(key)) missingKeys.Add(key);
+            var extra = new List<string>();
+            foreach (string key in language.Value.Keys)
+                if (!english.ContainsKey(key)) extra.Add(key);
+            Check($"{language.Key} has every English key ({english.Count})" +
+                (missingKeys.Count == 0 ? "" : ", missing " + string.Join(", ", missingKeys)),
+                missingKeys.Count == 0);
+            Check($"{language.Key} has no key English lacks" +
+                (extra.Count == 0 ? "" : ", extra " + string.Join(", ", extra)), extra.Count == 0);
+        }
 
         failed += SnapChecks.Run();
         return failed;

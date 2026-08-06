@@ -69,7 +69,13 @@
   -->
   <Target Name="BundleCelesteContent" AfterTargets="Build" Condition="'$(BundleAssets)' == 'true'">
     <PropertyGroup>
+      <!-- CELESTE_PATH, or celeste-path.txt beside this project holding the path on one
+           line, which saves naming an install on every build. CelesteInstall reads the same
+           file at run time. -->
+      <CelestePathFile>$(MSBuildProjectDirectory)\celeste-path.txt</CelestePathFile>
       <CelesteDir>$(CELESTE_PATH)</CelesteDir>
+      <CelesteDir Condition="'$(CelesteDir)' == '' And Exists('$(CelestePathFile)')"
+                  >$([System.String]::Copy('$([System.IO.File]::ReadAllText($(CelestePathFile)))').Trim())</CelesteDir>
     </PropertyGroup>
     <ItemGroup Condition="'$(CelesteDir)' != '' And Exists('$(CelesteDir)')">
       <CelesteAtlas Include="$(CelesteDir)\Content\Graphics\Atlases\Gameplay.meta;

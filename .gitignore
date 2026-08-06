@@ -10,3 +10,8 @@ keybindings.txt
 celeste_graphics_dump/
 celeste_reference/
 example_skins/
+
+# Where Celeste is installed, when it is somewhere unusual. One line, the folder
+# holding Celeste.exe. Read by the build for -p:BundleAssets=true and by the app at
+# startup; CELESTE_PATH overrides it. Yours, so it is not committed.
+celeste-path.txt

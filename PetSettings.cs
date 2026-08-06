@@ -36,6 +36,8 @@ namespace DeskMadeline
         public int SfxMode = 1;          // 0 off, 1 only when focused, 2 always
         public int SfxVolume = 100;
         public int SurfaceSoundIndex = 8;
+        /// <summary>Where Celeste is, once it has been found or chosen. Empty means look again.</summary>
+        public string CelestePath = "";
 
         readonly string path;
 
@@ -96,6 +98,8 @@ namespace DeskMadeline
                 if (values.TryGetValue("SurfaceSoundIndex", out string surfaceSound) &&
                     int.TryParse(surfaceSound, out int surfaceSoundValue))
                     result.SurfaceSoundIndex = Math.Max(0, Math.Min(44, surfaceSoundValue));
+                if (values.TryGetValue("CelestePath", out string celestePath))
+                    result.CelestePath = celestePath.Trim();
             }
             catch { }
             return result;
@@ -148,7 +152,8 @@ namespace DeskMadeline
                     "ElytraEnabled=" + ElytraEnabled,
                     "SfxMode=" + SfxMode,
                     "SfxVolume=" + SfxVolume,
-                    "SurfaceSoundIndex=" + SurfaceSoundIndex
+                    "SurfaceSoundIndex=" + SurfaceSoundIndex,
+                    "CelestePath=" + (CelestePath ?? "")
                 });
             }
             catch { }

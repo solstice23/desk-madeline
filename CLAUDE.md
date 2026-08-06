@@ -46,6 +46,14 @@ content: beside the exe first, then the install. `CelesteInstall.AtlasesDirector
 `SoundEffects` each do that. `CelesteAtlas` reads the atlas formats, both ported from
 `celeste_reference/Monocle/`.
 
+Where that install is, for a build, is `CELESTE_PATH` or a `celeste-path.txt` beside the
+project holding the path on one line — gitignored, since a path from one machine means
+nothing on another. At run time it is a setting instead, `CelestePath` in `settings.txt`,
+which `PetWindow.ResolveCelesteInstall` fills in on the first run with whatever
+`CelesteInstall` finds and only asks for, with a folder picker, when it finds nothing. The
+tray menu's **Celeste folder…** changes it later; her sprites and the banks are read once at
+startup, so it offers a restart.
+
 `assets\` holds only what Celeste has no sprite for — the CommunalHelper elytra, the cat
 bangs, a stand-in for a particle the game draws as a rectangle, and her portrait, which is
 also the tray icon. It is laid over the atlas and ships in both builds.
