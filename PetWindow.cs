@@ -131,6 +131,9 @@ namespace DeskMadeline
         bool tiredFlash;
         readonly List<DashTrail> dashTrails = new List<DashTrail>();
         SlashVisual slash;
+        /// <summary>The slash, turned to face each way a dash can go. See GetSlashStamp.</summary>
+        const int SlashStampSize = 32;   // 24x8 rotated needs 26; even, so its edges land on the grid
+        readonly Dictionary<int, Bitmap> slashStamps = new Dictionary<int, Bitmap>();
         int observedDashSequenceCount;
         bool dashVisualPending;
         float dashVisualTimer = -1f;
@@ -2219,8 +2222,6 @@ namespace DeskMadeline
                 }
 
                 if (ParticlesEnabled) particles.Draw(g, camX, camY);
-                // SlashFx and TrailManager are core dash visuals; not gated by the particles toggle.
-                DrawSlash(g, camX, camY);
                 DrawSpeedometer(g, camX, camY);
                 DrawHitboxes(g, camX, camY);
             }
@@ -2262,6 +2263,18 @@ namespace DeskMadeline
                     trailStamps[trailCount++] = new TrailStamp(stamp, glider.Pos.X, glider.Pos.Y, 1f);
                     entityStamps[glider] = (stamp, glider.Pos.X, glider.Pos.Y);
                 }
+            }
+            // SlashFx.Depth is -100: in front of Glider's -5, behind Seeker's -199. It is a
+            // stamp rather than part of the canvas because the canvas is anchored to her, and
+            // something standing still in the world drawn into a buffer that moves with her is
+            // rounded twice -- once onto the game-pixel grid, once onto the screen -- and the
+            // two grids disagree by up to a pixel as she moves. That is the jitter. A stamp is
+            // placed straight into the world and rounded once.
+            if (slash.Active && trailCount < trailStamps.Length)
+            {
+                Bitmap slashStamp = GetSlashStamp(Math.Min(3, (int)(slash.Age / 0.1f)), slash.Angle);
+                if (slashStamp != null)
+                    trailStamps[trailCount++] = new TrailStamp(slashStamp, slash.X, slash.Y, 1f);
             }
             foreach (Seeker seeker in seekers)
             {
@@ -2364,19 +2377,41 @@ namespace DeskMadeline
         }
 
         // Vanilla SlashFx: 4 frames x 0.1s, spawned at player Center, moves 8px/s along dash direction.
-        void DrawSlash(Graphics g, float camX, float camY)
+        /// <summary>
+        /// One frame of SlashFx, already turned to face the dash, as a stamp of its own.
+        /// </summary>
+        /// <remarks>
+        /// A dash aims one of eight ways and the effect is four frames long, so this is a
+        /// couple of dozen small bitmaps at most; the explode launch can come in at any angle,
+        /// which is what the cap is for. They are drawn at 1x and rotated there, as they were
+        /// when they were drawn straight into the canvas, so the result is the same picture.
+        /// </remarks>
+        Bitmap GetSlashStamp(int frame, float angle)
         {
-            if (!slash.Active) return;
-            int frame = Math.Min(3, (int)(slash.Age / 0.1f));
+            int key = frame * 1000 + (int)Math.Round(angle * 180.0 / Math.PI);
+            if (slashStamps.TryGetValue(key, out Bitmap cached)) return cached;
             var tex = Sprites.Get("slash0" + frame, false);
-            if (tex == null) return;
-            var state = g.Save();
-            g.TranslateTransform(SnapPx(slash.X - camX), SnapPx(slash.Y - camY));
-            // SlashFx deliberately leaves the source orientation unchanged for exactly PI.
-            if (Math.Abs(slash.Angle - (float)Math.PI) > 0.01f)
-                g.RotateTransform(slash.Angle * 180f / (float)Math.PI);
-            g.DrawImage(tex, -12, -4, 24, 8);
-            g.Restore(state);
+            if (tex == null) return null;
+            var stamp = new Bitmap(SlashStampSize, SlashStampSize, PixelFormat.Format32bppPArgb);
+            using (var g = Graphics.FromImage(stamp))
+            {
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.SmoothingMode = SmoothingMode.None;
+                g.CompositingQuality = CompositingQuality.HighSpeed;
+                g.TranslateTransform(SlashStampSize / 2f, SlashStampSize / 2f);
+                // SlashFx deliberately leaves the source orientation unchanged for exactly PI.
+                if (Math.Abs(angle - (float)Math.PI) > 0.01f)
+                    g.RotateTransform(angle * 180f / (float)Math.PI);
+                g.DrawImage(tex, -12, -4, 24, 8);
+            }
+            if (slashStamps.Count > 64)
+            {
+                foreach (Bitmap old in slashStamps.Values) old.Dispose();
+                slashStamps.Clear();
+            }
+            slashStamps[key] = stamp;
+            return stamp;
         }
 
         void DrawGliders(Graphics g, float camX, float camY, bool heldOnly = false)
@@ -4147,6 +4182,8 @@ namespace DeskMadeline
             theoDebugStamp?.Dispose();
             foreach (Bitmap bitmap in seekerDebugStamps) bitmap?.Dispose();
             foreach (var digit in picoDigits) digit?.Dispose();
+            foreach (Bitmap stamp in slashStamps.Values) stamp.Dispose();
+            slashStamps.Clear();
             compositionHost?.Close();
             compositionHost?.Dispose();
             // Started here rather than at the click so the new copy finds settings.txt written,
