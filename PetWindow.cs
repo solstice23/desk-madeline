@@ -4136,7 +4136,7 @@ namespace DeskMadeline
             tray.Visible = false;
             // Close after the ToolStrip click unwinds. Application.Exit enumerates all
             // open forms; disposing the composition host during that enumeration caused
-            // "Collection was modified" on .NET 8.
+            // "Collection was modified" (seen on .NET 8; the ordering matters regardless).
             BeginInvoke(new Action(Close));
         }
 

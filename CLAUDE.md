@@ -33,7 +33,7 @@ shell around it (window platforms, tray menu, focus gating, persistence, skins) 
 
 ```
 dotnet build DeskMadeline.csproj -c Release      # must be 0 warnings, 0 errors
-bin\Release\net8.0-windows\DeskMadeline.exe
+bin\Release\net10.0-windows\DeskMadeline.exe
 ```
 
 Two builds come out of this tree, and the difference is only what travels with the exe:
