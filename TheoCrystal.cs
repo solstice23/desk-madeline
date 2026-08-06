@@ -64,19 +64,27 @@ namespace DeskMadeline
             foreach (Solid solid in solids) if (Overlap(l, t, r, b, solid)) return true;
             return false;
         }
-        bool BlocksMove(float x, float y, IList<Solid> solids)
+        /// <summary>
+        /// Whether the move is blocked, and whether by something he is already sitting in.
+        /// </summary>
+        /// <remarks>
+        /// A window border only collides from the outside, so one opening around him does not
+        /// swallow him.  A DreamBlock is a plain Solid to everything but a dashing player --
+        /// Celeste has no exemption for a crystal inside one, and DreamBlock.BlockedCheck
+        /// treats him as an actor it is blocked by -- so it holds him where he lies, the way
+        /// it holds her.  A drag is the way out.  Being held is not an impact, and reporting
+        /// one would sound the crystal against the block on every frame he spends in it.
+        /// </remarks>
+        bool BlocksMove(float x, float y, IList<Solid> solids, out bool held)
         {
             Bounds(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
             Bounds(x, y, out float l, out float t, out float r, out float b);
+            held = false;
             foreach (Solid solid in solids)
             {
                 if (!Overlap(l, t, r, b, solid)) continue;
-                // A window border only collides from the outside, so one opening around him
-                // does not swallow him.  A DreamBlock is a plain Solid to everything but a
-                // dashing player -- Celeste has no exemption for a crystal inside one, and
-                // DreamBlock.BlockedCheck treats him as an actor it is blocked by -- so it
-                // holds him where he lies, the way it holds her.  A drag is the way out.
-                if (solid.Dream || !Overlap(l0, t0, r0, b0, solid)) return true;
+                bool inside = Overlap(l0, t0, r0, b0, solid);
+                if (solid.Dream || !inside) { held = inside; return true; }
             }
             return false;
         }
@@ -229,7 +237,13 @@ namespace DeskMadeline
             int sign = Math.Sign(move);
             while (move != 0)
             {
-                if (BlocksMove(Pos.X + sign, Pos.Y, solids)) { counter.X = 0f; OnCollideH(sign); return; }
+                if (BlocksMove(Pos.X + sign, Pos.Y, solids, out bool held))
+                {
+                    counter.X = 0f;
+                    if (held) Speed = new PointF(0f, Speed.Y);   // held, not hit
+                    else OnCollideH(sign);
+                    return;
+                }
                 Pos = new PointF(Pos.X + sign, Pos.Y); move -= sign;
             }
         }
@@ -239,7 +253,13 @@ namespace DeskMadeline
             int sign = Math.Sign(move);
             while (move != 0)
             {
-                if (BlocksMove(Pos.X, Pos.Y + sign, solids)) { counter.Y = 0f; OnCollideV(sign); return; }
+                if (BlocksMove(Pos.X, Pos.Y + sign, solids, out bool held))
+                {
+                    counter.Y = 0f;
+                    if (held) Speed = new PointF(Speed.X, 0f);   // held, not hit
+                    else OnCollideV(sign);
+                    return;
+                }
                 Pos = new PointF(Pos.X, Pos.Y + sign); move -= sign;
             }
         }

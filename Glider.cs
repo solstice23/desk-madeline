@@ -66,17 +66,25 @@ namespace DeskMadeline
             return false;
         }
 
-        bool BlocksMove(float x, float y, IList<Solid> solids)
+        /// <summary>
+        /// Whether the move is blocked, and whether by something she is already sitting in.
+        /// </summary>
+        /// <remarks>
+        /// See TheoCrystal.BlocksMove: window borders collide only from the outside so one
+        /// opening around her cannot swallow her, but a DreamBlock is an ordinary Solid to
+        /// every actor except a dashing player, and holds her where she lies.  Being held is
+        /// not an impact, and reporting one would sound her against the block every frame.
+        /// </remarks>
+        bool BlocksMove(float x, float y, IList<Solid> solids, out bool held)
         {
             Bounds(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
             Bounds(x, y, out float l, out float t, out float r, out float b);
+            held = false;
             foreach (Solid solid in solids)
             {
                 if (!Overlap(l, t, r, b, solid)) continue;
-                // See TheoCrystal.BlocksMove: window borders collide only from the outside so
-                // one opening around her cannot swallow her, but a DreamBlock is an ordinary
-                // Solid to every actor except a dashing player, and holds her where she lies.
-                if (solid.Dream || !Overlap(l0, t0, r0, b0, solid)) return true;
+                bool inside = Overlap(l0, t0, r0, b0, solid);
+                if (solid.Dream || !inside) { held = inside; return true; }
             }
             return false;
         }
@@ -277,10 +285,11 @@ namespace DeskMadeline
             int sign = Math.Sign(move);
             while (move != 0)
             {
-                if (BlocksMove(Pos.X + sign, Pos.Y, solids))
+                if (BlocksMove(Pos.X + sign, Pos.Y, solids, out bool held))
                 {
                     counter.X = 0f;
-                    OnCollideH();
+                    if (held) Speed.X = 0f;   // held, not hit
+                    else OnCollideH();
                     return;
                 }
                 Pos.X += sign;
@@ -297,10 +306,11 @@ namespace DeskMadeline
             int sign = Math.Sign(move);
             while (move != 0)
             {
-                if (BlocksMove(Pos.X, Pos.Y + sign, solids))
+                if (BlocksMove(Pos.X, Pos.Y + sign, solids, out bool held))
                 {
                     counter.Y = 0f;
-                    OnCollideV();
+                    if (held) Speed.Y = 0f;   // held, not hit
+                    else OnCollideV();
                     return;
                 }
                 Pos.Y += sign;

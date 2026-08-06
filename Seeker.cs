@@ -150,6 +150,21 @@ namespace DeskMadeline
             return false;
         }
 
+        /// <summary>Whether the blocking solid is one it is already sitting in.</summary>
+        /// <remarks>
+        /// Dropped inside a block it cannot move at all, which is what a Solid does to any
+        /// actor.  Being held that way is not an impact, and reporting one would sound it
+        /// against the block on every frame it spends in there.
+        /// </remarks>
+        bool HeldInsideAt(float x, float y, IList<Solid> solids)
+        {
+            foreach (Solid s in solids)
+                if (Overlap(x - HalfSize, y - HalfSize, x + HalfSize, y + HalfSize, s) &&
+                    Overlap(Pos.X - HalfSize, Pos.Y - HalfSize, Pos.X + HalfSize, Pos.Y + HalfSize, s))
+                    return true;
+            return false;
+        }
+
         static bool SegmentHitsSolid(PointF from, PointF to, IList<Solid> solids)
         {
             foreach (Solid s in solids)
@@ -573,7 +588,10 @@ namespace DeskMadeline
                         if (!CollidesAt(Pos.X + sign, Pos.Y + 4f, solids)) { MoveVExact(4, solids); move = 0; continue; }
                         if (!CollidesAt(Pos.X + sign, Pos.Y - 4f, solids)) { MoveVExact(-4, solids); move = 0; continue; }
                     }
-                    counter.X = 0f; CollideH(sign, solids); return;
+                    counter.X = 0f;
+                    if (HeldInsideAt(Pos.X + sign, Pos.Y, solids)) Speed.X = 0f;   // held, not hit
+                    else CollideH(sign, solids);
+                    return;
                 }
                 Pos.X += sign; move -= sign;
             }
@@ -584,7 +602,13 @@ namespace DeskMadeline
             int sign = Math.Sign(move);
             while (move != 0)
             {
-                if (CollidesAt(Pos.X, Pos.Y + sign, solids)) { counter.Y = 0f; CollideV(); return; }
+                if (CollidesAt(Pos.X, Pos.Y + sign, solids))
+                {
+                    counter.Y = 0f;
+                    if (HeldInsideAt(Pos.X, Pos.Y + sign, solids)) Speed.Y = 0f;   // held, not hit
+                    else CollideV();
+                    return;
+                }
                 Pos.Y += sign; move -= sign;
             }
         }
