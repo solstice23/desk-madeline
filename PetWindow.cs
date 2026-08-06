@@ -3912,10 +3912,18 @@ namespace DeskMadeline
                 MessageBox.Show(
                     Loc.T("Help.ControlsBody"),
                     Loc.T("App.Title"), MessageBoxButtons.OK, MessageBoxIcon.Information)));
+            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.About"), null, (_, __) => ShowAbout()));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem(Loc.T("Common.Exit"), null, (_, __) => ExitApp()));
             return menu;
         }
+
+        /// <summary>Open the About window once the menu click has unwound.</summary>
+        void ShowAbout() => BeginInvoke(new Action(() =>
+        {
+            using var about = new AboutDialog();
+            about.ShowDialog();
+        }));
 
         /// <summary>
         /// Whether an install is any of the pet's business. A bundled build carries the artwork
