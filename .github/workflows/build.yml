@@ -1,0 +1,53 @@
+# Builds the ordinary edition -- the one that carries nothing of Celeste's and reads the
+# game's atlases and FMOD banks from an installed copy at startup. That build needs no
+# Celeste to compile, and neither do the checks: everything of theirs that wants an install
+# stands down and says so. The bundled edition cannot be built here, since it would have to
+# copy 200MB out of a game this machine does not have.
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Zero warnings is the bar this project holds itself to, so hold it here.
+      - name: Build
+        run: dotnet build DeskMadeline.csproj -c Release -warnaserror
+
+      - name: Check
+        run: dotnet run --project tests\DeskMadeline.Tests -c Release
+
+      # Into a folder of its own, so unzipping leaves one thing rather than thirty. The two
+      # exclusions are the user's own files, which a build never makes but a run does.
+      - name: Zip
+        id: zip
+        run: |
+          $name = "DeskMadeline-$($env:GITHUB_SHA.Substring(0, 7)).zip"
+          $stage = New-Item -ItemType Directory -Force -Path DeskMadeline
+          Get-ChildItem bin\Release\net8.0-windows -Exclude settings.txt, pet_debug.log |
+            Copy-Item -Destination $stage -Recurse
+          Compress-Archive -Path $stage -DestinationPath $name
+          "name=$name" >> $env:GITHUB_OUTPUT
+          "{0} is {1:N1} MB" -f $name, ((Get-Item $name).Length / 1MB)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.zip.outputs.name }}
+          path: ${{ steps.zip.outputs.name }}
+          if-no-files-found: error
