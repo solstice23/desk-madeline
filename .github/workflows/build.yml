@@ -33,21 +33,22 @@ jobs:
       - name: Check
         run: dotnet run --project tests\DeskMadeline.Tests -c Release
 
-      # Into a folder of its own, so unzipping leaves one thing rather than thirty. The two
-      # exclusions are the user's own files, which a build never makes but a run does.
-      - name: Zip
-        id: zip
+      # Gathered rather than zipped: upload-artifact zips whatever it is given, so zipping it
+      # here as well is what puts a zip inside a zip. The download is DeskMadeline-<sha>.zip
+      # either way. The two exclusions are the user's own files, which a build never makes
+      # but a run does.
+      - name: Gather
+        id: gather
         run: |
-          $name = "DeskMadeline-$($env:GITHUB_SHA.Substring(0, 7)).zip"
-          $stage = New-Item -ItemType Directory -Force -Path DeskMadeline
+          $stage = New-Item -ItemType Directory -Force -Path stage
           Get-ChildItem bin\Release\net10.0-windows -Exclude settings.txt, pet_debug.log |
             Copy-Item -Destination $stage -Recurse
-          Compress-Archive -Path $stage -DestinationPath $name
-          "name=$name" >> $env:GITHUB_OUTPUT
-          "{0} is {1:N1} MB" -f $name, ((Get-Item $name).Length / 1MB)
+          "name=DeskMadeline-$($env:GITHUB_SHA.Substring(0, 7))" >> $env:GITHUB_OUTPUT
+          "{0:N1} MB" -f ((Get-ChildItem $stage -Recurse -File |
+            Measure-Object Length -Sum).Sum / 1MB)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.zip.outputs.name }}
-          path: ${{ steps.zip.outputs.name }}
+          name: ${{ steps.gather.outputs.name }}
+          path: stage
           if-no-files-found: error
