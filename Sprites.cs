@@ -100,8 +100,8 @@ namespace DeskMadeline
 
         public static string AssetsDir;
 
-        /// <summary>True when the sprites came out of an installed Celeste rather than assets\.</summary>
-        public static bool LoadedFromCeleste { get; private set; }
+        /// <summary>How many sprites the last load took from Celeste's atlases.</summary>
+        public static int LoadedFromCeleste { get; private set; }
 
         /// <summary>The face the tray icon is made from, in the Portraits atlas.</summary>
         public const string PortraitId = "madeline/normal00";
@@ -114,13 +114,12 @@ namespace DeskMadeline
             _tex.Clear();
             _texFlip.Clear();
 
-            // A build that ships no artwork has no assets\ to read, so the sprites come from
-            // an installed Celeste, exactly as the sounds do.  A build that does ship them
-            // reads those, and needs no install at all.
-            LoadedFromCeleste = !Directory.Exists(dir);
-            if (LoadedFromCeleste)
+            // Celeste's own art comes from its atlases, whether those are beside the app or
+            // in an install.  assets\ is laid over the top and holds only what the game has
+            // no sprite for: the elytra, the cat bangs, a particle it draws as a rectangle.
+            LoadFromCeleste(skinAtlasFolder);
+            if (!Directory.Exists(dir))
             {
-                LoadFromCeleste(skinAtlasFolder);
                 LoadSkinDirectories(skinDir);
                 return;
             }
@@ -162,13 +161,12 @@ namespace DeskMadeline
         /// </remarks>
         static void LoadFromCeleste(string skinAtlasFolder)
         {
-            string celeste = CelesteInstall.Directory;
-            if (celeste == null)
+            string atlases = CelesteInstall.AtlasesDirectory;
+            if (atlases == null)
             {
-                PetWindow.Log("sprites unavailable: no Celeste install found");
+                PetWindow.Log("sprites unavailable: no Celeste atlases beside the app or installed");
                 return;
             }
-            string atlases = Path.Combine(celeste, "Content", "Graphics", "Atlases");
             string meta = Path.Combine(atlases, "Gameplay.meta");
             if (!File.Exists(meta))
             {
@@ -241,7 +239,8 @@ namespace DeskMadeline
                     Store(PortraitId, CelesteAtlas.DecodePage(face));
                     loaded++;
                 }
-                PetWindow.Log($"sprites: {loaded} read from the Celeste atlas at {atlases}");
+                LoadedFromCeleste = loaded;
+                PetWindow.Log($"sprites: {loaded} read from the Celeste atlases at {atlases}");
             }
             catch (Exception ex)
             {

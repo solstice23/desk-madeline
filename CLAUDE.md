@@ -18,11 +18,12 @@ shell around it (window platforms, tray menu, focus gating, persistence, skins) 
 - `Localization.cs` — in-code string catalogs; every key must exist in every language.
 - `celeste_reference/` — decompiled Celeste (`Celeste/`) and engine (`Monocle/`) source.
   Not compiled: excluded in the csproj. This is the authority for every gameplay question.
-- `celeste_graphics_dump/` — original sprites, the authority for visuals. Its layout mirrors
-  the game's atlases exactly, so dump file, atlas path and index row are the same name in
-  three dresses. `docs/celeste-assets.md` explains that and which folders the pet draws from;
-  `docs/celeste-atlas-index.tsv` lists every sprite of every atlas with its frame and trim,
-  used here or not, so art can be looked up without an install or the dump.
+- `celeste_graphics_dump/` — original sprites, the authority for visuals. Not in the
+  repository: run `tools\dump-graphics.ps1` to unpack your own from an install. Its layout
+  mirrors the game's atlases exactly, so dump file, atlas path and index row are the same
+  name in three dresses. `docs/celeste-assets.md` explains that and which folders the pet
+  draws from; `docs/celeste-atlas-index.tsv` lists every sprite of every atlas with its frame
+  and trim, used here or not, so art can be looked up without an install or the dump.
 - `tests/DeskMadeline.Tests/` — frame-level checks for the ported gameplay; see
   `tests/README.md`. Excluded from the app's csproj.
 
@@ -37,13 +38,17 @@ Two builds come out of this tree, and the difference is only what travels with t
 
 | | ships | needs Celeste installed |
 | --- | --- | --- |
-| `-c Release` | nothing of Celeste's | yes, for both artwork and sound |
-| `-c Release -p:BundleAssets=true` | `assets\`, plus FMOD banks and libraries copied from `CELESTE_PATH` | no |
+| `-c Release` | nothing of Celeste's (3 MB) | yes, for both artwork and sound |
+| `-c Release -p:BundleAssets=true` | its atlas, portrait and the four SFX banks, copied from `CELESTE_PATH` (204 MB) | no |
 
-The app needs no flag to tell them apart. `Sprites.LoadAll` reads `assets\` when it is there
-and Celeste's `Gameplay` atlas when it is not; `SoundEffects` reads FMOD from beside the exe
-when it is there and from the install when it is not. `CelesteAtlas` reads the atlas formats
-(both ported from `celeste_reference/Monocle/`), and `CelesteInstall` finds the game.
+The app needs no flag to tell them apart, and looks in the same two places for both kinds of
+content: beside the exe first, then the install. `CelesteInstall.AtlasesDirectory` and
+`SoundEffects` each do that. `CelesteAtlas` reads the atlas formats, both ported from
+`celeste_reference/Monocle/`.
+
+`assets\` holds only what Celeste has no sprite for — the CommunalHelper elytra, the cat
+bangs, a stand-in for a particle the game draws as a rectangle, and her portrait, which is
+also the tray icon. It is laid over the atlas and ships in both builds.
 
 Keep exactly one build output for the app (`bin\Release`). Do not add a second output
 directory. The checks under `tests/` build to their own, which is theirs and not the app's.

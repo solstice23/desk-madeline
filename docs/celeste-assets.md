@@ -5,6 +5,25 @@ and sound from its FMOD banks, both at startup, both from an installed copy foun
 `CelesteInstall` (or `CELESTE_PATH`). `-p:BundleAssets=true` copies them beside the exe
 instead, for a machine with no Celeste on it. See `CLAUDE.md` for the two builds.
 
+`assets\` holds the fourteen files the game has no sprite for: `fly00`–`fly08`, the elytra
+from CommunalHelper; `catbangs00`–`02`; `dashParticle`, standing in for a particle Celeste
+draws as a plain rectangle; and `portrait.png`, which is her dialogue portrait and also the
+tray icon. Everything else it used to hold — 1028 files — is read from the game now.
+
+## Unpacking the art to look at it
+
+`celeste_graphics_dump/` is too large for the repository, so make your own:
+
+```
+tools\dump-graphics.ps1                                   # into celeste_graphics_dump
+tools\dump-graphics.ps1 -Destination D:\scratch\art       # or anywhere
+```
+
+It writes one png per sprite for all 8371 of them, in the layout below. Nothing needs it —
+the app reads the atlases directly and the checks skip when it is absent — but it is the
+quickest way to see what a sprite actually looks like. Point the checks at a fresh one with
+`DUMPROOT` to confirm it came out right.
+
 ## The dump, the atlas and the index all line up
 
 `celeste_graphics_dump/` is an unpacked copy of the atlases, one png per sprite, and the

@@ -26,6 +26,22 @@ namespace DeskMadeline
             }
         }
 
+        /// <summary>
+        /// Where the atlases are: beside the app when a build carries them, otherwise inside
+        /// the install. The same arrangement SoundEffects uses for the FMOD banks.
+        /// </summary>
+        public static string AtlasesDirectory
+        {
+            get
+            {
+                string bundled = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                    "Content", "Graphics", "Atlases");
+                if (File.Exists(Path.Combine(bundled, "Gameplay.meta"))) return bundled;
+                return Directory == null ? null
+                    : Path.Combine(Directory, "Content", "Graphics", "Atlases");
+            }
+        }
+
         static string Find()
         {
             var candidates = new List<string>();

@@ -46,7 +46,10 @@
     <Compile Remove="celeste_reference\**" />
     <!-- The checks compile these same sources into their own assembly; see tests\README.md. -->
     <Compile Remove="tests\**" />
-    <None Include="assets\**" Condition="'$(BundleAssets)' == 'true'">
+    <!-- What is left in assets\ is not Celeste's and ships either way: the elytra frames
+         from CommunalHelper, the cat bangs, a stand-in for a particle the game draws as a
+         rectangle, and her portrait, which is also the tray icon. -->
+    <None Include="assets\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="hair_tweaks.txt">
@@ -58,24 +61,38 @@
   </ItemGroup>
 
   <!--
-    A bundled build also wants the sound with it, and the FMOD runtime and banks belong to
-    Celeste rather than to this repository, so they are copied from an install at build time.
-    Point CELESTE_PATH at one; without it the bundled build simply has no audio, and says so.
+    A bundled build carries Celeste's own artwork and audio so it can run on a machine without
+    the game. Neither belongs in this repository, so both are copied out of an install at
+    build time, in the layout the game uses and the app already knows how to read: the
+    gameplay atlas, her portrait, and the FMOD runtime and banks. Point CELESTE_PATH at an
+    install; without it the bundled build has nothing to carry, and says so.
   -->
-  <Target Name="BundleCelesteAudio" AfterTargets="Build" Condition="'$(BundleAssets)' == 'true'">
+  <Target Name="BundleCelesteContent" AfterTargets="Build" Condition="'$(BundleAssets)' == 'true'">
     <PropertyGroup>
       <CelesteDir>$(CELESTE_PATH)</CelesteDir>
     </PropertyGroup>
     <ItemGroup Condition="'$(CelesteDir)' != '' And Exists('$(CelesteDir)')">
+      <CelesteAtlas Include="$(CelesteDir)\Content\Graphics\Atlases\Gameplay.meta;
+                             $(CelesteDir)\Content\Graphics\Atlases\Gameplay*.data" />
+      <CelestePortrait Include="$(CelesteDir)\Content\Graphics\Atlases\Portraits\madeline\normal00.data" />
       <CelesteFmodLib Include="$(CelesteDir)\lib64-win-x64\fmod*.dll" />
-      <CelesteFmodBank Include="$(CelesteDir)\Content\FMOD\Desktop\*.bank" />
+      <!-- Only the four SoundEffects actually loads. The music banks are another 440MB of
+           soundtrack that nothing here ever plays. -->
+      <CelesteFmodBank Include="$(CelesteDir)\Content\FMOD\Desktop\Master Bank.bank;
+                                $(CelesteDir)\Content\FMOD\Desktop\Master Bank.strings.bank;
+                                $(CelesteDir)\Content\FMOD\Desktop\sfx.bank;
+                                $(CelesteDir)\Content\FMOD\Desktop\dlc_sfx.bank" />
     </ItemGroup>
+    <Copy SourceFiles="@(CelesteAtlas)" DestinationFolder="$(OutDir)Content\Graphics\Atlases"
+          SkipUnchangedFiles="true" Condition="'@(CelesteAtlas)' != ''" />
+    <Copy SourceFiles="@(CelestePortrait)" DestinationFolder="$(OutDir)Content\Graphics\Atlases\Portraits\madeline"
+          SkipUnchangedFiles="true" Condition="'@(CelestePortrait)' != ''" />
     <Copy SourceFiles="@(CelesteFmodLib)" DestinationFolder="$(OutDir)lib64-win-x64"
           SkipUnchangedFiles="true" Condition="'@(CelesteFmodLib)' != ''" />
     <Copy SourceFiles="@(CelesteFmodBank)" DestinationFolder="$(OutDir)Content\FMOD\Desktop"
           SkipUnchangedFiles="true" Condition="'@(CelesteFmodBank)' != ''" />
-    <Warning Text="BundleAssets is on but CELESTE_PATH is not set to an install, so this build has no audio."
-             Condition="'@(CelesteFmodBank)' == ''" />
+    <Warning Text="BundleAssets is on but CELESTE_PATH is not set to an install, so this build carries neither artwork nor audio."
+             Condition="'@(CelesteAtlas)' == ''" />
   </Target>
 
 </Project>
