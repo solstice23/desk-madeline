@@ -1,5 +1,13 @@
 # Third-party notices
 
+## Cateline
+
+The cat bangs (`catbangs00.png` through `catbangs02.png`) and the swaying cat tail are from
+Cateline, a Celeste skin mod by ladyfey: https://gamebanana.com/mods/251793
+
+Licensed by its author under the Creative Commons Attribution-NonCommercial-NoDerivatives
+4.0 International License: https://creativecommons.org/licenses/by-nc-nd/4.0/
+
 ## CommunalHelper Elytra
 
 The Elytra behavior and `fly00.png` through `fly08.png` assets are adapted from

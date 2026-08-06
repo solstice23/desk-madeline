@@ -41,5 +41,5 @@ This project was originally created by [Eisyiah](https://space.bilibili.com/3493
 
 This is a fan project, not affiliated with the developers of Celeste. Celeste is by [Extremely OK Games](https://exok.com), and none of its art, audio or code is included in the source code. 
 
-This project references third-party mods, including Elytra from [CommunalHelper](https://gamebanana.com/mods/53697). See `THIRD_PARTY_NOTICES.md` for third-party details and licenses.
+This project references third-party mods: the Elytra from [CommunalHelper](https://gamebanana.com/mods/53697), and the cat ears and tail from [Cateline](https://gamebanana.com/mods/251793) by ladyfey. See `THIRD_PARTY_NOTICES.md` for third-party details and licenses.
 

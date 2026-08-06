@@ -2937,6 +2937,7 @@ namespace DeskMadeline
             g.FillRectangle(brush, left + w - 1, top, 1, h);
         }
 
+        /// <summary>The tail from Cateline, by ladyfey: gamebanana.com/mods/251793.</summary>
         void DrawCatTail(Graphics g, float camX, float camY)
         {
             if (!catTailEnabled || !catTailStarted) return;

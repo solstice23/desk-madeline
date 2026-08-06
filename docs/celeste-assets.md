@@ -13,9 +13,10 @@ overrides it. A build takes the same from `-p:CelestePath=…`, `CELESTE_PATH` o
 `celeste-path.txt`, the last of which is a development file the app itself never reads.
 
 `assets\` holds the fourteen files the game has no sprite for: `fly00`–`fly08`, the elytra
-from CommunalHelper; `catbangs00`–`02`; `dashParticle`, standing in for a particle Celeste
-draws as a plain rectangle; and `portrait.png`, which is her dialogue portrait and also the
-tray icon. Everything else it used to hold — 1028 files — is read from the game now.
+from CommunalHelper; `catbangs00`–`02`, the cat ears from Cateline; `dashParticle`, standing
+in for a particle Celeste draws as a plain rectangle; and `portrait.png`, which is her
+dialogue portrait and also the tray icon. Everything else it used to hold — 1028 files — is
+read from the game now.
 
 ## Unpacking the art to look at it
 
