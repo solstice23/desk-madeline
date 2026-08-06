@@ -21,6 +21,7 @@ adding an assertion, and what these need is a fixed timestep and vanilla's const
 | `GridChecks.cs` | Whole-pixel grid: climbing a wall at every window/drag offset, window borders surviving the snap at every scale, landing on a window top, respawn after a Seeker death landing on whole pixels |
 | `DreamChecks.cs` | Dream blocks: death position on straight and diagonal dashes, the display-edge rule on both axes, assist mode bouncing instead of dying, being held silent and still inside a block |
 | `SoundChecks.cs` | Super and hyper at each input timing: one dash sound, the jump, and its super or superslide layer |
+| `AtlasChecks.cs` | Sprites read out of an installed Celeste match the dumped originals pixel for pixel, and every id the animations ask for resolves (skipped without an install) |
 | `EntityDreamChecks.cs` | A crystal, jelly or seeker dropped inside a dream block is held there, while a window border still lets it go |
 | `TheoChecks.cs` | How the Theo crystal breaks: the death sound, the forest-green burst, and being gone once it finishes |
 | `DreamHyperChecks.cs` | The dream hyper, and the crouch on the way in that decides whether it lands as a hyper or a super |

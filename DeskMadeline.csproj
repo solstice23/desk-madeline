@@ -9,6 +9,29 @@
     <AssemblyName>DeskMadeline</AssemblyName>
     <RootNamespace>DeskMadeline</RootNamespace>
     <Version>1.0.0</Version>
+
+    <!--
+      Two builds come out of this tree.
+
+        dotnet build -c Release                        the one to hand out: no artwork and no
+                                                       audio of Celeste's travels with it, and
+                                                       both are read from an installed copy of
+                                                       the game at startup.
+
+        dotnet build -c Release -p:BundleAssets=true   the one for a machine without Celeste:
+                                                       assets\ is copied beside the exe, and
+                                                       so are the FMOD banks and libraries if
+                                                       CELESTE_PATH points at an install to
+                                                       take them from.
+
+      The app itself needs no flag to tell them apart: it reads assets\ when they are there
+      and the game's own atlases and banks when they are not.
+    -->
+    <BundleAssets Condition="'$(BundleAssets)' == ''">false</BundleAssets>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(BundleAssets)' == 'true'">
+    <DefineConstants>$(DefineConstants);BUNDLED_ASSETS</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,7 +46,7 @@
     <Compile Remove="celeste_reference\**" />
     <!-- The checks compile these same sources into their own assembly; see tests\README.md. -->
     <Compile Remove="tests\**" />
-    <None Include="assets\**">
+    <None Include="assets\**" Condition="'$(BundleAssets)' == 'true'">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="hair_tweaks.txt">
@@ -33,5 +56,26 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <!--
+    A bundled build also wants the sound with it, and the FMOD runtime and banks belong to
+    Celeste rather than to this repository, so they are copied from an install at build time.
+    Point CELESTE_PATH at one; without it the bundled build simply has no audio, and says so.
+  -->
+  <Target Name="BundleCelesteAudio" AfterTargets="Build" Condition="'$(BundleAssets)' == 'true'">
+    <PropertyGroup>
+      <CelesteDir>$(CELESTE_PATH)</CelesteDir>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(CelesteDir)' != '' And Exists('$(CelesteDir)')">
+      <CelesteFmodLib Include="$(CelesteDir)\lib64-win-x64\fmod*.dll" />
+      <CelesteFmodBank Include="$(CelesteDir)\Content\FMOD\Desktop\*.bank" />
+    </ItemGroup>
+    <Copy SourceFiles="@(CelesteFmodLib)" DestinationFolder="$(OutDir)lib64-win-x64"
+          SkipUnchangedFiles="true" Condition="'@(CelesteFmodLib)' != ''" />
+    <Copy SourceFiles="@(CelesteFmodBank)" DestinationFolder="$(OutDir)Content\FMOD\Desktop"
+          SkipUnchangedFiles="true" Condition="'@(CelesteFmodBank)' != ''" />
+    <Warning Text="BundleAssets is on but CELESTE_PATH is not set to an install, so this build has no audio."
+             Condition="'@(CelesteFmodBank)' == ''" />
+  </Target>
 
 </Project>

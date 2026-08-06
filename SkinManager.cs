@@ -18,6 +18,8 @@ namespace DeskMadeline
         public string Id;
         public string DisplayName;
         public string PlayerDirectory;
+        /// <summary>Folder in Celeste's Gameplay atlas, for skins the app has built in.</summary>
+        public string PlayerAtlasFolder;
         public string SpriteXml;
         public readonly Dictionary<int, Color> HairColors = new Dictionary<int, Color>();
         public readonly Dictionary<string, int[]> CarryOffsets =
@@ -49,13 +51,16 @@ namespace DeskMadeline
             // Its SpriteBank entry is player_badeline (a copy of player with this
             // atlas path), and Player.UpdateHair uses this exact built-in palette.
             string badelineDirectory = Path.Combine(baseDirectory, "assets", "player_badeline");
-            if (IsPlayerDirectory(badelineDirectory))
+            // Built in either way: from assets\ when the build ships them, and from the same
+            // folder of Celeste's own atlas when it does not.
+            if (IsPlayerDirectory(badelineDirectory) || CelesteInstall.Directory != null)
             {
                 var badeline = new SkinDefinition
                 {
                     Id = BadelineId,
                     DisplayName = "Badeline",
-                    PlayerDirectory = badelineDirectory
+                    PlayerDirectory = IsPlayerDirectory(badelineDirectory) ? badelineDirectory : null,
+                    PlayerAtlasFolder = "characters/player_badeline",
                 };
                 badeline.HairColors[0] = Color.FromArgb(0x44, 0xB7, 0xFF);
                 badeline.HairColors[1] = Color.FromArgb(0x9B, 0x3F, 0xB5);

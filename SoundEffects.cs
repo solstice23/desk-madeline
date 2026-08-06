@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
-using Microsoft.Win32;
 
 namespace DeskMadeline
 {
@@ -84,7 +82,11 @@ namespace DeskMadeline
         {
             try
             {
-                string game = FindCelesteDirectory();
+                // A bundled build carries the runtime and banks beside the exe, in the layout
+                // they have inside Celeste; otherwise they come from an install, as ever.
+                string game = HasBundledAudio(AppDomain.CurrentDomain.BaseDirectory)
+                    ? AppDomain.CurrentDomain.BaseDirectory
+                    : CelesteInstall.Directory;
                 if (game == null)
                 {
                     PetWindow.Log("SFX unavailable: Celeste installation not found");
@@ -218,45 +220,10 @@ namespace DeskMadeline
             return description;
         }
 
-        static string FindCelesteDirectory()
-        {
-            var candidates = new List<string>();
-            string explicitPath = Environment.GetEnvironmentVariable("CELESTE_PATH");
-            if (!string.IsNullOrWhiteSpace(explicitPath)) candidates.Add(explicitPath);
-            candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                "Steam", "steamapps", "common", "Celeste"));
-
-            try
-            {
-                using RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
-                string steam = key?.GetValue("SteamPath") as string;
-                if (!string.IsNullOrWhiteSpace(steam))
-                {
-                    candidates.Add(Path.Combine(steam, "steamapps", "common", "Celeste"));
-                    string libraries = Path.Combine(steam, "steamapps", "libraryfolders.vdf");
-                    if (File.Exists(libraries))
-                    {
-                        foreach (Match match in Regex.Matches(File.ReadAllText(libraries),
-                            "\\\"path\\\"\\s+\\\"([^\\\"]+)\\\""))
-                        {
-                            string root = match.Groups[1].Value.Replace("\\\\", "\\");
-                            candidates.Add(Path.Combine(root, "steamapps", "common", "Celeste"));
-                        }
-                    }
-                }
-            }
-            catch { }
-
-            foreach (DriveInfo drive in DriveInfo.GetDrives())
-                if (drive.IsReady)
-                    candidates.Add(Path.Combine(drive.RootDirectory.FullName,
-                        "SteamLibrary", "steamapps", "common", "Celeste"));
-
-            foreach (string path in candidates)
-                if (!string.IsNullOrWhiteSpace(path) && File.Exists(Path.Combine(path, "Celeste.exe")))
-                    return Path.GetFullPath(path);
-            return null;
-        }
+        /// <summary>Whether a directory holds the FMOD runtime and banks in Celeste's layout.</summary>
+        static bool HasBundledAudio(string directory)
+            => File.Exists(Path.Combine(directory, "lib64-win-x64", "fmod64.dll")) &&
+               Directory.Exists(Path.Combine(directory, "Content", "FMOD", "Desktop"));
 
         public void Dispose()
         {

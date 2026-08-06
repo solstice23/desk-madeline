@@ -100,36 +100,152 @@ namespace DeskMadeline
 
         public static string AssetsDir;
 
-        public static void LoadAll(string dir, string skinDir = null)
+        /// <summary>True when the sprites came out of an installed Celeste rather than assets\.</summary>
+        public static bool LoadedFromCeleste { get; private set; }
+
+        public static void LoadAll(string dir, string skinDir = null, string skinAtlasFolder = null)
         {
             AssetsDir = dir;
             foreach (var kv in _tex) kv.Value.Dispose();
             foreach (var kv in _texFlip) kv.Value.Dispose();
             _tex.Clear();
             _texFlip.Clear();
-            LoadDirectory(dir, null);
-            if (!string.IsNullOrEmpty(skinDir) && Directory.Exists(skinDir))
+
+            // A build that ships no artwork has no assets\ to read, so the sprites come from
+            // an installed Celeste, exactly as the sounds do.  A build that does ship them
+            // reads those, and needs no install at all.
+            LoadedFromCeleste = !Directory.Exists(dir);
+            if (LoadedFromCeleste)
             {
-                LoadDirectory(skinDir, null);
-                // Player wake-up is the one supported animation stored below the
-                // sprite root in the SMH examples. Sweat is a separate overlay;
-                // load it under prefixed ids so it cannot overwrite body frames.
-                string wakeUp = Directory.GetDirectories(skinDir)
-                    .FirstOrDefault(d => Path.GetFileName(d).Equals("wakeup", StringComparison.OrdinalIgnoreCase));
-                if (wakeUp != null) LoadDirectory(wakeUp, "wakeUp");
-                string sweat = Directory.GetDirectories(skinDir)
-                    .FirstOrDefault(d => Path.GetFileName(d).Equals("sweat", StringComparison.OrdinalIgnoreCase));
-                if (sweat != null) LoadDirectory(sweat, "sweat");
-                string communal = Directory.GetDirectories(skinDir)
-                    .FirstOrDefault(d => Path.GetFileName(d).Equals("CommunalHelper", StringComparison.OrdinalIgnoreCase));
-                if (communal != null) LoadDirectory(communal, null);
+                LoadFromCeleste(skinAtlasFolder);
+                LoadSkinDirectories(skinDir);
+                return;
             }
+
+            LoadDirectory(dir, null);
+            LoadSkinDirectories(skinDir);
             string glider = Path.Combine(Path.GetDirectoryName(dir), "glider");
             if (Directory.Exists(glider)) LoadDirectory(glider, "glider/");
             string seeker = Path.Combine(Path.GetDirectoryName(dir), "seeker");
             if (Directory.Exists(seeker)) LoadDirectory(seeker, "seeker/");
             string theo = Path.Combine(Path.GetDirectoryName(dir), "theoCrystal");
             if (Directory.Exists(theo)) LoadDirectory(theo, "theoCrystal/");
+        }
+
+        /// <summary>A skin's own files, which are the user's and always live on disk.</summary>
+        static void LoadSkinDirectories(string skinDir)
+        {
+            if (string.IsNullOrEmpty(skinDir) || !Directory.Exists(skinDir)) return;
+            LoadDirectory(skinDir, null);
+            // Player wake-up is the one supported animation stored below the
+            // sprite root in the SMH examples. Sweat is a separate overlay;
+            // load it under prefixed ids so it cannot overwrite body frames.
+            string wakeUp = Directory.GetDirectories(skinDir)
+                .FirstOrDefault(d => Path.GetFileName(d).Equals("wakeup", StringComparison.OrdinalIgnoreCase));
+            if (wakeUp != null) LoadDirectory(wakeUp, "wakeUp");
+            string sweat = Directory.GetDirectories(skinDir)
+                .FirstOrDefault(d => Path.GetFileName(d).Equals("sweat", StringComparison.OrdinalIgnoreCase));
+            if (sweat != null) LoadDirectory(sweat, "sweat");
+            string communal = Directory.GetDirectories(skinDir)
+                .FirstOrDefault(d => Path.GetFileName(d).Equals("CommunalHelper", StringComparison.OrdinalIgnoreCase));
+            if (communal != null) LoadDirectory(communal, null);
+        }
+
+        /// <summary>Everything the pet draws, read straight out of Celeste's Gameplay atlas.</summary>
+        /// <remarks>
+        /// The folders map onto the ids the rest of the code already asks for, which are the
+        /// file names assets\ used to hold. A skin built into the app -- Badeline -- is a
+        /// folder in the same atlas rather than one on disk, so it is named the same way.
+        /// </remarks>
+        static void LoadFromCeleste(string skinAtlasFolder)
+        {
+            string celeste = CelesteInstall.Directory;
+            if (celeste == null)
+            {
+                PetWindow.Log("sprites unavailable: no Celeste install found");
+                return;
+            }
+            string atlases = Path.Combine(celeste, "Content", "Graphics", "Atlases");
+            string meta = Path.Combine(atlases, "Gameplay.meta");
+            if (!File.Exists(meta))
+            {
+                PetWindow.Log("sprites unavailable: no Gameplay atlas at " + atlases);
+                return;
+            }
+
+            try
+            {
+                var entries = CelesteAtlas.ReadMeta(meta, out List<string> pages);
+                var folders = new List<(string Folder, string Prefix)>
+                {
+                    ("characters/player/", ""),
+                    ("objects/glider/", "glider/"),
+                    ("characters/monsters/", "seeker/"),
+                    ("characters/theoCrystal/", "theoCrystal/"),
+                    ("pico8/", "pico8/"),
+                };
+                if (!string.IsNullOrEmpty(skinAtlasFolder))
+                    folders.Add((skinAtlasFolder.TrimEnd('/') + "/", ""));
+
+                // Group by page so each one is decoded once: they are whole-atlas images and
+                // far too big to hold on to, or to read again per sprite.
+                var wanted = new Dictionary<int, List<(string Id, CelesteAtlas.Entry Entry)>>();
+                foreach (var pair in entries)
+                    foreach ((string folder, string prefix) in folders)
+                    {
+                        if (!pair.Key.StartsWith(folder, StringComparison.OrdinalIgnoreCase)) continue;
+                        string name = pair.Key.Substring(folder.Length);
+                        // Celeste keeps a few of the player's animations in their own folders,
+                        // and assets\ flattened those into the folder name followed by the
+                        // frame: sweat/climb00 became sweatClimb00, wakeUp/00 became wakeUp00.
+                        int slash = name.IndexOf('/');
+                        if (slash >= 0)
+                        {
+                            string sub = name.Substring(0, slash), frame = name.Substring(slash + 1);
+                            if (frame.Length == 0 || frame.Contains('/')) continue;
+                            name = sub + char.ToUpperInvariant(frame[0]) + frame.Substring(1);
+                        }
+                        if (!wanted.TryGetValue(pair.Value.Page, out var list))
+                            wanted[pair.Value.Page] = list = new List<(string, CelesteAtlas.Entry)>();
+                        list.Add((prefix + name, pair.Value));
+                        break;
+                    }
+
+                int loaded = 0;
+                foreach (var page in wanted)
+                {
+                    string data = Path.Combine(atlases, pages[page.Key] + ".data");
+                    if (!File.Exists(data)) continue;
+                    using Bitmap sheet = CelesteAtlas.DecodePage(data);
+                    foreach ((string id, CelesteAtlas.Entry entry) in page.Value)
+                    {
+                        Store(id, CelesteAtlas.Extract(sheet, entry));
+                        loaded++;
+                    }
+                }
+                PetWindow.Log($"sprites: {loaded} read from the Celeste atlas at {atlases}");
+            }
+            catch (Exception ex)
+            {
+                PetWindow.Log("sprites unavailable: " + ex.Message);
+            }
+        }
+
+        /// <summary>Keep a sprite and the mirrored copy the renderer asks for by name.</summary>
+        static void Store(string id, Bitmap bmp)
+        {
+            if (_tex.TryGetValue(id, out Bitmap old)) old.Dispose();
+            if (_texFlip.TryGetValue(id, out Bitmap oldFlip)) oldFlip.Dispose();
+            _tex[id] = bmp;
+            var flip = new Bitmap(bmp.Width, bmp.Height, PixelFormat.Format32bppPArgb);
+            using (var g = Graphics.FromImage(flip))
+            {
+                g.CompositingMode = CompositingMode.SourceCopy;
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.DrawImage(bmp, new Rectangle(bmp.Width, 0, -bmp.Width, bmp.Height));
+            }
+            _texFlip[id] = flip;
         }
 
         static void LoadDirectory(string dir, string idPrefix)

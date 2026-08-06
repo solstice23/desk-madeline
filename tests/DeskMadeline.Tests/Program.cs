@@ -23,6 +23,7 @@ static class Program
         failed += TheoChecks.Run();       // how the Theo crystal breaks
         failed += EntityDreamChecks.Run();// crystal, jelly and seeker dropped inside a block
         failed += SettingsChecks.Run();   // settings defaults, and snapping back onto the displays
+        failed += AtlasChecks.Run();      // sprites read out of an installed Celeste
         failed += SoundBankChecks.Run();  // opt-in: every event resolves in Celeste's banks
 
         Console.WriteLine();

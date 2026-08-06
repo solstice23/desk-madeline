@@ -255,11 +255,17 @@ namespace DeskMadeline
             var initialSkin = skinManager.Find(settings.Skin);
             skinManager.Activate(initialSkin);
             Sprites.LoadAll(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "player"),
-                initialSkin?.PlayerDirectory);
+                initialSkin?.PlayerDirectory, initialSkin?.PlayerAtlasFolder);
             try
             {
-                using var fontSource = new Bitmap(System.IO.Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory, "assets", "pico8font.png"));
+                // Shipped beside the app, or read from the same atlas the sprites came from.
+                string fontFile = System.IO.Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory, "assets", "pico8font.png");
+                using var fontSource = System.IO.File.Exists(fontFile)
+                    ? new Bitmap(fontFile)
+                    : Sprites.Get("pico8/font", false) is Bitmap atlasFont
+                        ? new Bitmap(atlasFont)
+                        : throw new System.IO.FileNotFoundException(fontFile);
                 for (int digit = 0; digit < picoDigits.Length; digit++)
                 {
                     int sourceX = digit < 4 ? 104 + digit * 4 : (digit - 4) * 4;
@@ -573,7 +579,7 @@ namespace DeskMadeline
                 pendingSkinId = null;
                 var skin = skinManager.Find(id);
                 Sprites.LoadAll(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "player"),
-                    skin?.PlayerDirectory);
+                    skin?.PlayerDirectory, skin?.PlayerAtlasFolder);
                 skinManager.Activate(skin);
                 settings.Skin = skin?.Id ?? SkinManager.DefaultId;
                 settings.Save();

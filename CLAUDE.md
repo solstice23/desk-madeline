@@ -18,7 +18,10 @@ shell around it (window platforms, tray menu, focus gating, persistence, skins) 
 - `Localization.cs` — in-code string catalogs; every key must exist in every language.
 - `celeste_reference/` — decompiled Celeste (`Celeste/`) and engine (`Monocle/`) source.
   Not compiled: excluded in the csproj. This is the authority for every gameplay question.
-- `celeste_graphics_dump/` — original sprites, the authority for visuals.
+- `celeste_graphics_dump/` — original sprites, the authority for visuals. Its layout mirrors
+  the game's atlases exactly: `Graphics/Atlases/Gameplay/characters/player/idle00.png` is the
+  sprite `characters/player/idle00` of the `Gameplay` atlas, which is what `CelesteAtlas`
+  reads at runtime.
 - `tests/DeskMadeline.Tests/` — frame-level checks for the ported gameplay; see
   `tests/README.md`. Excluded from the app's csproj.
 
@@ -28,6 +31,18 @@ shell around it (window platforms, tray menu, focus gating, persistence, skins) 
 dotnet build DeskMadeline.csproj -c Release      # must be 0 warnings, 0 errors
 bin\Release\net8.0-windows\DeskMadeline.exe
 ```
+
+Two builds come out of this tree, and the difference is only what travels with the exe:
+
+| | ships | needs Celeste installed |
+| --- | --- | --- |
+| `-c Release` | nothing of Celeste's | yes, for both artwork and sound |
+| `-c Release -p:BundleAssets=true` | `assets\`, plus FMOD banks and libraries copied from `CELESTE_PATH` | no |
+
+The app needs no flag to tell them apart. `Sprites.LoadAll` reads `assets\` when it is there
+and Celeste's `Gameplay` atlas when it is not; `SoundEffects` reads FMOD from beside the exe
+when it is there and from the install when it is not. `CelesteAtlas` reads the atlas formats
+(both ported from `celeste_reference/Monocle/`), and `CelesteInstall` finds the game.
 
 Keep exactly one build output for the app (`bin\Release`). Do not add a second output
 directory. The checks under `tests/` build to their own, which is theirs and not the app's.
