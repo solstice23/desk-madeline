@@ -19,9 +19,10 @@ shell around it (window platforms, tray menu, focus gating, persistence, skins) 
 - `celeste_reference/` — decompiled Celeste (`Celeste/`) and engine (`Monocle/`) source.
   Not compiled: excluded in the csproj. This is the authority for every gameplay question.
 - `celeste_graphics_dump/` — original sprites, the authority for visuals. Its layout mirrors
-  the game's atlases exactly: `Graphics/Atlases/Gameplay/characters/player/idle00.png` is the
-  sprite `characters/player/idle00` of the `Gameplay` atlas, which is what `CelesteAtlas`
-  reads at runtime.
+  the game's atlases exactly, so dump file, atlas path and index row are the same name in
+  three dresses. `docs/celeste-assets.md` explains that and which folders the pet draws from;
+  `docs/celeste-atlas-index.tsv` lists every sprite of every atlas with its frame and trim,
+  used here or not, so art can be looked up without an install or the dump.
 - `tests/DeskMadeline.Tests/` — frame-level checks for the ported gameplay; see
   `tests/README.md`. Excluded from the app's csproj.
 

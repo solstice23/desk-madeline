@@ -24,7 +24,8 @@ static class Program
         failed += EntityDreamChecks.Run();// crystal, jelly and seeker dropped inside a block
         failed += SettingsChecks.Run();   // settings defaults, and snapping back onto the displays
         failed += AtlasChecks.Run();      // sprites read out of an installed Celeste
-        failed += SoundBankChecks.Run();  // opt-in: every event resolves in Celeste's banks
+        failed += SoundBankChecks.Run();
+        failed += AtlasIndexTool.Run();   // opt-in: regenerate docs/celeste-atlas-index.tsv  // opt-in: every event resolves in Celeste's banks
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 74));
