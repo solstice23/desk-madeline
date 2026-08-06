@@ -3,7 +3,8 @@
 Working notes for coding agents. **The contribution rules live in `AGENTS.md` — read it
 first.** It defines the exact-port requirement, why behavior must be emergent rather than
 special-cased, which engine details are part of the port, and how to verify movement. This
-file covers only how to build, run and check the project.
+file covers only how to build, run and check the project. A checkout that has never been
+built is missing what `SETUP.md` makes.
 
 ## What this is
 
@@ -17,7 +18,8 @@ shell around it (window platforms, tray menu, focus gating, persistence, skins) 
 - `KeyBindings.cs` / `PadBindings.cs` + `XInputPad.cs` — keyboard and controller bindings.
 - `Localization.cs` — in-code string catalogs; every key must exist in every language.
 - `celeste_reference/` — decompiled Celeste (`Celeste/`) and engine (`Monocle/`) source.
-  Not compiled: excluded in the csproj. This is the authority for every gameplay question.
+  Not compiled: excluded in the csproj, and not in the repository — run
+  `tools\dump-reference.ps1` to decompile your own. The authority for every gameplay question.
 - `celeste_graphics_dump/` — original sprites, the authority for visuals. Not in the
   repository: run `tools\dump-graphics.ps1` to unpack your own from an install. Its layout
   mirrors the game's atlases exactly, so dump file, atlas path and index row are the same

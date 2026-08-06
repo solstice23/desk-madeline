@@ -4,8 +4,9 @@
 
 DeskMadeline is an exact behavioral and audiovisual port, not a Celeste-inspired
 reimplementation. Every change must be cross-checked against the original Celeste
-source and assets in `celeste_reference/` and `celeste_graphics_dump/`, or against
-the named mod's upstream source when implementing mod functionality.
+source and assets in `celeste_reference/` and `celeste_graphics_dump/` (neither is in
+the repository; `SETUP.md` says how to make them), or against the named mod's upstream
+source when implementing mod functionality.
 
 - Port the original constants, state transitions, update order, collision checks,
   input buffers, timers, animation frame timing, particles, colors, compositing,
