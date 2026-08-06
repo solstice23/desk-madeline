@@ -52,6 +52,55 @@ static class AtlasChecks
         return copy;
     }
 
+    /// <summary>
+    /// The dump is the game's atlases unpacked, one png per sprite, and its layout says which
+    /// is which: Graphics/Atlases/&lt;atlas&gt;/&lt;path&gt;.png is sprite &lt;path&gt; of &lt;atlas&gt;. Checking
+    /// that both ways round is what makes the correspondence a mapping rather than a habit,
+    /// and would catch a game update adding art the dump has never seen.
+    /// </summary>
+    static void CheckDumpIsOneToOne(string celeste)
+    {
+        string atlasRoot = Path.Combine("D:\\dev\\deskmadeline", "celeste_graphics_dump",
+            "Graphics", "Atlases");
+        string installed = Path.Combine(celeste, "Content", "Graphics", "Atlases");
+        if (!Directory.Exists(atlasRoot)) return;
+
+        var dump = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (string file in Directory.GetFiles(atlasRoot, "*.png", SearchOption.AllDirectories))
+        {
+            string rel = Path.GetRelativePath(atlasRoot, file).Replace('\\', '/');
+            int slash = rel.IndexOf('/');
+            if (slash < 0) continue;
+            string atlas = rel.Substring(0, slash);
+            if (!dump.TryGetValue(atlas, out var set))
+                dump[atlas] = set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            set.Add(rel.Substring(slash + 1, rel.Length - slash - 5));   // drop ".png"
+        }
+
+        int matched = 0, dumpOnly = 0, gameOnly = 0, atlases = 0;
+        foreach (string meta in Directory.GetFiles(installed, "*.meta"))
+        {
+            string atlas = Path.GetFileNameWithoutExtension(meta);
+            Dictionary<string, CelesteAtlas.Entry> entries;
+            try { entries = CelesteAtlas.ReadMeta(meta, out _); }
+            catch { continue; }
+            atlases++;
+            dump.TryGetValue(atlas, out HashSet<string> files);
+            files ??= new HashSet<string>();
+            foreach (string path in entries.Keys)
+                if (files.Contains(path)) matched++; else gameOnly++;
+            foreach (string path in files)
+                if (!entries.ContainsKey(path)) dumpOnly++;
+            dump.Remove(atlas);
+        }
+        foreach (var leftover in dump) dumpOnly += leftover.Value.Count;
+
+        Console.WriteLine($"      {atlases} atlases: {matched} matched, {dumpOnly} only in the dump, " +
+                          $"{gameOnly} only in the game");
+        Check("every dumped png is a sprite of the game", dumpOnly == 0);
+        Check("every sprite of the game is a dumped png", gameOnly == 0);
+    }
+
     public static int Run()
     {
         Console.WriteLine();
@@ -125,6 +174,8 @@ static class AtlasChecks
                 Console.WriteLine($"          {differing} of {extracted.Width * extracted.Height} pixels differ");
         }
         page?.Dispose();
+
+        CheckDumpIsOneToOne(celeste);
 
         // End to end: with no assets folder to read, the loader must fall back to the atlas
         // and produce the very ids the animations ask for.

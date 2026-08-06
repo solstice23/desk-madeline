@@ -7,8 +7,20 @@ instead, for a machine with no Celeste on it. See `CLAUDE.md` for the two builds
 
 ## The dump, the atlas and the index all line up
 
-`celeste_graphics_dump/` is an unpacked copy of the atlases, and its layout mirrors them
-exactly, so the three names for one sprite are mechanical translations of each other:
+`celeste_graphics_dump/` is an unpacked copy of the atlases, one png per sprite, and the
+correspondence is one to one in both directions — checked, not assumed. Every one of the
+**8371** pngs is a sprite of the game, every one of the **8371** sprites is a png, across the
+same **22** atlases, with nothing left over on either side. `AtlasChecks` verifies it, so a
+game update that adds art the dump has never seen would show up as a failure rather than as a
+puzzle later.
+
+The rule is a plain translation of the path, which means no lookup table is needed:
+
+```
+celeste_graphics_dump/Graphics/Atlases/<atlas>/<path>.png   <->   atlas <atlas>, sprite <path>
+```
+
+So the three names for one sprite are mechanical translations of each other:
 
 | | |
 | --- | --- |
