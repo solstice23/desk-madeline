@@ -2969,18 +2969,36 @@ namespace DeskMadeline
         void ResolveCelesteInstall()
         {
             CelesteInstall.Chosen = settings.CelestePath;
-            string found = CelesteInstall.Directory;   // the setting first, then the usual places
-            if (found == null && !CelesteInstall.HasBundledContent)
+            if (!NeedsCelesteInstall)
             {
-                if (MessageBox.Show(Loc.T("Celeste.NotFound"), Loc.T("App.Title"),
-                        MessageBoxButtons.OKCancel, MessageBoxIcon.Information) == DialogResult.OK)
+                Log("Celeste content: bundled beside the app, so no install is needed");
+                return;
+            }
+            string found = CelesteInstall.Directory;   // the setting first, then the usual places
+            if (found == null)
+            {
+                if (MessageBox.Show(Loc.T("Celeste.Why") + "\n\n" + Loc.T("Celeste.NotFound"),
+                        Loc.T("App.Title"), MessageBoxButtons.OKCancel,
+                        MessageBoxIcon.Information) == DialogResult.OK)
                     found = AskForCelesteFolder();
                 if (found == null)
                 {
                     Log("no Celeste install: running without her sprites or sounds");
-                    MessageBox.Show(Loc.T("Celeste.Without"), Loc.T("App.Title"),
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(Loc.T("Celeste.Why") + "\n\n" + Loc.T("Celeste.Without"),
+                        Loc.T("App.Title"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
+            }
+            else if (!CelesteInstall.IsComplete(found) &&
+                     !found.Equals(settings.CelestePath, StringComparison.OrdinalIgnoreCase))
+            {
+                // Broken rather than absent, and not one already lived with: half an install
+                // otherwise comes up as missing sprites or silence with nothing said about why.
+                Log("incomplete Celeste at " + found + ": missing " +
+                    string.Join(", ", CelesteInstall.MissingFrom(found)));
+                if (MessageBox.Show(DescribeIncomplete(found) + "\n\n" + Loc.T("Celeste.ChooseAnother"),
+                        Loc.T("App.Title"), MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Warning) == DialogResult.Yes)
+                    found = AskForCelesteFolder() ?? found;
             }
             if (found == null || found.Equals(settings.CelestePath, StringComparison.OrdinalIgnoreCase))
                 return;
@@ -2990,7 +3008,18 @@ namespace DeskMadeline
             Log("Celeste install: " + found);
         }
 
-        /// <summary>Ask for the folder Celeste.exe is in, until it is one or the user gives up.</summary>
+        /// <summary>An install and the files it lacks, for a message box.</summary>
+        static string DescribeIncomplete(string folder)
+        {
+            var missing = CelesteInstall.MissingFrom(folder);
+            int shown = Math.Min(missing.Count, 6);
+            string list = string.Join("\n", missing.GetRange(0, shown));
+            if (missing.Count > shown)
+                list += "\n" + Loc.Format("Celeste.AndMore", missing.Count - shown);
+            return Loc.Format("Celeste.Incomplete", folder) + "\n\n" + list;
+        }
+
+        /// <summary>Ask for the folder Celeste is in, until it is one or the user gives up.</summary>
         string AskForCelesteFolder()
         {
             while (true)
@@ -3003,12 +3032,68 @@ namespace DeskMadeline
                     SelectedPath = CelesteInstall.Directory ?? settings.CelestePath ?? ""
                 };
                 if (dialog.ShowDialog() != DialogResult.OK) return null;
-                if (CelesteInstall.IsInstall(dialog.SelectedPath))
-                    return System.IO.Path.GetFullPath(dialog.SelectedPath);
-                if (MessageBox.Show(Loc.T("Celeste.NoExeThere"), Loc.T("App.Title"),
-                        MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning) != DialogResult.Retry)
-                    return null;
+                string folder = System.IO.Path.GetFullPath(dialog.SelectedPath);
+                if (CelesteInstall.IsComplete(folder)) return folder;
+                if (!CelesteInstall.IsInstall(folder))
+                {
+                    if (MessageBox.Show(Loc.T("Celeste.NoExeThere"), Loc.T("App.Title"),
+                            MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning) != DialogResult.Retry)
+                        return null;
+                    continue;
+                }
+                // Celeste, but not all of it: theirs to decide, since some of her beats none.
+                if (MessageBox.Show(DescribeIncomplete(folder) + "\n\n" + Loc.T("Celeste.UseAnyway"),
+                        Loc.T("App.Title"), MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Warning) == DialogResult.Yes)
+                    return folder;
             }
+        }
+
+        /// <summary>Take a folder for the install, and offer the restart that puts it to use.</summary>
+        void UseCelesteFolder(string folder)
+        {
+            settings.CelestePath = folder ?? "";
+            CelesteInstall.Chosen = folder;
+            SaveSettings();
+            Log("Celeste install: " + (CelesteInstall.Directory ?? "none"));
+            // Her sprites and the sound banks are both read once, at startup, so a new folder
+            // only really takes over at the next one. Named in the asking, since detecting one
+            // can change it to a folder the user never typed or picked.
+            if (MessageBox.Show(folder + "\n\n" + Loc.T("Celeste.RestartToApply"),
+                    Loc.T("App.Title"), MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question) == DialogResult.Yes)
+            {
+                restartAfterExit = true;
+                ExitApp();
+            }
+        }
+
+        /// <summary>Take what looking finds, whatever has been named before.</summary>
+        void DetectCeleste()
+        {
+            string found = CelesteInstall.Detected();
+            if (found == null)
+            {
+                MessageBox.Show(Loc.T("Celeste.Why") + "\n\n" + Loc.T("Celeste.NoneFound"),
+                    Loc.T("App.Title"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (!CelesteInstall.IsComplete(found) &&
+                MessageBox.Show(DescribeIncomplete(found) + "\n\n" + Loc.T("Celeste.UseAnyway"),
+                    Loc.T("App.Title"), MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) != DialogResult.Yes)
+                return;
+            if (found.Equals(CelesteInstall.Directory, StringComparison.OrdinalIgnoreCase))
+            {
+                // Already the one in use: worth saying so, and worth writing down, since what
+                // was found by looking today may not be found by looking tomorrow.
+                settings.CelestePath = found;
+                SaveSettings();
+                MessageBox.Show(Loc.Format("Celeste.FoundAt", found), Loc.T("App.Title"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            UseCelesteFolder(found);
         }
 
         void ChangeLanguage(string code)
@@ -3192,6 +3277,17 @@ namespace DeskMadeline
         ContextMenuStrip BuildMenu()
         {
             var menu = new ContextMenuStrip();
+
+            // Nothing was found to draw her from, so there is no Madeline on the desktop and
+            // none of the rest of this -- skins, hair, scale, what to spawn -- is about
+            // anything. Two things still are: where the game is, and the way out.
+            if (Sprites.LoadedFromCeleste == 0)
+            {
+                if (NeedsCelesteInstall) menu.Items.Add(BuildCelesteMenu());
+                menu.Items.Add(new ToolStripSeparator());
+                menu.Items.Add(new ToolStripMenuItem(Loc.T("Common.Exit"), null, (_, __) => ExitApp()));
+                return menu;
+            }
 
             var languageItem = new ToolStripMenuItem(Loc.T("Menu.Language"));
             foreach (LanguageInfo lang in Loc.Languages)
@@ -3700,30 +3796,11 @@ namespace DeskMadeline
             menu.Items.Add(removeEntitiesItem);
             menu.Items.Add(new ToolStripSeparator());
 
-            var celesteFolderItem = new ToolStripMenuItem(Loc.T("Menu.CelesteFolder"))
+            if (NeedsCelesteInstall)
             {
-                ToolTipText = CelesteInstall.Directory ?? Loc.T("Celeste.NoneFound")
-            };
-            celesteFolderItem.Click += (_, __) =>
-            {
-                string folder = AskForCelesteFolder();
-                if (folder == null ||
-                    folder.Equals(CelesteInstall.Directory, StringComparison.OrdinalIgnoreCase)) return;
-                settings.CelestePath = folder;
-                CelesteInstall.Chosen = folder;
-                SaveSettings();
-                Log("Celeste install: " + folder);
-                // Her sprites and the sound banks are both read once, at startup, so a new
-                // folder only really takes over at the next one.
-                if (MessageBox.Show(Loc.T("Celeste.RestartToApply"), Loc.T("App.Title"),
-                        MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-                {
-                    restartAfterExit = true;
-                    ExitApp();
-                }
-            };
-            menu.Items.Add(celesteFolderItem);
-            menu.Items.Add(new ToolStripSeparator());
+                menu.Items.Add(BuildCelesteMenu());
+                menu.Items.Add(new ToolStripSeparator());
+            }
             menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.Controls"), null, (_, __) =>
                 MessageBox.Show(
                     Loc.T("Help.ControlsBody"),
@@ -3731,6 +3808,53 @@ namespace DeskMadeline
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem(Loc.T("Common.Exit"), null, (_, __) => ExitApp()));
             return menu;
+        }
+
+        /// <summary>
+        /// Whether an install is any of the pet's business. A bundled build carries the artwork
+        /// and the banks beside the exe and reads those in preference to anything installed, so
+        /// naming a folder there would change nothing and offering to is a lie.
+        /// </summary>
+        static bool NeedsCelesteInstall
+            => !CelesteInstall.HasBundledContent || !CelesteInstall.HasBundledAudio;
+
+        /// <summary>Where the artwork and sound are read from, and how to point that elsewhere.</summary>
+        ToolStripMenuItem BuildCelesteMenu()
+        {
+            var celesteFolderItem = new ToolStripMenuItem(Loc.T("Menu.CelesteFolder"))
+            { ToolTipText = Loc.T("Celeste.Why") };
+            // Why the pet wants to know, and where it is reading from -- the first two things
+            // to ask when she has no sprites or no sound. Both are shown rather than offered,
+            // so neither is clickable.
+            celesteFolderItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Celeste.Why"))
+            { Enabled = false });
+            celesteFolderItem.DropDownItems.Add(new ToolStripSeparator());
+            var celestePathItem = new ToolStripMenuItem { Enabled = false };
+            celesteFolderItem.DropDownItems.Add(celestePathItem);
+            celesteFolderItem.DropDownItems.Add(new ToolStripSeparator());
+            var celesteDetectItem = new ToolStripMenuItem(
+                Loc.T("Menu.CelesteDetect"), null, (_, __) => DetectCeleste());
+            celesteFolderItem.DropDownItems.Add(celesteDetectItem);
+            // Read when the submenu opens rather than when the menu is built: looking involves
+            // the registry and every drive, and the answer can change while the pet is running.
+            // What looking finds is worth seeing before asking for it, but not worth a line of
+            // its own -- it is the same folder as the one in use except when something is up.
+            celesteFolderItem.DropDownOpening += (_, __) =>
+            {
+                celestePathItem.Text = Loc.Format("Celeste.InUse",
+                    CelesteInstall.Directory ?? Loc.T("Celeste.None"));
+                celesteDetectItem.ToolTipText = Loc.Format("Celeste.Detected",
+                    CelesteInstall.Detected() ?? Loc.T("Celeste.None"));
+            };
+            celesteFolderItem.DropDownItems.Add(new ToolStripMenuItem(
+                Loc.T("Menu.CelesteChoose"), null, (_, __) =>
+                {
+                    string folder = AskForCelesteFolder();
+                    if (folder == null ||
+                        folder.Equals(CelesteInstall.Directory, StringComparison.OrdinalIgnoreCase)) return;
+                    UseCelesteFolder(folder);
+                }));
+            return celesteFolderItem;
         }
 
         Icon BuildTrayIcon()
