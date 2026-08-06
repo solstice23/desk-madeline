@@ -3408,7 +3408,6 @@ namespace DeskMadeline
                 choice.Click += (_, __) => ChangeLanguage(code);
                 languageItem.DropDownItems.Add(choice);
             }
-            menu.Items.Add(languageItem);
 
             var skinItem = new ToolStripMenuItem(Loc.T("Menu.Skin"));
             void AddSkinChoice(string id, string label)
@@ -3467,7 +3466,6 @@ namespace DeskMadeline
                         MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }));
-            menu.Items.Add(skinItem);
 
             var cosmeticsItem = new ToolStripMenuItem(Loc.T("Menu.Cosmetics"));
             var catTailItem = new ToolStripMenuItem(Loc.T("Cosmetics.CatTail")) { Checked = catTailEnabled };
@@ -3487,7 +3485,6 @@ namespace DeskMadeline
                 SaveSettings();
             };
             cosmeticsItem.DropDownItems.Add(catBangsItem);
-            menu.Items.Add(cosmeticsItem);
 
             var hairColorsItem = new ToolStripMenuItem(Loc.T("Menu.HairColors"));
             var hairColorsEnabledItem = new ToolStripMenuItem(Loc.T("Hair.UseCustom"))
@@ -3538,7 +3535,6 @@ namespace DeskMadeline
                 RefreshColorLabels();
                 SaveSettings();
             }));
-            menu.Items.Add(hairColorsItem);
 
             var scaleItem = new ToolStripMenuItem(Loc.T("Menu.Scale"));
             foreach (var v in new[] { 2, 3, 4, 5, 6, 8 })
@@ -3552,18 +3548,15 @@ namespace DeskMadeline
                 };
                 scaleItem.DropDownItems.Add(item);
             }
-            menu.Items.Add(scaleItem);
 
             ToolStripMenuItem inputItem = null;
             inputItem = new ToolStripMenuItem(Loc.T("Menu.KeyboardControls"), null, (_, __) =>
             { InputEnabled = !InputEnabled; inputItem.Checked = InputEnabled; SaveSettings(); })
             { Checked = InputEnabled };
-            menu.Items.Add(inputItem);
             ToolStripMenuItem padInputItem = null;
             padInputItem = new ToolStripMenuItem(Loc.T("Menu.ControllerControls"), null, (_, __) =>
             { PadInputEnabled = !PadInputEnabled; padInputItem.Checked = PadInputEnabled; SaveSettings(); })
             { Checked = PadInputEnabled };
-            menu.Items.Add(padInputItem);
             ToolStripMenuItem unfocusedInputItem = null;
             unfocusedInputItem = new ToolStripMenuItem(Loc.T("Menu.RespondUnfocused"), null, (_, __) =>
             {
@@ -3571,9 +3564,6 @@ namespace DeskMadeline
                 unfocusedInputItem.Checked = InputWhenUnfocused;
                 SaveSettings();
             }) { Checked = InputWhenUnfocused };
-            menu.Items.Add(unfocusedInputItem);
-            menu.Items.Add(BuildBindingsMenu());
-            menu.Items.Add(BuildPadBindingsMenu());
 
             ToolStripMenuItem topItem = null;
             topItem = new ToolStripMenuItem(Loc.T("Menu.AlwaysOnTop"), null, (_, __) =>
@@ -3588,7 +3578,6 @@ namespace DeskMadeline
                         0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
             })
             { Checked = AlwaysOnTop };
-            menu.Items.Add(topItem);
 
             var startupItem = new ToolStripMenuItem(Loc.T("Menu.LaunchAtSignIn"))
             {
@@ -3608,7 +3597,6 @@ namespace DeskMadeline
                         MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             };
-            menu.Items.Add(startupItem);
 
             var sfxItem = new ToolStripMenuItem(Loc.T("Menu.SoundEffects"));
             foreach (var option in new[]
@@ -3714,7 +3702,6 @@ namespace DeskMadeline
                 surfaceItem.DropDownItems.Add(choice);
             }
             sfxItem.DropDownItems.Add(surfaceItem);
-            menu.Items.Add(sfxItem);
 
             var particleItem = new ToolStripMenuItem(Loc.T("Menu.ParticleEffects"), null, (sender, __) =>
             {
@@ -3723,7 +3710,6 @@ namespace DeskMadeline
                 SaveSettings();
             })
             { Checked = ParticlesEnabled };
-            menu.Items.Add(particleItem);
 
             var freezeItem = new ToolStripMenuItem(Loc.T("Menu.FreezeFrames"), null, (sender, __) =>
             {
@@ -3732,7 +3718,6 @@ namespace DeskMadeline
                 SaveSettings();
             })
             { Checked = player.FreezeFramesEnabled };
-            menu.Items.Add(freezeItem);
 
             var respawnReversalItem = new ToolStripMenuItem(
                 Loc.T("Menu.RespawnReversal"), null, (sender, __) =>
@@ -3741,7 +3726,6 @@ namespace DeskMadeline
                 ((ToolStripMenuItem)sender).Checked = player.RespawnReversalEnabled;
                 SaveSettings();
             }) { Checked = player.RespawnReversalEnabled };
-            menu.Items.Add(respawnReversalItem);
 
             var ignoreMaximizedItem = new ToolStripMenuItem(
                 Loc.T("Menu.IgnoreMaximizedWindows"), null, (sender, __) =>
@@ -3751,7 +3735,6 @@ namespace DeskMadeline
                 pollCounter = 999;
                 SaveSettings();
             }) { Checked = ignoreMaximizedWindows };
-            menu.Items.Add(ignoreMaximizedItem);
 
             var dreamItem = new ToolStripMenuItem(Loc.T("Menu.DreamBlockWindows"), null, (sender, __) =>
             {
@@ -3760,7 +3743,6 @@ namespace DeskMadeline
                 pollCounter = 999;
                 SaveSettings();
             }) { Checked = dreamBlockMode };
-            menu.Items.Add(dreamItem);
 
             var edgeWrapItem = new ToolStripMenuItem(
                 Loc.T("Menu.EdgeWrap"));
@@ -3788,7 +3770,6 @@ namespace DeskMadeline
                 };
                 edgeWrapItem.DropDownItems.Add(choice);
             }
-            menu.Items.Add(edgeWrapItem);
 
             var elytraItem = new ToolStripMenuItem(
                 Loc.T("Menu.Elytra"), null, (sender, __) =>
@@ -3797,7 +3778,6 @@ namespace DeskMadeline
                 ((ToolStripMenuItem)sender).Checked = player.ElytraEnabled;
                 SaveSettings();
             }) { Checked = player.ElytraEnabled };
-            menu.Items.Add(elytraItem);
 
             var overlaysItem = new ToolStripMenuItem(Loc.T("Menu.ExtraOverlays"));
             var speedometerItem = new ToolStripMenuItem(Loc.T("Menu.Speedometer"));
@@ -3833,7 +3813,6 @@ namespace DeskMadeline
                 SaveSettings();
             };
             overlaysItem.DropDownItems.Add(hitboxesItem);
-            menu.Items.Add(overlaysItem);
 
             var staminaItem = new ToolStripMenuItem(Loc.T("Menu.InfiniteStamina"), null, (sender, __) =>
             {
@@ -3841,7 +3820,6 @@ namespace DeskMadeline
                 ((ToolStripMenuItem)sender).Checked = player.InfiniteStamina;
                 SaveSettings();
             }) { Checked = player.InfiniteStamina };
-            menu.Items.Add(staminaItem);
 
             var invincibleItem = new ToolStripMenuItem(Loc.T("Menu.Invincible"), null, (sender, __) =>
             {
@@ -3849,7 +3827,6 @@ namespace DeskMadeline
                 ((ToolStripMenuItem)sender).Checked = player.Invincible;
                 SaveSettings();
             }) { Checked = player.Invincible };
-            menu.Items.Add(invincibleItem);
 
             var dashItem = new ToolStripMenuItem(Loc.T("Menu.DashCount"));
             foreach (var option in new[]
@@ -3875,21 +3852,19 @@ namespace DeskMadeline
                 };
                 dashItem.DropDownItems.Add(choice);
             }
-            menu.Items.Add(dashItem);
 
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.ReplayWakeUp"), null, (_, __) =>
+            var wakeUpItem = new ToolStripMenuItem(Loc.T("Menu.ReplayWakeUp"), null, (_, __) =>
             {
                 introWakeUp = true;
                 animator.Play("wakeUp", true);
-            }));
-            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.ResetPosition"), null, (_, __) => ResetPosition()));
-            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.SpawnJellyfish"), null, (_, __) =>
-                Interlocked.Increment(ref pendingGliderSpawns)));
-            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.SpawnSeeker"), null, (_, __) =>
-                Interlocked.Increment(ref pendingSeekerSpawns)));
-            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.SpawnTheo"), null, (_, __) =>
-                Interlocked.Increment(ref pendingTheoSpawns)));
+            });
+            var resetItem = new ToolStripMenuItem(Loc.T("Menu.ResetPosition"), null, (_, __) => ResetPosition());
+            var spawnGliderItem = new ToolStripMenuItem(Loc.T("Menu.SpawnJellyfish"), null, (_, __) =>
+                Interlocked.Increment(ref pendingGliderSpawns));
+            var spawnSeekerItem = new ToolStripMenuItem(Loc.T("Menu.SpawnSeeker"), null, (_, __) =>
+                Interlocked.Increment(ref pendingSeekerSpawns));
+            var spawnTheoItem = new ToolStripMenuItem(Loc.T("Menu.SpawnTheo"), null, (_, __) =>
+                Interlocked.Increment(ref pendingTheoSpawns));
             var removeEntitiesItem = new ToolStripMenuItem(Loc.T("Menu.RemoveEntities"));
             removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllJellyfish"), null,
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 1)));
@@ -3900,23 +3875,59 @@ namespace DeskMadeline
             removeEntitiesItem.DropDownItems.Add(new ToolStripSeparator());
             removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveEverything"), null,
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 7)));
-            menu.Items.Add(removeEntitiesItem);
-            menu.Items.Add(new ToolStripSeparator());
-
-            if (NeedsCelesteInstall)
-            {
-                menu.Items.Add(BuildCelesteMenu());
-                menu.Items.Add(new ToolStripSeparator());
-            }
-            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.Controls"), null, (_, __) =>
+            var helpItem = new ToolStripMenuItem(Loc.T("Menu.Controls"), null, (_, __) =>
                 MessageBox.Show(
                     Loc.T("Help.ControlsBody"),
-                    Loc.T("App.Title"), MessageBoxButtons.OK, MessageBoxIcon.Information)));
-            menu.Items.Add(new ToolStripMenuItem(Loc.T("Menu.About"), null, (_, __) => ShowAbout()));
+                    Loc.T("App.Title"), MessageBoxButtons.OK, MessageBoxIcon.Information));
+            var aboutItem = new ToolStripMenuItem(Loc.T("Menu.About"), null, (_, __) => ShowAbout());
+            var exitItem = new ToolStripMenuItem(Loc.T("Common.Exit"), null, (_, __) => ExitApp());
+
+            // Everything above only makes the items; this is the menu. Six headed sections and
+            // an unheaded tail, in the order they are wanted rather than the order they were
+            // easiest to write, so that what is done often is near the top and what is set once
+            // is further down. Flat: a submenu here would cost a hover on things that are one
+            // click today, and the drop-down cannot do columns -- it scrolls instead.
+            Section(menu, "Section.Madeline");
+            AddAll(menu, resetItem, wakeUpItem, spawnGliderItem, spawnSeekerItem, spawnTheoItem,
+                removeEntitiesItem);
+            Section(menu, "Section.Input");
+            AddAll(menu, inputItem, padInputItem, unfocusedInputItem,
+                BuildBindingsMenu(), BuildPadBindingsMenu(),
+                dashItem, staminaItem, invincibleItem, freezeItem, elytraItem);
+            Section(menu, "Section.Appearance");
+            AddAll(menu, skinItem, cosmeticsItem, hairColorsItem, scaleItem,
+                particleItem, respawnReversalItem, sfxItem, overlaysItem);
+            Section(menu, "Section.Desktop");
+            AddAll(menu, ignoreMaximizedItem, dreamItem, edgeWrapItem);
+            // Where the window sits and whether it comes back tomorrow are about the app, not
+            // about her, so they belong down here with the rest of the app's own affairs.
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripMenuItem(Loc.T("Common.Exit"), null, (_, __) => ExitApp()));
+            AddAll(menu, topItem, startupItem, languageItem);
+            if (NeedsCelesteInstall) AddAll(menu, BuildCelesteMenu());
+            AddAll(menu, helpItem, aboutItem);
+            menu.Items.Add(new ToolStripSeparator());
+            AddAll(menu, exitItem);
             return menu;
         }
+
+        /// <summary>
+        /// A heading, and the rule above it. Headings are not items: they cannot be clicked,
+        /// hovered or reached with the keyboard, which is what makes them read as headings
+        /// rather than as options that happen to be unavailable.
+        /// </summary>
+        static void Section(ContextMenuStrip menu, string key)
+        {
+            if (menu.Items.Count > 0) menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(new ToolStripLabel(Loc.T(key))
+            {
+                ForeColor = SystemColors.GrayText,
+                Font = new Font(menu.Font, FontStyle.Bold),
+                Margin = new Padding(0, 2, 0, 2)
+            });
+        }
+
+        static void AddAll(ContextMenuStrip menu, params ToolStripItem[] items)
+            => menu.Items.AddRange(items);
 
         /// <summary>Open the About window once the menu click has unwound.</summary>
         void ShowAbout() => BeginInvoke(new Action(() =>
