@@ -10,6 +10,8 @@ namespace DeskMadeline
     internal sealed class JellyInputWindow : Form
     {
         readonly PetWindow ownerWindow;
+        /// <summary>The shape it was last cut down to; see HitRegion.</summary>
+        internal byte[] HitMask;
         internal readonly Glider Glider;
 
         public JellyInputWindow(PetWindow ownerWindow, Glider glider)
@@ -21,7 +23,7 @@ namespace DeskMadeline
             StartPosition = FormStartPosition.Manual;
             AutoScaleMode = AutoScaleMode.None;
             BackColor = Color.Black;
-            Opacity = 0.01;
+            Opacity = PetWindow.HitTestOpacity;
             Size = new Size(1, 1);
             Location = new Point(-10000, -10000);
 

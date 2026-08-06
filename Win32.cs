@@ -130,6 +130,21 @@ namespace DeskMadeline
         [DllImport("gdi32.dll")]
         public static extern bool DeleteObject(IntPtr hObject);
 
+        /// <summary>A rectangular region; all four corners equal makes an empty one.</summary>
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+
+        /// <summary>Builds one region out of a run of rectangles, in a single call.</summary>
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr ExtCreateRegion(IntPtr transform, uint count, byte[] data);
+
+        /// <summary>
+        /// Shapes a window: it is drawn and, what matters here, hit-tested only inside the
+        /// region. The window owns the region afterwards and frees the one it had.
+        /// </summary>
+        [DllImport("user32.dll")]
+        public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool redraw);
+
         [DllImport("kernel32.dll", EntryPoint = "RtlMoveMemory")]
         public static extern void CopyMemory(IntPtr destination, IntPtr source, UIntPtr length);
 

@@ -84,6 +84,17 @@ namespace DeskMadeline
         Point dragGrabOffset;      // physical pixels: grab point relative to feet
         PointF cursorVel;          // physical pixels / second
         Point lastCursor;
+        /// <summary>
+        /// How opaque an input-only window is: one 255th, the least Windows will still send a
+        /// click to. These windows exist to be clicked and dragged and are never meant to be
+        /// seen, but a layered window at alpha 0 is hit-tested straight through, so they cannot
+        /// be nothing at all. At 1 the box around her darkens whatever is behind it by a single
+        /// level -- 255 becomes 254 -- which is the smallest mark it is possible to leave.
+        /// The value is picked to land on 1 after WinForms multiplies it by 255 and truncates.
+        /// </summary>
+        internal const double HitTestOpacity = 1.4 / 255.0;
+
+        byte[] playerHitMask;      // the shape the input window was last cut down to
         IntPtr trayIconHandle;     // tray icon HICON (must DestroyIcon explicitly)
         bool restartAfterExit;     // start a fresh copy once this one has let go of everything
 
@@ -252,7 +263,7 @@ namespace DeskMadeline
             Size = new Size(24 * GameScale, 33 * GameScale);
             Location = new Point(-10000, -10000);
             BackColor = Color.Black;
-            Opacity = 0.01; // nonzero alpha keeps the small body hit target interactive
+            Opacity = HitTestOpacity;
 
             // ---- Sprites and animations ----
             skinManager = new SkinManager(AppDomain.CurrentDomain.BaseDirectory);
@@ -2114,6 +2125,40 @@ namespace DeskMadeline
             return cur;
         }
 
+        /// <summary>What each loose entity was stamped with this frame, and where.</summary>
+        /// <remarks>
+        /// Gathered on the way past so the input windows can be cut to the same shape without
+        /// working out a second time which frame of which animation is being drawn.
+        /// </remarks>
+        readonly Dictionary<object, (Bitmap Stamp, float X, float Y)> entityStamps =
+            new Dictionary<object, (Bitmap, float, float)>();
+
+        /// <summary>Cut an entity's input window down to the sprite drawn over it.</summary>
+        /// <returns>The shape applied, for the window to hold on to until the next frame.</returns>
+        byte[] ShapeEntityWindow(IntPtr window, object entity, int windowLeft, int windowTop,
+            int width, int height, int scale, byte[] mask)
+        {
+            if (!entityStamps.TryGetValue(entity, out var stamped) || stamped.Stamp == null)
+            {
+                // Held, dying or otherwise not drawn: nothing of it is on the screen, so
+                // nothing of its window should be either.
+                if (mask == null || mask.Length != 0)
+                {
+                    mask = new byte[0];
+                    Win32.SetWindowRgn(window, Win32.CreateRectRgn(0, 0, 0, 0), false);
+                }
+                return mask;
+            }
+            // The presenter centres a stamp on the rounded position; the window is placed on
+            // whole game pixels for the same reason, so this offset is exact.
+            int stampLeft = (int)Math.Round(stamped.X) - stamped.Stamp.Width / 2;
+            int stampTop = (int)Math.Round(stamped.Y) - stamped.Stamp.Height / 2;
+            HitRegion.Apply(window, stamped.Stamp,
+                new Rectangle(windowLeft / scale - stampLeft, windowTop / scale - stampTop,
+                    width, height), scale, ref mask);
+            return mask;
+        }
+
         // ================= Rendering =================
         void Render()
         {
@@ -2182,6 +2227,7 @@ namespace DeskMadeline
 
             int left = (int)Math.Round(camX * s);
             int top = (int)Math.Round(camY * s);
+            entityStamps.Clear();
             int trailCount = Math.Min(dashTrails.Count, trailStamps.Length);
             for (int i = 0; i < trailCount; i++)
             {
@@ -2198,9 +2244,12 @@ namespace DeskMadeline
                 // TheoCrystal.orig_ctor sets sprite.Scale.X = -1.
                 Bitmap stamp = Sprites.Get(theo.FrameId, true);
                 if (stamp != null)
+                {
                     // Sprites.xml: theo_crystal Origin=(32,42), ten pixels below
                     // the 64x64 frame center used by TrailStamp.
                     trailStamps[trailCount++] = new TrailStamp(stamp, theo.Pos.X, theo.Pos.Y - 10f, 1f);
+                    entityStamps[theo] = (stamp, theo.Pos.X, theo.Pos.Y - 10f);
+                }
             }
             int foregroundStart = trailCount;
             foreach (Glider glider in gliders)
@@ -2209,7 +2258,10 @@ namespace DeskMadeline
                 if (trailCount >= trailStamps.Length) break;
                 Bitmap stamp = GetGliderStamp(glider);
                 if (stamp != null)
+                {
                     trailStamps[trailCount++] = new TrailStamp(stamp, glider.Pos.X, glider.Pos.Y, 1f);
+                    entityStamps[glider] = (stamp, glider.Pos.X, glider.Pos.Y);
+                }
             }
             foreach (Seeker seeker in seekers)
             {
@@ -2231,22 +2283,31 @@ namespace DeskMadeline
                 }
                 Bitmap seekerStamp = GetSeekerStamp(seeker);
                 if (seekerStamp != null && trailCount < trailStamps.Length)
+                {
                     trailStamps[trailCount++] = new TrailStamp(seekerStamp,
                         seeker.Pos.X + seeker.Shake.X, seeker.Pos.Y + seeker.Shake.Y, 1f);
+                    entityStamps[seeker] = (seekerStamp,
+                        seeker.Pos.X + seeker.Shake.X, seeker.Pos.Y + seeker.Shake.Y);
+                }
             }
             seekerParticles.AppendPointStamps(trailStamps, ref trailCount, seekerParticleBitmaps);
             if (hitboxesEnabled) AppendActorDebugStamps(ref trailCount);
             presenter.Present(small, left, top, trailStamps, trailCount, foregroundStart);
 
+            // The entity windows are placed on whole game pixels rather than at the precision
+            // their positions carry, so that they line up with the sprite the presenter draws
+            // at Math.Round(pos) -- which is what makes the shapes below fit them exactly.
             lock (gliderWindowLock)
             {
                 foreach (var pair in gliderWindows)
                 {
                     if (!pair.Value.IsHandleCreated) continue;
-                    int jellyLeft = (int)Math.Round((pair.Key.Pos.X - 10f) * s);
-                    int jellyTop = (int)Math.Round((pair.Key.Pos.Y - 16f) * s);
+                    int jellyLeft = ((int)Math.Round(pair.Key.Pos.X) - 10) * s;
+                    int jellyTop = ((int)Math.Round(pair.Key.Pos.Y) - 16) * s;
                     Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, jellyLeft, jellyTop,
                         20 * s, 22 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                    pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
+                        jellyLeft, jellyTop, 20, 22, s, pair.Value.HitMask);
                 }
             }
             lock (seekerWindowLock)
@@ -2254,10 +2315,12 @@ namespace DeskMadeline
                 foreach (var pair in seekerWindows)
                 {
                     if (!pair.Value.IsHandleCreated) continue;
-                    int seekerLeft = (int)Math.Round((pair.Key.Pos.X - 16f) * s);
-                    int seekerTop = (int)Math.Round((pair.Key.Pos.Y - 16f) * s);
+                    int seekerLeft = ((int)Math.Round(pair.Key.Pos.X) - 16) * s;
+                    int seekerTop = ((int)Math.Round(pair.Key.Pos.Y) - 16) * s;
                     Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, seekerLeft, seekerTop,
                         32 * s, 32 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                    pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
+                        seekerLeft, seekerTop, 32, 32, s, pair.Value.HitMask);
                 }
             }
             lock (theoWindowLock)
@@ -2265,10 +2328,12 @@ namespace DeskMadeline
                 foreach (var pair in theoWindows)
                 {
                     if (!pair.Value.IsHandleCreated) continue;
-                    int theoLeft = (int)Math.Round((pair.Key.Pos.X - 8f) * s);
-                    int theoTop = (int)Math.Round((pair.Key.Pos.Y - 16f) * s);
+                    int theoLeft = ((int)Math.Round(pair.Key.Pos.X) - 8) * s;
+                    int theoTop = ((int)Math.Round(pair.Key.Pos.Y) - 16) * s;
                     Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, theoLeft, theoTop,
                         16 * s, 22 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                    pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
+                        theoLeft, theoTop, 16, 22, s, pair.Value.HitMask);
                 }
             }
 
@@ -2278,6 +2343,12 @@ namespace DeskMadeline
             int inputTop = (int)Math.Round(player.Pos.Y * s) - 30 * s;
             Win32.SetWindowPos(Handle, IntPtr.Zero, inputLeft, inputTop,
                 24 * s, 33 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+            // ...and then loses every part of itself she is not drawn on. The canvas the frame
+            // was drawn into is the same picture the screen just got, so the window's own
+            // corner of it is the shape to take. See HitRegion.
+            HitRegion.Apply(Handle, small,
+                new Rectangle((inputLeft - left) / s, (inputTop - top) / s, 24, 33), s,
+                ref playerHitMask);
             // Log position + speed + state every 5 seconds
             if ((++renderFrameCount % 300) == 0)
                 PetWindow.Log("frame " + renderFrameCount + " pos=" + player.Pos.X.ToString("F1") + "," + player.Pos.Y.ToString("F1") +
