@@ -50,7 +50,8 @@ content: beside the exe first, then the install. `CelesteInstall.AtlasesDirector
 
 Where that install is, for a build, is `CELESTE_PATH` or a `celeste-path.txt` beside the
 project holding the path on one line — gitignored, since a path from one machine means
-nothing on another. At run time it is a setting instead, `CelestePath` in `settings.txt`,
+nothing on another, and a development file only: the app never reads it. At run time an
+install is `CELESTE_PATH` or a setting, `CelestePath` in `settings.txt`,
 which `PetWindow.ResolveCelesteInstall` fills in on the first run with whatever
 `CelesteInstall` finds and only asks for, with a folder picker, when it finds nothing. The
 tray menu's **Celeste folder…** changes it later; her sprites and the banks are read once at

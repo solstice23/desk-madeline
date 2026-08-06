@@ -66,8 +66,13 @@ static class SettingsChecks
             PetSettings.Load(celeste).CelestePath == @"C:\Games\Celeste");
 
         string wasChosen = CelesteInstall.Chosen;
+        string wasEnvironment = Environment.GetEnvironmentVariable("CELESTE_PATH");
         try
         {
+            // What follows is about the setting, and CELESTE_PATH outranks it by design --
+            // Program sets that from celeste-path.txt, so it has to come off first. Pinning
+            // the order it outranks in is the last check here.
+            Environment.SetEnvironmentVariable("CELESTE_PATH", null);
             CelesteInstall.Chosen = null;
             string real = CelesteInstall.Directory;
             Check("a folder without Celeste.exe is not an install", !CelesteInstall.IsInstall(dir));
@@ -118,8 +123,19 @@ static class SettingsChecks
             Check("filling in what it lacked makes it complete", CelesteInstall.IsComplete(broken));
             CelesteInstall.Chosen = broken;
             Check("and then it is the one used", CelesteInstall.Directory == broken);
+
+            if (real != null)
+            {
+                Environment.SetEnvironmentVariable("CELESTE_PATH", real);
+                CelesteInstall.Chosen = broken;   // also drops what was worked out before
+                Check("CELESTE_PATH outranks the setting", CelesteInstall.Directory == real);
+            }
         }
-        finally { CelesteInstall.Chosen = wasChosen; }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CELESTE_PATH", wasEnvironment);
+            CelesteInstall.Chosen = wasChosen;
+        }
 
         try { Directory.Delete(dir, true); } catch { }
 

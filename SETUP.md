@@ -15,7 +15,7 @@ Three of those are Celeste's own files, so none of them is in git and each is ma
 
 | | what it is | needed |
 | --- | --- | --- |
-| `celeste-path.txt` | the install folder, one line | for the scripts and `-p:BundleAssets=true`; the app finds it by itself at run time |
+| `celeste-path.txt` | the install folder, one line | for `-p:BundleAssets=true` and `dump-reference.ps1`; the app never reads it and finds the install by itself at run time |
 | `celeste_reference/` | the game decompiled, `Celeste/` and `Monocle/` | yes — every gameplay question is answered from it, never from memory |
 | `celeste_graphics_dump/` | one png per sprite, a few hundred MB | no — the app and the checks read the atlases directly |
 

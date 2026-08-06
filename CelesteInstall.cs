@@ -13,9 +13,6 @@ namespace DeskMadeline
     /// </remarks>
     internal static class CelesteInstall
     {
-        /// <summary>An install written down rather than discovered. Also read by the csproj.</summary>
-        public const string ConfigFileName = "celeste-path.txt";
-
         static bool searched;
         static string directory;
         static string chosen;
@@ -113,37 +110,19 @@ namespace DeskMadeline
         }
 
         /// <summary>
-        /// The install someone has named: CELESTE_PATH, or a celeste-path.txt holding the
-        /// path on one line, beside the app or in any folder above it.
+        /// The install someone has named: CELESTE_PATH, or the folder chosen in settings.
         /// </summary>
         /// <remarks>
-        /// The file is what saves naming an install over and over, on the command line and in
-        /// the environment, and it is looked for above the app as well so that one written at
-        /// the root of a checkout serves everything built out of it. It is not copied
-        /// anywhere: a path from one machine means nothing on another.
+        /// celeste-path.txt is not among these. It belongs to a development tree -- the build
+        /// reads it, and so does tools\dump-reference.ps1 -- and having the app read it too made
+        /// three places to look for one answer, two of them invisible to whoever is running the
+        /// pet.
         /// </remarks>
         static string Configured()
         {
             string environment = Environment.GetEnvironmentVariable("CELESTE_PATH");
             if (!string.IsNullOrWhiteSpace(environment)) return environment.Trim();
-            if (!string.IsNullOrWhiteSpace(chosen)) return chosen;
-
-            var folder = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-            for (int up = 0; up < 8 && folder != null; up++, folder = folder.Parent)
-            {
-                string file = Path.Combine(folder.FullName, ConfigFileName);
-                if (!File.Exists(file)) continue;
-                try
-                {
-                    foreach (string line in File.ReadAllLines(file))
-                    {
-                        string text = line.Trim();
-                        if (text.Length > 0 && !text.StartsWith("#")) return text;
-                    }
-                }
-                catch { }
-            }
-            return null;
+            return string.IsNullOrWhiteSpace(chosen) ? null : chosen;
         }
 
         /// <summary>

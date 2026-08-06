@@ -8,8 +8,9 @@ with no Celeste on it. See `CLAUDE.md` for the two builds.
 An ordinary Steam install is found by looking, and the first run writes the result to
 `CelestePath` in `settings.txt` — the setting is what a copy somewhere unexpected, or one of
 several, is named in, whether by the folder picker the first run puts up when looking finds
-nothing, by the tray menu's **Celeste folder…** afterwards, or by hand. A build takes the
-same from `CELESTE_PATH` or `celeste-path.txt`.
+nothing, by the tray menu's **Celeste folder…** afterwards, or by hand. `CELESTE_PATH`
+overrides it. A build takes the same from `CELESTE_PATH` or `celeste-path.txt`, the second of
+which is a development file the app itself never reads.
 
 `assets\` holds the fourteen files the game has no sprite for: `fly00`–`fly08`, the elytra
 from CommunalHelper; `catbangs00`–`02`; `dashParticle`, standing in for a particle Celeste
