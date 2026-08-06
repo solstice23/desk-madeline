@@ -136,6 +136,7 @@ static class AtlasChecks
             "idle00", "runFast00", "climb00", "jumpFast00", "dash00", "hair00", "bangs00",
             "dangling00", "deadside00", "wakeUp00", "sweatIdle00",
             "glider/idle0", "seeker/Shockwave00", "theoCrystal/idle00", "pico8/font",
+            "smoke0", "zappysmoke00", "slash00", Sprites.PortraitId,
         })
             Check($"id \"{id}\" resolves", Sprites.Get(id, false) != null);
 

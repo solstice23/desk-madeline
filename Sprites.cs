@@ -103,6 +103,9 @@ namespace DeskMadeline
         /// <summary>True when the sprites came out of an installed Celeste rather than assets\.</summary>
         public static bool LoadedFromCeleste { get; private set; }
 
+        /// <summary>The face the tray icon is made from, in the Portraits atlas.</summary>
+        public const string PortraitId = "madeline/normal00";
+
         public static void LoadAll(string dir, string skinDir = null, string skinAtlasFolder = null)
         {
             AssetsDir = dir;
@@ -183,6 +186,10 @@ namespace DeskMadeline
                     ("characters/monsters/", "seeker/"),
                     ("characters/theoCrystal/", "theoCrystal/"),
                     ("pico8/", "pico8/"),
+                    // Particles and the dash slash are Celeste's too, just filed elsewhere:
+                    // particles/smoke0 is the id smoke0, effects/slash/00 is slash00.
+                    ("particles/", ""),
+                    ("effects/", ""),
                 };
                 if (!string.IsNullOrEmpty(skinAtlasFolder))
                     folders.Add((skinAtlasFolder.TrimEnd('/') + "/", ""));
@@ -222,6 +229,17 @@ namespace DeskMadeline
                         Store(id, CelesteAtlas.Extract(sheet, entry));
                         loaded++;
                     }
+                }
+                // Madeline's face for the tray icon is a dialogue portrait, and those are not
+                // in the gameplay atlas at all -- Celeste files them under Portraits, which is
+                // the unpacked kind of atlas: an index beside a folder of separate images,
+                // each one a .data of exactly the same format as a packed page.
+                string face = Path.Combine(atlases, "Portraits",
+                    PortraitId.Replace('/', Path.DirectorySeparatorChar) + ".data");
+                if (File.Exists(face))
+                {
+                    Store(PortraitId, CelesteAtlas.DecodePage(face));
+                    loaded++;
                 }
                 PetWindow.Log($"sprites: {loaded} read from the Celeste atlas at {atlases}");
             }

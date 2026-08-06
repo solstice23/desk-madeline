@@ -3653,11 +3653,14 @@ namespace DeskMadeline
 
         Icon BuildTrayIcon()
         {
-            // Build tray icon from Madeline portrait (not pixel art; smooth downscale)
+            // Build tray icon from Madeline portrait (not pixel art; smooth downscale).
+            // Shipped beside the app, or her dialogue portrait out of Celeste's own atlas.
             var path = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "portrait.png");
             try
             {
-                using (var src = new Bitmap(path))
+                using (var src = System.IO.File.Exists(path)
+                    ? new Bitmap(path)
+                    : new Bitmap(Sprites.Get(Sprites.PortraitId, false)))
                 {
                     var bmp = new Bitmap(32, 32, PixelFormat.Format32bppPArgb);
                     using (var g = Graphics.FromImage(bmp))
