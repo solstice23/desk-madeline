@@ -341,7 +341,7 @@ namespace DeskMadeline
                 ["Windows.Solid"] = "实体平台",
                 ["Windows.DreamBlocks"] = "梦境方块",
                 ["Windows.Water"] = "水",
-                ["Windows.MoonBlocks"] = "浮空方块",
+                ["Windows.MoonBlocks"] = "月亮块",
                 ["Menu.EdgeWrap"] = "无限屏幕边缘（实验性）",
                 ["EdgeWrap.Both"] = "水平和垂直",
                 ["Menu.Elytra"] = "鞘翅模式（CommunalHelper）",
