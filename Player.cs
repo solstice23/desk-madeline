@@ -2211,11 +2211,59 @@ namespace DeskMadeline
         /// is held back here leaves her a sliver inside its border, and inside is where a solid
         /// stops holding her up.
         /// </remarks>
+        /// <summary>
+        /// The solid carrying her, by Player.IsRiding: the one underfoot, or -- while she is
+        /// climbing -- the one she has hold of.
+        /// </summary>
+        /// <remarks>
+        /// Celeste asks this of each actor as a solid moves and carries whoever says yes; here
+        /// it is asked the other way round, because a window that has moved wants to know who
+        /// came with it. The climbing case is the one that reads oddly, and is vanilla's: a
+        /// CollideCheck at Position + UnitX * Facing. So a window dragged by its title bar takes
+        /// her along while she hangs off its side, and a floaty block she is holding on to sinks
+        /// under her exactly as one she is standing on does.
+        /// </remarks>
+        public IntPtr RidingId
+        {
+            get
+            {
+                if (State != StClimb) return GroundId;
+                // More than one solid can be carrying her, and only one link can be followed:
+                // take the one her hand is on, which is the one the probe reaches into without
+                // her already being inside it. Anything she is standing in answers the probe
+                // too, and is not what she is holding.
+                foreach (var s in Solids)
+                    if (IsRiding(s) && !OverlapsHitbox(s)) return s.Id;
+                return GroundId;
+            }
+        }
+
+        /// <summary>
+        /// Player.IsRiding: whether this solid moving would take her with it. Every solid asks
+        /// for itself, and more than one can say yes -- a wall she is holding while her feet are
+        /// still on the floor is two.
+        /// </summary>
+        public bool IsRiding(Solid solid)
+        {
+            if (IsDead || IsRespawning) return false;
+            // Vanilla: dream dashing rides whatever it is inside; climbing rides what is under
+            // her hand, a pixel in the way she faces; anything else rides what is a pixel below.
+            if (State == StDreamDash)
+            {
+                HitboxAt(Pos.X, Pos.Y, out float dl, out float dt, out float dr, out float db);
+                return Overlap(dl, dt, dr, db, solid);
+            }
+            float x = State == StClimb ? Pos.X + Facing : Pos.X;
+            float y = State == StClimb ? Pos.Y : Pos.Y + 1f;
+            HitboxAt(x, y, out float l, out float t, out float r, out float b);
+            return Overlap(l, t, r, b, solid);
+        }
+
         public void RideAlong(float dx, float dy)
         {
-            if (GroundId != rideAlongId)
+            if (RidingId != rideAlongId)
             {
-                rideAlongId = GroundId;
+                rideAlongId = RidingId;
                 rideRemainder = PointF.Empty;
             }
             rideRemainder = new PointF(rideRemainder.X + dx, rideRemainder.Y + dy);

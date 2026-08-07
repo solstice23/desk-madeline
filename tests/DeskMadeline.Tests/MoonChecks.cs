@@ -200,7 +200,87 @@ static class MoonChecks
             slow.HomeOf(handle).Left == 100 && slow.HomeOf(handle).Top == 100);
 
         failed += StandingOnOne();
+        failed += HoldingOnToOne();
         return failed;
+    }
+
+    /// <summary>
+    /// Grabbing the side of one. Player.IsRiding counts the wall she is holding, so the block
+    /// sinks under a grab exactly as it does under her feet -- and carries her down with it.
+    /// </summary>
+    static int HoldingOnToOne()
+    {
+        const int Scale = 6;
+        var handle = new IntPtr(9);
+        var moon = new MoonWindows();
+
+        Console.WriteLine();
+        Console.WriteLine("  Holding on to one");
+
+        // A wall to her right and nothing under her: her hand is the only thing holding her
+        // up, so what carries her can only be the wall.
+        var rect = new Win32.RECT { Left = 24, Top = -3000, Right = 624, Bottom = 3000 };
+        float ToGame(int physical) => (float)Math.Floor(physical / (double)Scale + 0.5);
+        Solid Wall() => new Solid
+        {
+            Id = handle,
+            L = ToGame(rect.Left), T = ToGame(rect.Top),
+            R = ToGame(rect.Right), B = ToGame(rect.Bottom),
+        };
+
+        var player = new Player
+        {
+            MinX = -100000f,
+            MaxX = 100000f,
+            FreezeFramesEnabled = false,
+            Dashes = 1,
+            Facing = 1,
+            Pos = new System.Drawing.PointF(0f, 0f),
+            Solids = new List<Solid> { Wall() },
+        };
+        for (int i = 0; i < 5; i++) player.Update(Dt, new PetInput());
+
+        int climbing = 0, held = 0;
+        float wasWallTop = Wall().T, carried = 0f;
+        for (int frame = 0; frame < 60 * 3; frame++)
+        {
+            // As PetWindow does it: every solid asks whether she is riding it.
+            var ridden = new HashSet<IntPtr>();
+            foreach (Solid piece in player.Solids) if (player.IsRiding(piece)) ridden.Add(piece.Id);
+            if (player.State == Player.StClimb) climbing++;
+            if (player.RidingId == handle) held++;
+
+            moon.Update(Dt, Scale, new List<PolledWindowInfo>
+                { new PolledWindowInfo(handle, rect, true) }, ridden);
+
+            Win32.RECT home = moon.HomeOf(handle);
+            var applied = moon.OffsetOfApplied(handle);
+            int dx = home.Left + applied.X - rect.Left, dy = home.Top + applied.Y - rect.Top;
+            rect = new Win32.RECT
+            {
+                Left = rect.Left + dx, Top = rect.Top + dy,
+                Right = rect.Right + dx, Bottom = rect.Bottom + dy,
+            };
+
+            Solid wall = Wall();
+            player.Solids = new List<Solid> { wall };
+            float rose = wall.T - wasWallTop;
+            wasWallTop = wall.T;
+            if (player.RidingId == handle) { player.RideAlong(0f, rose); carried += rose; }
+            else player.EndRide();
+            player.SweptInto(wall, 0f, rose);
+            // Pressed into the wall with the grab held: vanilla's climb, hands and all.
+            player.Update(Dt, new PetInput { MoveX = 1, AimX = 1, GrabHeld = true });
+        }
+
+        float sunk = moon.OffsetOf(handle).Y;
+        Console.WriteLine($"      three seconds hanging off it: climbing on {climbing} of 180"
+            + $" frames, riding it on {held}");
+        Console.WriteLine($"      it sank {sunk:F0} and took her {carried:F0} down with it");
+        Check("holding on to one counts as riding it", held > 150);
+        Check("so it sinks under a grab as it does under her feet", sunk >= 7.5f);
+        Check("and she is carried down with it", carried >= 7.5f);
+        return 0;
     }
 
     /// <summary>

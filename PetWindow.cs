@@ -2019,11 +2019,14 @@ namespace DeskMadeline
         /// </remarks>
         void DriftMoonWindows(float dt, List<Solid> solids, List<PolledWindow> zorder)
         {
+            // Solid.GetRiders, asked of each window in turn as Celeste asks it: whoever would
+            // be carried if it moved is riding it. For her that counts the wall she is holding
+            // as well as the floor under her feet, so grabbing a block sinks it the same way.
             var ridden = new HashSet<IntPtr>();
-            if (player.GroundId != IntPtr.Zero) ridden.Add(player.GroundId);
             foreach (Solid piece in solids)
             {
                 if (ridden.Contains(piece.Id)) continue;
+                if (player.IsRiding(piece)) { ridden.Add(piece.Id); continue; }
                 foreach (Glider glider in gliders)
                     if (!glider.IsHeld && ActorSweep.RidingOn(piece, glider.Pos, Glider.HalfWidth, 0f))
                         ridden.Add(piece.Id);
@@ -2278,9 +2281,9 @@ namespace DeskMadeline
 
             // The window underfoot moved: she goes with it. Player.RideAlong keeps the
             // fraction that will not fit in a whole game pixel.
-            if (player.GroundId != IntPtr.Zero && player.GroundId != FloorId &&
-                lastRects.TryGetValue(player.GroundId, out var oldR) &&
-                cur.TryGetValue(player.GroundId, out var newR))
+            if (player.RidingId != IntPtr.Zero && player.RidingId != FloorId &&
+                lastRects.TryGetValue(player.RidingId, out var oldR) &&
+                cur.TryGetValue(player.RidingId, out var newR))
                 player.RideAlong((newR.Left - oldR.Left) / s, (newR.Top - oldR.Top) / s);
             else player.EndRide();
 
