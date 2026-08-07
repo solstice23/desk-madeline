@@ -147,7 +147,11 @@ namespace DeskMadeline
         bool catTailEnabled, catBangsEnabled, customHairColorsEnabled;
         int speedometerMode;
         bool hitboxesEnabled;
-        bool dreamBlockMode;
+        // What the windows are made of: solid ledges, dream blocks, or water.
+        const int WindowsSolid = 0, WindowsDream = 1, WindowsWater = 2;
+        int windowMode;
+        bool dreamBlockMode => windowMode == WindowsDream;
+        bool waterMode => windowMode == WindowsWater;
         volatile bool ignoreMaximizedWindows;   // read by the poll on the game-loop thread
         int edgeWrapMode;
         readonly List<RectangleF> monitorGameBounds = new List<RectangleF>();
@@ -224,7 +228,7 @@ namespace DeskMadeline
             customHairColors[2] = Rgb(settings.HairColor2);
             speedometerMode = settings.SpeedometerMode;
             hitboxesEnabled = settings.HitboxesEnabled;
-            dreamBlockMode = settings.DreamBlockMode;
+            windowMode = settings.WindowMode;
             ignoreMaximizedWindows = settings.IgnoreMaximizedWindows;
             edgeWrapMode = settings.EdgeWrapMode;
             player.ElytraEnabled = settings.ElytraEnabled;
@@ -500,6 +504,11 @@ namespace DeskMadeline
             Add("fallSlow", Sprites.Seq("jumpSlow", 2, 3), 0.10f, false);
             Add("fallFast", Sprites.Seq("jumpFast", 2, 3), 0.10f, false);
             Add("dash", Sprites.Seq("dash", 0, 3), 0.09f, true);
+            // Sprites.xml: swimIdle 0-5, swimUp 6-11, swimDown 12-17. The last six are
+            // filed as Swim12-Swim17 in the atlas, capitalised where the rest are not.
+            Add("swimIdle", Sprites.Seq("swim", 0, 5), 0.08f, true);
+            Add("swimUp", Sprites.Seq("swim", 6, 11), 0.08f, true);
+            Add("swimDown", Sprites.Seq("swim", 12, 17), 0.08f, true);
             Add("elytra", Sprites.Seq("fly", 0, 8), 10f, true, manual: true);
             Add("climb", Sprites.Seq("climb", 0, 5), 0.04f, true);
             Add("wallslide", new[] { "climb00" }, 1f, true);
@@ -995,6 +1004,11 @@ namespace DeskMadeline
                         : "event:/char/madeline/stand");
                 soundDucking = player.Ducking;
             }
+            // Player.swimSurfaceLoopSfx: dragging along the top of the water, whether she is
+            // swimming in it or wading through the shallow end of it.
+            if (player.SwimSurfaceMoving)
+                soundEffects.StartLoop("swim", "event:/char/madeline/water_move_shallow");
+            else soundEffects.StopLoop("swim");
             // orig_Update tests the sprite selected on the preceding frame before
             // UpdateSprite chooses the next one later in the same player update.
             bool wallSliding = animator.CurrentId == "wallslide" && player.Speed.Y > 0f;
@@ -1555,6 +1569,11 @@ namespace DeskMadeline
                 - (Held(PetAction.Up, PadBindings.AimThreshold) ? 1 : 0);
             input.GliderMoveY = (Held(PetAction.Down, PadBindings.GliderMoveYThreshold) ? 1 : 0)
                 - (Held(PetAction.Up, PadBindings.GliderMoveYThreshold) ? 1 : 0);
+            // Input.Feather is a joystick on the move bindings at the aim deadzone.
+            input.FeatherX = (Held(PetAction.Right, PadBindings.AimThreshold) ? 1 : 0)
+                - (Held(PetAction.Left, PadBindings.AimThreshold) ? 1 : 0);
+            input.FeatherY = (Held(PetAction.Down, PadBindings.AimThreshold) ? 1 : 0)
+                - (Held(PetAction.Up, PadBindings.AimThreshold) ? 1 : 0);
             input.JumpHeld = jump;
             input.GrabHeld = grab;
             input.ElytraHeld = elytra;
@@ -1857,7 +1876,7 @@ namespace DeskMadeline
                 if ((ex & Win32.WS_EX_LAYERED) != 0 && (ex & Win32.WS_EX_TRANSPARENT) != 0) return true;
                 string cls = Win32.GetClassNameString(hwnd);
                 if (cls == "Progman" || cls == "WorkerW" || cls == "Xaml_WindowedPopupClass") return true;
-                if (dreamBlockMode && (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd")) return true;
+                if (!waterMode && dreamBlockMode && (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd")) return true;
                 if (!Win32.TryGetWindowRect(hwnd, out var r)) return true;
                 if (r.Width < 24 || r.Height < 18) return true;
                 // An ignored window is still in front of whatever it covers, so it is kept as
@@ -1874,6 +1893,8 @@ namespace DeskMadeline
             // Build platforms (game units): keep only hollow window borders; front (higher Z) windows
             // subtract their full rect from rear borders so covered segments no longer collide.
             var solids = new List<Solid>(zorder.Count * 4 + 1);
+            // Water is not solid, so it travels in a list of its own; see Player.WaterAt.
+            var waters = new List<Solid>(waterMode ? zorder.Count : 0);
             var occluders = new List<Win32.RECT>(zorder.Count);
             // Windows in front that hide what is behind them without being solid themselves.
             var hidersOnly = new List<Win32.RECT>();
@@ -1882,14 +1903,16 @@ namespace DeskMadeline
                 var r = window.Rect;
                 if (window.IsPlatform)
                 {
-                    if (dreamBlockMode)
+                    if (dreamBlockMode || waterMode)
                     {
-                        // Dream blocks union with each other: overlapping windows are one
-                        // shape, and cutting them apart only invents edges that belong to no
-                        // window.  What does come out is the ignored windows -- maximized and
-                        // fullscreen -- and whatever they cover, which is solid nobody can see.
+                        // Dream blocks and pools both union with each other: overlapping
+                        // windows are one shape, and cutting them apart only invents edges
+                        // that belong to no window.  What does come out is the ignored windows
+                        // -- maximized and fullscreen -- and whatever they cover, which is
+                        // solid nobody can see.
                         foreach (var p in SubtractRects(r, hidersOnly))
-                            if (TryToSolid(window.Handle, p, true, out Solid dreamSolid)) solids.Add(dreamSolid);
+                            if (TryToSolid(window.Handle, p, dreamBlockMode, out Solid filled))
+                                (waterMode ? waters : solids).Add(filled);
                     }
                     else
                     {
@@ -1992,6 +2015,7 @@ namespace DeskMadeline
             lastRects.Clear();
             foreach (var kv in cur) lastRects[kv.Key] = kv.Value;
             player.Solids = solids;
+            player.Waters = waters;
         }
 
         void ApplyEdgeWrap(PointF previous)
@@ -3054,7 +3078,7 @@ namespace DeskMadeline
             settings.HairColor2 = RgbValue(customHairColors[2]);
             settings.SpeedometerMode = speedometerMode;
             settings.HitboxesEnabled = hitboxesEnabled;
-            settings.DreamBlockMode = dreamBlockMode;
+            settings.WindowMode = windowMode;
             settings.IgnoreMaximizedWindows = ignoreMaximizedWindows;
             settings.RespawnReversalEnabled = player.RespawnReversalEnabled;
             settings.EdgeWrapMode = edgeWrapMode;
@@ -3736,13 +3760,32 @@ namespace DeskMadeline
                 SaveSettings();
             }) { Checked = ignoreMaximizedWindows };
 
-            var dreamItem = new ToolStripMenuItem(Loc.T("Menu.DreamBlockWindows"), null, (sender, __) =>
+            // One question with three answers, rather than a toggle per answer: a window is
+            // solid, or a dream block, or full of water, and it cannot be two of them.
+            var dreamItem = new ToolStripMenuItem(Loc.T("Menu.WindowsAre"));
+            foreach (var option in new[]
             {
-                dreamBlockMode = !dreamBlockMode;
-                ((ToolStripMenuItem)sender).Checked = dreamBlockMode;
-                pollCounter = 999;
-                SaveSettings();
-            }) { Checked = dreamBlockMode };
+                new KeyValuePair<int, string>(WindowsSolid, Loc.T("Windows.Solid")),
+                new KeyValuePair<int, string>(WindowsDream, Loc.T("Windows.DreamBlocks")),
+                new KeyValuePair<int, string>(WindowsWater, Loc.T("Windows.Water"))
+            })
+            {
+                int mode = option.Key;
+                var choice = new ToolStripMenuItem(option.Value)
+                {
+                    Checked = windowMode == mode,
+                    Tag = mode
+                };
+                choice.Click += (_, __) =>
+                {
+                    windowMode = mode;
+                    pollCounter = 999;
+                    SaveSettings();
+                    foreach (ToolStripMenuItem item in dreamItem.DropDownItems)
+                        item.Checked = (int)item.Tag == mode;
+                };
+                dreamItem.DropDownItems.Add(choice);
+            }
 
             var edgeWrapItem = new ToolStripMenuItem(
                 Loc.T("Menu.EdgeWrap"));

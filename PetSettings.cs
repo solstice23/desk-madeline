@@ -28,7 +28,8 @@ namespace DeskMadeline
         public int HairColor2 = 0xFF6DEF;
         public int SpeedometerMode;
         public bool HitboxesEnabled;
-        public bool DreamBlockMode;
+        /// <summary>What the windows are: 0 solid, 1 dream blocks, 2 water.</summary>
+        public int WindowMode;
         public bool IgnoreMaximizedWindows = true;
         public bool RespawnReversalEnabled = true;
         public int EdgeWrapMode;
@@ -82,7 +83,15 @@ namespace DeskMadeline
                     int.TryParse(speedometer, out int speedometerValue))
                     result.SpeedometerMode = Math.Max(0, Math.Min(3, speedometerValue));
                 ReadBool(values, "HitboxesEnabled", ref result.HitboxesEnabled);
-                ReadBool(values, "DreamBlockMode", ref result.DreamBlockMode);
+                // DreamBlockMode was the same choice as a yes/no, before water was one of
+                // the answers. Read it when the newer key is absent, so nobody's dream desktop
+                // turns back to ordinary windows on upgrade.
+                if (values.TryGetValue("WindowMode", out string windowMode) &&
+                    int.TryParse(windowMode, out int windowModeValue))
+                    result.WindowMode = Math.Max(0, Math.Min(2, windowModeValue));
+                else if (values.TryGetValue("DreamBlockMode", out string dreamBlocks) &&
+                    bool.TryParse(dreamBlocks, out bool dreamBlocksValue) && dreamBlocksValue)
+                    result.WindowMode = 1;
                 ReadBool(values, "IgnoreMaximizedWindows", ref result.IgnoreMaximizedWindows);
                 ReadBool(values, "RespawnReversalEnabled", ref result.RespawnReversalEnabled);
                 if (values.TryGetValue("EdgeWrapMode", out string edgeWrap) &&
@@ -145,7 +154,7 @@ namespace DeskMadeline
                     "HairColor2=#" + HairColor2.ToString("X6", CultureInfo.InvariantCulture),
                     "SpeedometerMode=" + SpeedometerMode,
                     "HitboxesEnabled=" + HitboxesEnabled,
-                    "DreamBlockMode=" + DreamBlockMode,
+                    "WindowMode=" + WindowMode,
                     "IgnoreMaximizedWindows=" + IgnoreMaximizedWindows,
                     "RespawnReversalEnabled=" + RespawnReversalEnabled,
                     "EdgeWrapMode=" + EdgeWrapMode,

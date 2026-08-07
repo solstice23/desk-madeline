@@ -25,6 +25,10 @@ namespace DeskMadeline
         public int AimX;       // Input.Aim.X
         public int AimY;       // Input.Aim.Y
         public int GliderMoveY;
+        // Input.Feather: the move bindings again, at the aim deadzone rather than the move
+        // one. Swimming steers by it, so on a controller it answers where MoveX/MoveY are
+        // still silent -- and on a keyboard it is the same eight directions as everything else.
+        public int FeatherX, FeatherY;
         public bool JumpHeld;
         public bool GrabHeld;
         public bool JumpPressed;  // already input-buffered (valid this frame)
@@ -497,6 +501,9 @@ namespace DeskMadeline
 
         // External data
         public List<Solid> Solids = new List<Solid>();
+        /// <summary>Water she can swim in. Not solids; see WaterAt.</summary>
+        public List<Solid> Waters = new List<Solid>();
+        bool wasInWater;
         public float MinX = -10000, MaxX = 10000;   // screen bounds (game pixels)
         public bool BeingDragged;
 
@@ -539,6 +546,81 @@ namespace DeskMadeline
             HitboxAt(x, y, out float l, out float t, out float r, out float b);
             foreach (var s in Solids)
                 if (Overlap(l, t, r, b, s)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Water at the hitbox placed at (x, y). Water is not solid and is kept apart from
+        /// the solids for that reason: vanilla's Water is a plain Entity that everything moves
+        /// through, and a window filled with it must not become a floor.
+        /// </summary>
+        bool WaterAt(float x, float y)
+        {
+            HitboxAt(x, y, out float l, out float t, out float r, out float b);
+            foreach (var water in Waters)
+                if (Overlap(l, t, r, b, water)) return true;
+            return false;
+        }
+
+        // Player.SwimCheck and its neighbours, each the collider lifted by so many pixels:
+        // deep enough to swim in, deep enough to be under, shallow enough to jump or rise out.
+        bool SwimCheck() => WaterAt(Pos.X, Pos.Y - 8f) && WaterAt(Pos.X, Pos.Y);
+        bool SwimUnderwaterCheck() => WaterAt(Pos.X, Pos.Y - 9f);
+        bool SwimJumpCheck() => !WaterAt(Pos.X, Pos.Y - 14f);
+        bool SwimRiseCheck() => !WaterAt(Pos.X, Pos.Y - 18f);
+
+        bool TryGetWaterAt(float x, float y, out Solid pool)
+        {
+            HitboxAt(x, y, out float l, out float t, out float r, out float b);
+            foreach (var water in Waters)
+                if (Overlap(l, t, r, b, water)) { pool = water; return true; }
+            pool = default;
+            return false;
+        }
+
+        /// <summary>
+        /// Water.Update's half of it: a splash on the way in and on the way out, deeper-
+        /// sounding when she was above the middle of the pool and it is not shallow, and the
+        /// dash variants when she crosses the surface mid-dash.
+        /// </summary>
+        /// <remarks>
+        /// Vanilla hangs this off a WaterInteraction component the Water entity polls; here
+        /// the water is a list of rectangles and nothing polls, so she watches the crossing
+        /// herself. What is heard is the same, which is the part that is the port.
+        /// </remarks>
+        void UpdateWaterSounds()
+        {
+            bool inWater = TryGetWaterAt(Pos.X, Pos.Y, out Solid pool);
+            if (inWater != wasInWater)
+            {
+                float centreY = Pos.Y - HitH / 2f;
+                // Water._IsShallow: under 16 pixels of it and a splash is a shallow one.
+                bool deep = inWater || wasInWater
+                    ? centreY < (pool.T + pool.B) / 2f && (pool.B - pool.T) >= 16f
+                    : false;
+                if (wasInWater)
+                    PlaySound(DashAttacking
+                        ? "event:/char/madeline/water_dash_out"
+                        : "event:/char/madeline/water_out", "deep", deep ? 1f : 0f);
+                else
+                    PlaySound(DashAttacking && deep
+                        ? "event:/char/madeline/water_dash_in"
+                        : "event:/char/madeline/water_in", "deep", deep ? 1f : 0f);
+            }
+            wasInWater = inWater;
+        }
+
+        /// <summary>Whether she is dragging along the surface: Player's swimSurfaceLoopSfx.</summary>
+        public bool SwimSurfaceMoving =>
+            Speed.X != 0f && ((State == StSwim && !SwimUnderwaterCheck()) ||
+                              (State == StNormal && WaterAt(Pos.X, Pos.Y)));
+
+        /// <summary>Player._IsOverWater: her hitbox, two pixels taller, touching water.</summary>
+        bool IsOverWater()
+        {
+            HitboxAt(Pos.X, Pos.Y, out float l, out float t, out float r, out float b);
+            foreach (var water in Waters)
+                if (Overlap(l, t, r, b + 2f, water)) return true;
             return false;
         }
 
@@ -1201,6 +1283,10 @@ namespace DeskMadeline
             if (landingStumbleTimer > 0f) landingStumbleTimer -= dt;
             if (playFootstepOnLand > 0f) playFootstepOnLand -= dt;
 
+            // Player.orig_Update refills in water before it refills on the ground, and asks
+            // nothing else of it: swimming hands the dash back every frame she is in it.
+            if (State == StSwim && dashRefillReady && Dashes < DashCapacity) RefillDash();
+
             if (onGround)
             {
                 dreamJump = false;
@@ -1343,6 +1429,7 @@ namespace DeskMadeline
                             State = BeginDash(input, normalDashWasCrouch);
                         break;
                     case StClimb: ClimbUpdate(dt, input); break;
+                    case StSwim: SwimUpdate(dt, input); break;
                     case StDash: DashUpdate(dt, input); break;
                     case StDreamDash: DreamDashUpdate(dt, input); break;
                     case StElytra: ElytraUpdate(dt, input); break;
@@ -1382,6 +1469,7 @@ namespace DeskMadeline
                     Ducking = false;
                 }
 
+
                 // Sitting inside a DreamBlock she cannot move at all, so keep her still
                 // instead of letting gravity build a speed the collision quietly throws away
                 // again: that leaves the fall speed flickering between frames, and with it the
@@ -1408,6 +1496,33 @@ namespace DeskMadeline
                     if (Pos.X < MinX + 4) { Pos.X = MinX + 4; if (Speed.X < 0) Speed.X = 0; }
                     if (Pos.X > MaxX - 4) { Pos.X = MaxX - 4; if (Speed.X > 0) Speed.X = 0; }
                 }
+
+                // Player.UpdateSprite's tail, which is where vanilla moves between swimming
+                // and not: floating up out of the surface stops at it, and walking or
+                // climbing into water starts the swim. Climbing in from above her own middle
+                // is pushed up first, so she surfaces rather than sinking through the lip.
+                if (State == StSwim)
+                {
+                    if (Speed.Y < 0f && Speed.Y >= SwimMaxRise && IsOverWater())
+                        while (!SwimCheck())
+                        {
+                            Speed.Y = 0f;
+                            if (CollideAt(Pos.X, Pos.Y + 1f)) break;
+                            MoveVExact(1);
+                        }
+                }
+                else if (State == StNormal && SwimCheck()) { State = StSwim; SwimBegin(); }
+                else if (State == StClimb && SwimCheck())
+                {
+                    if (TryGetWaterAt(Pos.X, Pos.Y, out Solid pool) &&
+                        Pos.Y - HitH / 2f < (pool.T + pool.B) / 2f)
+                    {
+                        while (SwimCheck() && !CollideAt(Pos.X, Pos.Y - 1f)) MoveVExact(-1);
+                        if (SwimCheck()) { State = StSwim; SwimBegin(); }
+                    }
+                    else { State = StSwim; SwimBegin(); }
+                }
+                UpdateWaterSounds();
                 }
             }
             else
@@ -2034,6 +2149,84 @@ namespace DeskMadeline
             return false;
         }
 
+        // ===== Swim state =====
+        // Player.SwimBegin/SwimUpdate. Vanilla's numbers, in the order it applies them:
+        // rise 60/s while neutral, 80/s under steering (60 while fully under), approached at
+        // 600/s, or 400/s when already going faster than 80 the same way -- so a dash carries
+        // into the water and is dragged down rather than cut off.
+        const float SwimYSpeedMult = 0.5f;
+        const float SwimMaxRise = -60f;
+        const float SwimVDeccel = 600f;
+        const float SwimMax = 80f;
+        const float SwimUnderwaterMax = 60f;
+        const float SwimAccel = 600f;
+        const float SwimReduce = 400f;
+        const float SwimDashSpeedMult = 0.75f;
+
+        void SwimBegin()
+        {
+            if (Speed.Y > 0f) Speed.Y *= SwimYSpeedMult;
+            Stamina = ClimbMaxStamina;
+        }
+
+        void SwimUpdate(float dt, PetInput input)
+        {
+            if (!SwimCheck()) { State = StNormal; return; }
+            if (CanUnDuck) Ducking = false;
+            if (CanDash)
+            {
+                bool crouchDash = ConsumeDashRequest();
+                State = BeginDash(input, crouchDash);
+                return;
+            }
+
+            bool underwater = SwimUnderwaterCheck();
+            // Out of the water onto a wall, which is how a pool with a lip is left. Vanilla
+            // reads MoveVExact's collision to know there is room above; here that is the same
+            // question asked before moving.
+            if (!underwater && Speed.Y >= 0f && input.GrabHeld && !IsTired && CanUnDuck &&
+                Math.Sign(Speed.X) != -Facing && ClimbCheck(Facing) &&
+                !CollideAt(Pos.X, Pos.Y - 1f))
+            {
+                MoveVExact(-1);
+                Ducking = false;
+                EnterClimb();
+                State = StClimb;
+                return;
+            }
+
+            // Input.Feather.Value.SafeNormalize(): the eight directions as a unit vector.
+            float aimX = input.FeatherX, aimY = input.FeatherY;
+            float length = (float)Math.Sqrt(aimX * aimX + aimY * aimY);
+            if (length > 0f) { aimX /= length; aimY /= length; }
+
+            float max = underwater ? SwimUnderwaterMax : SwimMax;
+            Speed.X = Approach(Speed.X, max * aimX,
+                (Math.Abs(Speed.X) > SwimMax && Math.Sign(Speed.X) == Math.Sign(aimX)
+                    ? SwimReduce : SwimAccel) * dt);
+            if (aimY == 0f && SwimRiseCheck())
+            {
+                // She floats up to the surface on her own, and stops rising once out of it.
+                Speed.Y = Approach(Speed.Y, SwimMaxRise, SwimVDeccel * dt);
+            }
+            else if (aimY >= 0f || underwater)
+            {
+                Speed.Y = Approach(Speed.Y, SwimMax * aimY,
+                    (Math.Abs(Speed.Y) > SwimMax && Math.Sign(Speed.Y) == Math.Sign(aimY)
+                        ? SwimReduce : SwimAccel) * dt);
+            }
+
+            if (!underwater && input.MoveX != 0 && CollideAt(Pos.X + input.MoveX, Pos.Y) &&
+                !CollideAt(Pos.X + input.MoveX, Pos.Y - 3f))
+                ClimbHop();
+
+            if (input.JumpPressed && SwimJumpCheck())
+            {
+                Jump(input);
+                State = StNormal;
+            }
+        }
+
         // ===== Climb state =====
         void ClimbUpdate(float dt, PetInput input)
         {
@@ -2213,6 +2406,13 @@ namespace DeskMadeline
             DashDir = dir;
             gliderBoostDir = dir;
             Speed = speed;
+            // DashCoroutine: water takes a quarter off a dash begun in it, and answers with
+            // its own sound over the dash's.
+            if (WaterAt(Pos.X, Pos.Y))
+            {
+                Speed = new PointF(Speed.X * SwimDashSpeedMult, Speed.Y * SwimDashSpeedMult);
+                PlaySound("event:/char/madeline/water_dash_gen");
+            }
 
             // Grounded down-diagonal dash → crouch dash (1.2x, vanilla). DashCoroutine
             // tests onGround as of this frame, not the state captured at DashBegin.
@@ -2462,6 +2662,12 @@ namespace DeskMadeline
             else if (State == StElytra)
             {
                 id = "elytra";
+            }
+            else if (State == StSwim)
+            {
+                // Player.orig_UpdateSprite. The swim animation reads MoveY, not the feather
+                // she steers with, so a controller half-pushed up still swims level.
+                id = input.MoveY > 0 ? "swimDown" : input.MoveY < 0 ? "swimUp" : "swimIdle";
             }
             else if (dreamDashOutTimer > 0f)
             {
