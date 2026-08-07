@@ -167,8 +167,17 @@ static class WaterChecks
             carried.Update(Dt, new PetInput(), carrying.Solids, -100000f, 100000f);
         }
         Check("and swims with it in hand", carrying.State == 3 && carrying.Holding != null);
-        Run(carrying, new PetInput { MoveY = 1 }, 2);      // let go of grab, holding down
-        Check("and can let go of it while swimming", carrying.Holding == null);
+        // Letting go of grab does not put it down, and that is the game -- vanilla's only
+        // Throw() is in NormalUpdate, so swimming has no way to release. Confirmed in Celeste
+        // itself. This is here so that the next person to notice finds a check saying it is
+        // deliberate rather than a bug to fix.
+        Run(carrying, new PetInput { MoveY = 1 }, 10);     // grab released, holding down
+        Check("letting go while swimming keeps hold of it, as in the game",
+            carrying.Holding != null);
+        // Out of the water, the same release works immediately.
+        carrying.Pos = new PointF(carrying.Pos.X, Surface - 60f);
+        Run(carrying, new PetInput { MoveY = 1 }, 3);
+        Check("out of it, the same release puts it down", carrying.Holding == null);
 
         Console.WriteLine();
         Console.WriteLine("  Grab, at the edge of a pool");
