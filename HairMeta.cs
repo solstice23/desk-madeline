@@ -18,27 +18,6 @@ namespace DeskMadeline
             { "fly06", new Meta(new System.Drawing.PointF(2f, -1f), 0) },
             { "fly07", new Meta(new System.Drawing.PointF(2f, -1f), 0) },
             { "fly08", new Meta(new System.Drawing.PointF(2f, -1f), 0) },
-            // Sprites.xml, <Frames path="swim" hair="...">: her hair sits two pixels
-            // higher while she swims, three on the two frames she reaches up on, and
-            // drops to level and one across on the diving frames.
-            { "swim00", new Meta(new System.Drawing.PointF(0f, -2f), 0) },
-            { "swim01", new Meta(new System.Drawing.PointF(0f, -2f), 0) },
-            { "swim02", new Meta(new System.Drawing.PointF(0f, -2f), 0) },
-            { "swim03", new Meta(new System.Drawing.PointF(0f, -2f), 0) },
-            { "swim04", new Meta(new System.Drawing.PointF(0f, -2f), 0) },
-            { "swim05", new Meta(new System.Drawing.PointF(0f, -2f), 0) },
-            { "swim06", new Meta(new System.Drawing.PointF(0f, -3f), 0) },
-            { "swim07", new Meta(new System.Drawing.PointF(0f, -3f), 0) },
-            { "swim08", new Meta(new System.Drawing.PointF(0f, -2f), 0) },
-            { "swim09", new Meta(new System.Drawing.PointF(0f, -2f), 0) },
-            { "swim10", new Meta(new System.Drawing.PointF(0f, -2f), 0) },
-            { "swim11", new Meta(new System.Drawing.PointF(0f, -2f), 0) },
-            { "Swim12", new Meta(new System.Drawing.PointF(1f, -1f), 0) },
-            { "Swim13", new Meta(new System.Drawing.PointF(1f, -1f), 0) },
-            { "Swim14", new Meta(new System.Drawing.PointF(1f, 0f), 0) },
-            { "Swim15", new Meta(new System.Drawing.PointF(1f, 0f), 0) },
-            { "Swim16", new Meta(new System.Drawing.PointF(1f, 0f), 0) },
-            { "Swim17", new Meta(new System.Drawing.PointF(1f, 0f), 0) },
             { "climb00", new Meta(new System.Drawing.PointF(-0.9f, -0.9f), 2) },
             { "climb01", new Meta(new System.Drawing.PointF(-1.1f, -1.2f), 2) },
             { "climb02", new Meta(new System.Drawing.PointF(-1.2f, -1.6f), 2) },
@@ -273,6 +252,64 @@ namespace DeskMadeline
             { "tired03", new Meta(new System.Drawing.PointF(-2.7f, 0.8f), 1) },
         };
 
+        // ===== The game's own table (Content\Graphics\Sprites.xml) =====
+        // Read rather than transcribed. Sprites.xml sits beside the atlas the sprites already
+        // come from, and its <player> metadata gives every frame of every animation, including
+        // the ones nobody has ported yet -- which is the difference between an animation
+        // arriving with its hair already right and arriving wearing idle's, as swimming did.
+        static readonly System.Collections.Generic.Dictionary<string, Meta> Vanilla =
+            new System.Collections.Generic.Dictionary<string, Meta>(System.StringComparer.OrdinalIgnoreCase);
+
+        public static int VanillaCount => Vanilla.Count;
+
+        /// <summary>
+        /// Parse &lt;player&gt;'s metadata: one Frames element per animation sheet, holding a
+        /// hair offset per frame as "x,y" with an optional ":bangs" after it.
+        /// </summary>
+        public static void LoadVanilla(string spritesXmlPath)
+        {
+            Vanilla.Clear();
+            if (spritesXmlPath == null) { PetWindow.Log("hair: no Sprites.xml"); return; }
+            try
+            {
+                var player = System.Xml.Linq.XDocument.Load(spritesXmlPath).Root
+                    ?.Element("player")?.Element("Metadata");
+                if (player == null) { PetWindow.Log("hair: Sprites.xml has no player metadata"); return; }
+                foreach (var frames in player.Elements("Frames"))
+                {
+                    string path = (string)frames.Attribute("path");
+                    string hair = (string)frames.Attribute("hair");
+                    if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(hair)) continue;
+                    string[] perFrame = hair.Split('|');
+                    for (int i = 0; i < perFrame.Length; i++)
+                    {
+                        string entry = perFrame[i];
+                        int bangs = 0;
+                        int colon = entry.IndexOf(':');
+                        if (colon >= 0)
+                        {
+                            int.TryParse(entry.Substring(colon + 1), out bangs);
+                            entry = entry.Substring(0, colon);
+                        }
+                        string[] xy = entry.Split(',');
+                        if (xy.Length != 2) continue;
+                        if (!float.TryParse(xy[0], System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out float x) ||
+                            !float.TryParse(xy[1], System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out float y))
+                            continue;
+                        var meta = new Meta(new System.Drawing.PointF(x, y), bangs);
+                        // A sheet of one frame is filed under the bare name -- "duck", not
+                        // "duck00" -- which is how the atlas holds it too.
+                        Vanilla[path + i.ToString("00")] = meta;
+                        if (perFrame.Length == 1) Vanilla[path] = meta;
+                    }
+                }
+                PetWindow.Log("hair: " + Vanilla.Count + " frames from " + spritesXmlPath);
+            }
+            catch (System.Exception ex) { PetWindow.Log("hair: Sprites.xml unreadable, " + ex.Message); }
+        }
+
         // ===== Runtime overrides (hair_tweaks.txt; hand-tune hair without recompiling) =====
         // Line format: frameName x y bangs  e.g. idle00 -2.5 0.2 1
         static readonly System.Collections.Generic.Dictionary<string, Meta> Overrides =
@@ -298,11 +335,23 @@ namespace DeskMadeline
             catch (System.Exception ex) { PetWindow.Log("hair_tweaks: load error " + ex.Message); }
         }
 
-        /// <summary>Get hair metadata for a frame: runtime override first, then the default table.</summary>
+        /// <summary>
+        /// Hair metadata for a frame, from the first place that has it: a tweak someone made
+        /// by hand, then this file, then the game's own table.
+        ///
+        /// The order is that way round because the entries here are not a copy of Celeste's --
+        /// they are the port's own, tuned to subpixels where the game works in whole ones, and
+        /// they cover frames the game has no answer for at all: the elytra is CommunalHelper's,
+        /// and the climb sheet here runs longer than the nine frames Celeste gives metadata
+        /// for. Sprites.xml comes last and catches everything nobody has tuned yet, which is
+        /// how a newly ported animation arrives with its hair already in the right place
+        /// rather than wearing idle's.
+        /// </summary>
         public static bool TryGet(string frameId, out Meta meta)
         {
             if (frameId != null && Overrides.TryGetValue(frameId, out meta)) return true;
             if (frameId != null && Offsets.TryGetValue(frameId, out meta)) return true;
+            if (frameId != null && Vanilla.TryGetValue(frameId, out meta)) return true;
             // Carry sheets use the same head poses as their non-carry counterparts.
             // This fallback keeps hair anchored for base and partially implemented
             // skins without requiring duplicate metadata for every carry frame.

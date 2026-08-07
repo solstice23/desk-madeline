@@ -297,6 +297,8 @@ namespace DeskMadeline
                 }
             }
             catch { }
+            // The game's table first, then the tweaks that override it.
+            HairMeta.LoadVanilla(CelesteInstall.GraphicsFile("Sprites.xml"));
             HairMeta.LoadOverrides(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hair_tweaks.txt"));
             dust = new PType
             {

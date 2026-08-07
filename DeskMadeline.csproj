@@ -84,6 +84,9 @@
       <CelesteAtlas Include="$(CelesteDir)\Content\Graphics\Atlases\Gameplay.meta;
                              $(CelesteDir)\Content\Graphics\Atlases\Gameplay*.data" />
       <CelestePortrait Include="$(CelesteDir)\Content\Graphics\Atlases\Portraits\madeline\normal00.data" />
+      <!-- Where her hair sits on every frame of every animation. HairMeta reads it beside the
+           exe or out of the install, the same two places the atlas is looked for. 90KB. -->
+      <CelesteSprites Include="$(CelesteDir)\Content\Graphics\Sprites.xml" />
       <CelesteFmodLib Include="$(CelesteDir)\lib64-win-x64\fmod*.dll" />
       <!-- The four SoundEffects loads. dlc_sfx.bank is needed despite its name: the jellyfish
            is a Farewell mechanic, so its sounds are under event:/new_content/. The music
@@ -98,6 +101,8 @@
           SkipUnchangedFiles="true" Condition="'@(CelesteAtlas)' != ''" />
     <Copy SourceFiles="@(CelestePortrait)" DestinationFolder="$(OutDir)Content\Graphics\Atlases\Portraits\madeline"
           SkipUnchangedFiles="true" Condition="'@(CelestePortrait)' != ''" />
+    <Copy SourceFiles="@(CelesteSprites)" DestinationFolder="$(OutDir)Content\Graphics"
+          SkipUnchangedFiles="true" Condition="'@(CelesteSprites)' != ''" />
     <Copy SourceFiles="@(CelesteFmodLib)" DestinationFolder="$(OutDir)lib64-win-x64"
           SkipUnchangedFiles="true" Condition="'@(CelesteFmodLib)' != ''" />
     <Copy SourceFiles="@(CelesteFmodBank)" DestinationFolder="$(OutDir)Content\FMOD\Desktop"

@@ -110,6 +110,20 @@ namespace DeskMadeline
         }
 
         /// <summary>
+        /// A file of the game's under Content\Graphics, beside the app or in the install --
+        /// Sprites.xml, which says where her hair sits on every frame of every animation.
+        /// </summary>
+        public static string GraphicsFile(string name)
+        {
+            string beside = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                "Content", "Graphics", name);
+            if (File.Exists(beside)) return beside;
+            if (Directory == null) return null;
+            string installed = Path.Combine(Directory, "Content", "Graphics", name);
+            return File.Exists(installed) ? installed : null;
+        }
+
+        /// <summary>
         /// The install someone has named: CELESTE_PATH, or the folder chosen in settings.
         /// </summary>
         /// <remarks>
