@@ -2079,6 +2079,8 @@ namespace DeskMadeline
         /// times a second rather than every frame. What it finds is kept in polledWindows and
         /// re-measured by RebuildSolids in between.
         /// </summary>
+        static readonly uint OwnProcessId = (uint)Environment.ProcessId;
+
         void EnumerateWindows()
         {
             IntPtr self = Handle;
@@ -2096,6 +2098,15 @@ namespace DeskMadeline
                 if ((ex & Win32.WS_EX_LAYERED) != 0 && (ex & Win32.WS_EX_TRANSPARENT) != 0) return true;
                 string cls = Win32.GetClassNameString(hwnd);
                 if (cls == "Progman" || cls == "WorkerW" || cls == "Xaml_WindowedPopupClass") return true;
+                // Menus, and everything else this program puts on the screen: its tray menu,
+                // its dialogs. Dropped outright rather than kept as occluders the way an
+                // ignored window is -- a menu opening over the window she is standing on would
+                // cut the border out from under her feet for as long as it was up, and it is
+                // hers to close, which is worse than simply not being there. #32768 is the
+                // class every classic right-click menu has; the tray menu is one of ours.
+                if (cls == "#32768") return true;
+                Win32.GetWindowThreadProcessId(hwnd, out uint owner);
+                if (owner == OwnProcessId) return true;
                 if (!waterMode && dreamBlockMode && (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd")) return true;
                 if (!Win32.TryGetWindowRect(hwnd, out var r)) return true;
                 if (r.Width < 24 || r.Height < 18) return true;
