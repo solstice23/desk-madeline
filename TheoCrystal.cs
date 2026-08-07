@@ -197,18 +197,30 @@ namespace DeskMadeline
                     Speed = new PointF(Speed.X, -300f);
                     SoundEvents.Enqueue(new PlayerSoundEvent("event:/game/general/assist_screenbottom"));
                 }
-                else Die(player);
+                else Break();
             }
         }
 
-        /// <summary>TheoCrystal.Die: he takes the player with him and breaks where he lies.</summary>
-        void Die(Player player)
+        /// <summary>TheoCrystal.OnSquish: three pixels of wiggle, and then he breaks.</summary>
+        public void Crush() => Break();
+
+        /// <summary>
+        /// TheoCrystal.Die, less the part where it kills her.
+        /// </summary>
+        /// <remarks>
+        /// Vanilla's Die calls Die on the player before it adds his burst, and that is not a
+        /// flourish: in Celeste losing the crystal means the room has to be restarted, and
+        /// killing her is how the room restarts. A desktop has no rooms. He falls off the
+        /// bottom of the screen or a window closes on him, and neither is a reason for her to
+        /// die somewhere else entirely, so he breaks alone. The one place these part company
+        /// with the game, and deliberate.
+        /// </remarks>
+        void Break()
         {
             if (dead) return;
             dead = true;
             deathTimer = 0f;
             Speed = PointF.Empty;
-            player.Die(new PointF(-player.Facing, 0f));
             SoundEvents.Enqueue(new PlayerSoundEvent("event:/char/madeline/death"));
         }
 

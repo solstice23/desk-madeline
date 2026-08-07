@@ -73,8 +73,6 @@ namespace DeskMadeline
         // Platforms
         readonly Dictionary<IntPtr, Win32.RECT> lastRects = new Dictionary<IntPtr, Win32.RECT>();
         int pollCounter;
-        IntPtr rideAlongId;             // window the ride-along remainder belongs to
-        PointF rideAlongRemainder;      // sub-pixel part of a moving window's offset
 
         // Input state
         bool prevJump, prevDash, prevCrouchDash;
@@ -451,7 +449,8 @@ namespace DeskMadeline
             presenter = new D3DPresenter(compositionHost.Handle, CanvasW, CanvasH, GameScale, virtualDesktop);
             Win32.SetWindowPos(Handle, AlwaysOnTop ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST,
                 0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
-            PollSolids();
+            EnumerateWindows();
+            RebuildSolids(1f / 60f);
             player.Hair.Reset(new PointF(player.Pos.X, player.Pos.Y - 9), player.Facing);
         }
 
@@ -721,12 +720,13 @@ namespace DeskMadeline
                 pollCounter = 999; // Immediately re-poll platforms (units changed)
             }
 
-            // Platform poll (every 0.25s)
+            // Which windows exist is asked four times a second; where they are, every frame.
             if (++pollCounter >= 15)
             {
                 pollCounter = 0;
-                PollSolids();
+                EnumerateWindows();
             }
+            RebuildSolids(dt);
 
             if (introWakeUp)
             {
@@ -883,6 +883,10 @@ namespace DeskMadeline
             var seekerCamera = new RectangleF(player.Pos.X - 160f, player.Pos.Y - 90f, 320f, 180f);
             foreach (Seeker seeker in seekers)
             {
+                // Squished: it removed itself, and its window and its place in this list go
+                // with it. Nothing else reaps a seeker that decided its own end -- removal has
+                // always come from the tray or from a request, and a crush is neither.
+                if (seeker.Removed) { RequestSeekerRemoval(seeker); continue; }
                 if (seekerRespawnDormant) seeker.UpdateDormant(dt, player.Solids, seekerWorldBounds);
                 else seeker.Update(dt, player, player.Solids, seekerWorldBounds, seekerCamera, theos);
                 while (seeker.SoundEvents.Count > 0)
@@ -1841,6 +1845,164 @@ namespace DeskMadeline
             return true;
         }
 
+        /// <summary>
+        /// A window that has moved onto her shoves her out of the way, and crushes her against
+        /// whatever is behind her if there is nowhere to go -- Solid.MoveHExact's other half,
+        /// the one PetWindow never had.
+        /// </summary>
+        /// <remarks>
+        /// Two things here are not Celeste's, because a dragged window is not a Celeste solid.
+        ///
+        /// A solid in the game moves a pixel or two a frame; a window arrives wherever the
+        /// mouse left it, which between two polls can be the far side of the screen. Pushing
+        /// her that whole way would crush her against the first thing behind her every time
+        /// somebody flung a window, so past TeleportPush the movement is treated as what it is
+        /// -- a jump rather than a shove -- and she is simply set down in the nearest free spot
+        /// instead, alive.
+        ///
+        /// The window she is standing on is not left out, though the ride-along has already
+        /// moved her with it. It cannot move her twice: the push only acts on an overlap, and
+        /// only by as deep as the overlap goes. What it is for is the fraction the ride-along
+        /// cannot carry -- a window moves in screen pixels, and only whole game pixels reach
+        /// her position, so a window rising under her feet leaves her a fraction inside its
+        /// border. Inside is exactly where a solid stops holding her up, so without this she
+        /// falls through the window she is standing on, and only when it moves faster than the
+        /// rounding can follow, which is to say almost always.
+        /// </remarks>
+        /// <remarks>
+        /// A speed rather than a distance, because a distance per frame is only meaningful at
+        /// one frame rate. No hand drags a window four thousand pixels a second; a snap, a
+        /// maximise or a virtual-desktop switch covers that in a single frame. Below it the
+        /// window is being dragged and pushes her; above it the window was put somewhere, the
+        /// space between never existed, and killing her for crossing it would be arbitrary.
+        ///
+        /// It was sixteen pixels a frame before -- 960 a second -- which an ordinary brisk drag
+        /// beats, so real drags were being treated as teleports and she could not be crushed by
+        /// one at all.
+        /// </remarks>
+        /// <remarks>
+        /// Hand-tuned, like the reach below and the interval the enumeration runs at. None of
+        /// the three is a number from Celeste -- the game has no dragged windows to measure --
+        /// so the only thing that says whether they are right is using the pet, and they have
+        /// each moved once already for exactly that reason.
+        /// </remarks>
+        const float TeleportSpeed = 4000f;   // game pixels a second
+
+        void PushOutOfMovedWindows(List<Solid> solids, Dictionary<IntPtr, Win32.RECT> cur, float dt)
+        {
+            // Derived from the step actually taken, so a slower frame does not turn an ordinary
+            // drag into a teleport.
+            float teleportPush = TeleportSpeed * dt;
+            if (player.IsDead || player.IsRespawning || dragging || introWakeUp) return;
+            int s = GameScale;
+            foreach (var pair in cur)
+            {
+                if (!lastRects.TryGetValue(pair.Key, out var old)) continue;
+                float dx = ToGamePixels(pair.Value.Left - old.Left);
+                float dy = ToGamePixels(pair.Value.Top - old.Top);
+                if (dx == 0f && dy == 0f) continue;
+
+                // Only the pieces this window contributed, at where they are now. Whether each
+                // is pushing her, and how far, is Player.SweptInto's to decide.
+                bool teleported = Math.Abs(dx) > teleportPush || Math.Abs(dy) > teleportPush;
+                foreach (Solid piece in solids)
+                {
+                    if (piece.Id != pair.Key || !player.OverlapsHitbox(piece)) continue;
+                    if (teleported) { player.DisplaceOutOfSolids(); break; }
+                    if (!player.SweptInto(piece, dx, dy)) break;
+                }
+                SweepEntities(solids, pair.Key, dx, dy, teleported);
+            }
+        }
+
+        /// <summary>
+        /// The same for everything else loose on the desktop. Solid.MoveHExact walks every
+        /// Actor, not only the player: a window carries the crystal standing on it, shoves the
+        /// jellyfish drifting through it, and squishes either against whatever is behind.
+        /// </summary>
+        /// <remarks>
+        /// What each does when squished is the game's: the crystal breaks, and the jellyfish
+        /// and the seeker are simply gone, all three after three pixels of wiggle rather than
+        /// the player's three by five.
+        ///
+        /// Except that the jellyfish is never squished here. Celeste removes it -- Glider
+        /// .OnSquish is three pixels of wiggle and then RemoveSelf, with no sound and nothing
+        /// left behind -- but a jellyfish on a desktop is something somebody asked for and is
+        /// playing with, and losing it to an accidental nudge of a window is a poor trade for
+        /// fidelity. It is pushed like everything else and sits inside whatever it cannot be
+        /// pushed clear of.
+        ///
+        /// The crystal follows the game, which spares it under Invincible: TheoCrystal.OnSquish
+        /// asks the assist before it calls Die. The seeker is spared by nothing, which is also
+        /// the game's answer, and it is hostile, so it keeps it. Their sub-pixel remainders are kept here rather than in
+        /// them, one entry per thing being carried, because riding a window is a desktop
+        /// arrangement and not something a Celeste entity knows about itself.
+        /// </remarks>
+        readonly Dictionary<object, PointF> rideRemainders = new Dictionary<object, PointF>();
+
+        void SweepEntities(List<Solid> solids, IntPtr window, float dx, float dy, bool teleported)
+        {
+            foreach (Solid piece in solids)
+            {
+                if (piece.Id != window) continue;
+                foreach (Glider glider in gliders)
+                {
+                    if (glider.IsHeld || glider.BeingDragged) continue;
+                    var at = glider.Pos;
+                    if (Carry(glider, piece, ref at, Glider.HalfWidth, 0f, dx, dy))
+                        { glider.Pos = at; continue; }
+                    if (teleported) continue;
+                    // Pushed like everything else, and never squished: what it cannot be
+                    // pushed clear of, it sits inside until it drifts out.
+                    ActorSweep.Push(solids, ref at, Glider.HalfWidth, -Glider.ColliderHeight,
+                        0f, piece, dx, dy);
+                    glider.Pos = at;
+                }
+                foreach (TheoCrystal theo in theos)
+                {
+                    if (theo.IsHeld || theo.BeingDragged || theo.Removed || theo.IsDying) continue;
+                    var at = theo.Pos;
+                    if (Carry(theo, piece, ref at, TheoCrystal.HalfWidth, 0f, dx, dy))
+                        { theo.SnapIntoView(at); continue; }
+                    if (teleported) continue;
+                    if (!ActorSweep.Push(solids, ref at, TheoCrystal.HalfWidth,
+                        -TheoCrystal.ColliderHeight, 0f, piece, dx, dy) && !player.Invincible)
+                        theo.Crush();
+                    theo.SnapIntoView(at);
+                }
+                foreach (Seeker seeker in seekers)
+                {
+                    if (seeker.Removed) continue;
+                    var at = seeker.Pos;
+                    // A seeker's box is centred on its position rather than standing on it.
+                    if (Carry(seeker, piece, ref at, Seeker.HalfSize, Seeker.HalfSize, dx, dy))
+                        { seeker.Pos = at; continue; }
+                    if (teleported) continue;
+                    if (!ActorSweep.Push(solids, ref at, Seeker.HalfSize,
+                        -Seeker.HalfSize, Seeker.HalfSize, piece, dx, dy))
+                    {
+                        AddDeathBurst(seeker.Pos, Color.HotPink);
+                        seeker.Crush();
+                    }
+                    seeker.Pos = at;
+                }
+            }
+        }
+
+        /// <summary>Standing on it: carried whole pixels at a time, the fraction kept.</summary>
+        bool Carry(object entity, Solid piece, ref PointF pos, float halfWidth, float bottom,
+            float dx, float dy)
+        {
+            if (!ActorSweep.RidingOn(piece, pos, halfWidth, bottom)) return false;
+            rideRemainders.TryGetValue(entity, out PointF carried);
+            carried = new PointF(carried.X + dx, carried.Y + dy);
+            int rideX = (int)Math.Round(carried.X, MidpointRounding.ToEven);
+            int rideY = (int)Math.Round(carried.Y, MidpointRounding.ToEven);
+            rideRemainders[entity] = new PointF(carried.X - rideX, carried.Y - rideY);
+            pos = new PointF(pos.X + rideX, pos.Y + rideY);
+            return true;
+        }
+
         /// <summary>A window the poll kept: its frame, and whether it may be stood on.</summary>
         readonly struct PolledWindow
         {
@@ -1857,13 +2019,15 @@ namespace DeskMadeline
             }
         }
 
-        void PollSolids()
+        /// <summary>
+        /// Which windows there are, in front-to-back order. The expensive half of a poll: it
+        /// walks every top-level window and asks the shell about each one, so it runs a few
+        /// times a second rather than every frame. What it finds is kept in polledWindows and
+        /// re-measured by RebuildSolids in between.
+        /// </summary>
+        void EnumerateWindows()
         {
-            float s = GameScale;
-            var cur = new Dictionary<IntPtr, Win32.RECT>();
             IntPtr self = Handle;
-
-            // EnumWindows enumerates top-to-bottom Z-order (front→back); keep order for front-window occlusion of rear windows
             var zorder = new List<PolledWindow>();
 
             Win32.EnumWindows((hwnd, _) =>
@@ -1887,10 +2051,48 @@ namespace DeskMadeline
                 bool isPlatform = !(ignoreMaximizedWindows && IsMaximizedOrFullscreen(hwnd, r));
                 // Only platforms are tracked between polls; the ride-along follows the window
                 // underfoot, and nothing can be standing on one of these.
-                if (isPlatform) cur[hwnd] = r;
                 zorder.Add(new PolledWindow(hwnd, r, isPlatform));
                 return true;
             }, IntPtr.Zero);
+            polledWindows = zorder;
+            // Which windows there are, and in what order they stack, has just been decided
+            // afresh. Neither shows up as a rectangle moving -- bringing a window to the front
+            // changes what occludes what while every rectangle stays exactly where it was --
+            // so the geometry has to be rebuilt whether or not anything moved.
+            windowsChanged = true;
+        }
+
+        /// <summary>The windows the last enumeration kept, in front-to-back order.</summary>
+        List<PolledWindow> polledWindows = new List<PolledWindow>();
+        bool windowsChanged = true;
+
+        /// <summary>
+        /// Where those windows are now, and everything that follows from it: the platforms she
+        /// stands on, the ride-along, and being pushed by whatever moved. The cheap half, so it
+        /// runs every frame -- a drag is 60Hz or better, and at four samples a second the pet
+        /// saw a window cross half the screen between one look and the next, which is no longer
+        /// a push but a teleport.
+        /// </summary>
+        void RebuildSolids(float dt)
+        {
+            float s = GameScale;
+            var cur = new Dictionary<IntPtr, Win32.RECT>();
+            var zorder = new List<PolledWindow>(polledWindows.Count);
+            bool moved = false;
+            foreach (PolledWindow window in polledWindows)
+            {
+                if (!Win32.TryGetWindowRect(window.Handle, out var now)) { moved = true; continue; }
+                if (window.IsPlatform) cur[window.Handle] = now;
+                zorder.Add(new PolledWindow(window.Handle, now, window.IsPlatform));
+                if (!moved && (now.Left != window.Rect.Left || now.Top != window.Rect.Top ||
+                    now.Right != window.Rect.Right || now.Bottom != window.Rect.Bottom))
+                    moved = true;
+            }
+            // Asking where every window is costs a call each; working out what that means costs
+            // rather more, and on a still desktop it would mean the same thing every frame.
+            if (!moved && !windowsChanged) return;
+            polledWindows = zorder;
+            windowsChanged = false;
 
             // Build platforms (game units): keep only hollow window borders; front (higher Z) windows
             // subtract their full rect from rear borders so covered segments no longer collide.
@@ -1991,33 +2193,27 @@ namespace DeskMadeline
                 }
             }
 
-            // Ride-along: follow the window underfoot when it moves.  Only whole game pixels
-            // reach Pos; the sub-pixel part is carried in a remainder the way
-            // Actor.movementCounter carries one, so a slow window drag is not rounded away.
+            // The world she is about to be moved around in is this one, so hand it over before
+            // moving her in it. Being pushed asks what is in the way, and asking the last
+            // frame's list means asking where the border used to be -- which for a window
+            // being dragged upwards is below where it is now, so the step that should have
+            // been blocked was allowed, and she was left inside a border that had already
+            // risen past her. Inside is where a solid stops holding her up.
+            player.Solids = solids;
+            player.Waters = waters;
+
+            // The window underfoot moved: she goes with it. Player.RideAlong keeps the
+            // fraction that will not fit in a whole game pixel.
             if (player.GroundId != IntPtr.Zero && player.GroundId != FloorId &&
                 lastRects.TryGetValue(player.GroundId, out var oldR) &&
                 cur.TryGetValue(player.GroundId, out var newR))
-            {
-                if (player.GroundId != rideAlongId)
-                {
-                    rideAlongId = player.GroundId;
-                    rideAlongRemainder = PointF.Empty;
-                }
-                rideAlongRemainder = new PointF(
-                    rideAlongRemainder.X + (newR.Left - oldR.Left) / s,
-                    rideAlongRemainder.Y + (newR.Top - oldR.Top) / s);
-                int rideX = (int)Math.Round(rideAlongRemainder.X, MidpointRounding.ToEven);
-                int rideY = (int)Math.Round(rideAlongRemainder.Y, MidpointRounding.ToEven);
-                rideAlongRemainder = new PointF(rideAlongRemainder.X - rideX, rideAlongRemainder.Y - rideY);
-                if (rideX != 0 || rideY != 0)
-                    player.Pos = new PointF(player.Pos.X + rideX, player.Pos.Y + rideY);
-            }
-            else rideAlongId = IntPtr.Zero;
+                player.RideAlong((newR.Left - oldR.Left) / s, (newR.Top - oldR.Top) / s);
+            else player.EndRide();
+
+            PushOutOfMovedWindows(solids, cur, dt);
 
             lastRects.Clear();
             foreach (var kv in cur) lastRects[kv.Key] = kv.Value;
-            player.Solids = solids;
-            player.Waters = waters;
         }
 
         void ApplyEdgeWrap(PointF previous)
@@ -2330,8 +2526,13 @@ namespace DeskMadeline
                 }
             }
             seekerParticles.AppendPointStamps(trailStamps, ref trailCount, seekerParticleBitmaps);
+            burstScratch.Clear();
+            AppendDeathBursts(1f / 60f, trailStamps, ref trailCount, burstScratch);
             if (hitboxesEnabled) AppendActorDebugStamps(ref trailCount);
             presenter.Present(small, left, top, trailStamps, trailCount, foregroundStart);
+            // Present uploads what it was given, so the burst frames can go now.
+            foreach (Bitmap burst in burstScratch) burst.Dispose();
+            burstScratch.Clear();
 
             // The entity windows are placed on whole game pixels rather than at the precision
             // their positions carry, so that they line up with the sprite the presenter draws
@@ -2470,16 +2671,9 @@ namespace DeskMadeline
             foreach (TheoCrystal theo in theos)
             {
                 if (theo.Removed) continue;
-                if (theo.IsDying)
-                {
-                    // TheoCrystal.Die hides the sprite and leaves a DeathEffect in forest
-                    // green -- the burst Madeline dies in, which DrawDeathEffect already
-                    // draws.  A loose crystal is otherwise presented as its own stamp, but
-                    // the burst belongs on the canvas with every other effect, so it is drawn
-                    // here whether he was being carried or not.
-                    DrawDeathEffect(g, camX, camY, theo.DeathPosition, Color.ForestGreen, theo.DeathPercent);
-                    continue;
-                }
+                // A breaking crystal is a burst rather than a sprite, and the burst is a stamp:
+                // see AppendDeathBursts, which puts it in the world rather than on the canvas.
+                if (theo.IsDying) continue;
                 if (heldOnly && !theo.IsHeld) continue;
                 Bitmap frame = Sprites.Get(theo.FrameId, true);
                 if (frame == null) continue;
@@ -2506,6 +2700,78 @@ namespace DeskMadeline
             g.DrawImage(frame, -16f, -32f, 32f, 32f);
             g.Restore(state);
         }
+
+        /// <summary>A burst left behind by something that is already gone.</summary>
+        /// <remarks>
+        /// Vanilla adds the DeathEffect to an entity of its own and removes the seeker at once,
+        /// so nothing of it is left to be collided with while the burst plays. The same here,
+        /// and for the same reason: a seeker that lingered for the duration of its own death
+        /// would still be solid, still dangerous, and still in the way.
+        ///
+        /// They are drawn as stamps rather than onto the canvas because the canvas is a
+        /// thousand pixels wide and anchored to Madeline, and a seeker crushed at the far end
+        /// of the desktop is a long way outside it. Her own death effect stays on the canvas,
+        /// the canvas being centred on her by definition.
+        /// </remarks>
+        sealed class DeathBurst
+        {
+            public PointF Pos;
+            public Color Colour;
+            public float Age;
+        }
+
+        readonly List<DeathBurst> deathBursts = new List<DeathBurst>();
+        const float DeathBurstDuration = 0.834f;    // DeathEffect.Duration
+
+        void AddDeathBurst(PointF pos, Color colour)
+            => deathBursts.Add(new DeathBurst { Pos = pos, Colour = colour });
+
+        /// <summary>Age the bursts, and hand each one to the presenter as its own stamp.</summary>
+        void AppendDeathBursts(float dt, TrailStamp[] stamps, ref int count, List<Bitmap> scratch)
+        {
+            for (int i = deathBursts.Count - 1; i >= 0; i--)
+            {
+                deathBursts[i].Age += dt;
+                if (deathBursts[i].Age >= DeathBurstDuration) deathBursts.RemoveAt(i);
+            }
+            foreach (DeathBurst burst in deathBursts)
+            {
+                if (count >= stamps.Length) break;
+                Bitmap bitmap = MakeBurst(burst.Colour, Math.Min(1f, burst.Age / DeathBurstDuration),
+                    burst.Pos);
+                stamps[count++] = new TrailStamp(bitmap, burst.Pos.X, burst.Pos.Y, 1f);
+                scratch.Add(bitmap);
+            }
+            // The crystal keeps its own burst, vanilla leaving it alive with its sprite hidden
+            // rather than removing it, but it is drawn the same way and for the same reason.
+            foreach (TheoCrystal theo in theos)
+            {
+                if (!theo.IsDying || count >= stamps.Length) continue;
+                Bitmap bitmap = MakeBurst(Color.ForestGreen, theo.DeathPercent, theo.DeathPosition);
+                stamps[count++] = new TrailStamp(bitmap, theo.DeathPosition.X, theo.DeathPosition.Y, 1f);
+                scratch.Add(bitmap);
+            }
+        }
+
+        /// <summary>One frame of a burst, on a canvas of its own to be stamped into the world.</summary>
+        Bitmap MakeBurst(Color colour, float percent, PointF at)
+        {
+            var bitmap = new Bitmap(DeathBurstSize, DeathBurstSize, PixelFormat.Format32bppPArgb);
+            using (var g = Graphics.FromImage(bitmap))
+            {
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.SmoothingMode = SmoothingMode.None;
+                // Centred by putting the camera half a stamp up and to the left of it.
+                DrawDeathEffect(g, at.X - DeathBurstSize / 2f, at.Y - DeathBurstSize / 2f,
+                    at, colour, percent);
+            }
+            return bitmap;
+        }
+
+        /// <summary>Wide enough for the burst at full spread: radius 24 plus a 10px blob.</summary>
+        const int DeathBurstSize = 64;
+        readonly List<Bitmap> burstScratch = new List<Bitmap>();
 
         Bitmap GetGliderStamp(Glider glider)
         {

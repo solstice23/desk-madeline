@@ -25,6 +25,7 @@ namespace DeskMadeline
         public bool SlowRun => false;
         public bool SlowFall => true;
         public bool BeingDragged { get; private set; }
+
         public string FrameId { get; private set; } = "glider/idle0";
         public float Rotation { get; private set; }
         public float ScaleX { get; private set; } = 1f;
@@ -310,7 +311,7 @@ namespace DeskMadeline
                 {
                     counter.Y = 0f;
                     if (held) Speed.Y = 0f;   // held, not hit
-                    else OnCollideV();
+                    else OnCollideV(CollidesAt(Pos.X, Pos.Y, solids));
                     return;
                 }
                 Pos.Y += sign;
@@ -328,9 +329,16 @@ namespace DeskMadeline
             ScaleY = 1.2f;
         }
 
-        void OnCollideV()
+        /// <param name="embedded">
+        /// Whether it is inside something as it lands. A jellyfish wedged in a window that
+        /// closed on it rests on the floor without ever counting as grounded -- the ground test
+        /// refuses while it is inside anything -- so gravity rebuilds and it strikes the floor
+        /// again every time it passes eight a second. Once is a landing; the rest are the same
+        /// landing, and neither the sound nor the squash belongs to them.
+        /// </param>
+        void OnCollideV(bool embedded = false)
         {
-            if (Math.Abs(Speed.Y) > 8f)
+            if (Math.Abs(Speed.Y) > 8f && !embedded)
             {
                 ScaleX = 1.2f;
                 ScaleY = 0.8f;

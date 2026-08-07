@@ -2149,6 +2149,240 @@ namespace DeskMadeline
             return false;
         }
 
+        // ===== Being pushed by something that moves =====
+        // Solid.MoveHExact does two things to the actors around it: it carries the ones riding
+        // it, and it pushes the ones it is moving into, handing each a squish callback. The
+        // first of those is PetWindow's ride-along. This is the second.
+
+        /// <summary>
+        /// A solid has moved into her and she must give way. Steps a pixel at a time like
+        /// Actor.MoveHExact, and squishes her against whatever stops her, as vanilla does by
+        /// passing SquishCallback to the same call.
+        /// </summary>
+        /// <returns>False if the push ended in a crush.</returns>
+        public bool PushH(int amount, Solid pusher)
+        {
+            int sign = Math.Sign(amount);
+            for (int i = 0; i < Math.Abs(amount); i++)
+            {
+                if (!StepBlocked(sign, 0)) { Pos.X += sign; continue; }
+                return OnSquish(pusher);
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Solid.MoveHExact's first half: the window underfoot moves, and she goes with it.
+        /// The original desktop mechanic, and the older of the two things a moving window does
+        /// to her -- this one has been here since before anything was pushed by anything.
+        /// </summary>
+        /// <remarks>
+        /// Only whole game pixels reach her position; the fraction is carried the way
+        /// Actor.movementCounter carries one, so a slow drag is not rounded away to nothing.
+        /// The fraction is also why the push must still look at the window she is riding: what
+        /// is held back here leaves her a sliver inside its border, and inside is where a solid
+        /// stops holding her up.
+        /// </remarks>
+        public void RideAlong(float dx, float dy)
+        {
+            if (GroundId != rideAlongId)
+            {
+                rideAlongId = GroundId;
+                rideRemainder = PointF.Empty;
+            }
+            rideRemainder = new PointF(rideRemainder.X + dx, rideRemainder.Y + dy);
+            int rideX = (int)Math.Round(rideRemainder.X, MidpointRounding.ToEven);
+            int rideY = (int)Math.Round(rideRemainder.Y, MidpointRounding.ToEven);
+            rideRemainder = new PointF(rideRemainder.X - rideX, rideRemainder.Y - rideY);
+            if (rideX != 0 || rideY != 0) Pos = new PointF(Pos.X + rideX, Pos.Y + rideY);
+        }
+
+        /// <summary>She is riding nothing; the next ride starts its fraction afresh.</summary>
+        public void EndRide() => rideAlongId = IntPtr.Zero;
+
+        IntPtr rideAlongId;
+        PointF rideRemainder;
+
+        /// <summary>Whether she is inside anything where she stands.</summary>
+        public bool CollidesHere => CollideAt(Pos.X, Pos.Y);
+
+        /// <summary>Whether she would be inside anything standing there.</summary>
+        public bool CollidesAt(float x, float y) => CollideAt(x, y);
+
+        /// <summary>
+        /// A solid that has just moved by (dx, dy) and now covers her. Decides whether that is
+        /// a push at all, and if it is, shoves her no further than the solid itself travelled.
+        /// </summary>
+        /// <remarks>
+        /// Celeste can shove an actor until it is clear of the solid, because an actor is never
+        /// inside one to begin with: the most it is ever overlapping by is the distance the
+        /// solid moved this frame. Neither holds here. A window can arrive around her, and it
+        /// can arrive from the far side of the screen between two polls, and clearing it from
+        /// the middle would mean throwing her the width of the window.
+        ///
+        /// So one limit: a solid never moves her further than it moved itself. A window
+        /// sweeping into her keeps her flush against it, one frame at a time; a window that
+        /// lands partly on her carries her the rest of the way over the frames that follow;
+        /// and one she is standing inside drags her along as it goes, which is what a solid
+        /// sweeping through a space does to what is in it.
+        ///
+        /// An earlier version asked instead whether she was inside the solid before it moved,
+        /// and left her alone if she was. That reads well and is wrong: a push that does not
+        /// quite clear her leaves her inside, so every frame after the first was skipped and
+        /// the window walked through her.
+        /// </remarks>
+        /// <returns>False if the push ended in a crush.</returns>
+        public bool SweptInto(Solid solid, float dx, float dy)
+        {
+            if (!OverlapsHitbox(solid)) return true;
+
+            if (dx != 0f)
+            {
+                int want = ClearanceX(solid, Math.Sign(dx));
+                int room = (int)Math.Ceiling(Math.Abs(dx));
+                if (!PushH(Math.Sign(want) * Math.Min(Math.Abs(want), room), solid)) return false;
+            }
+            if (dy != 0f)
+            {
+                int want = ClearanceY(solid, Math.Sign(dy));
+                int room = (int)Math.Ceiling(Math.Abs(dy));
+                if (!PushV(Math.Sign(want) * Math.Min(Math.Abs(want), room), solid)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Whether her hitbox is inside this solid.</summary>
+        public bool OverlapsHitbox(Solid solid)
+        {
+            HitboxAt(Pos.X, Pos.Y, out float l, out float t, out float r, out float b);
+            return Overlap(l, t, r, b, solid);
+        }
+
+        /// <summary>How far along X she must go to be clear of it, pushed the way it moved.</summary>
+        public int ClearanceX(Solid solid, int direction)
+        {
+            HitboxAt(Pos.X, Pos.Y, out float l, out float t, out float r, out float b);
+            return direction > 0 ? (int)Math.Ceiling(solid.R - l) : -(int)Math.Ceiling(r - solid.L);
+        }
+
+        /// <summary>The same for Y.</summary>
+        public int ClearanceY(Solid solid, int direction)
+        {
+            HitboxAt(Pos.X, Pos.Y, out float l, out float t, out float r, out float b);
+            return direction > 0 ? (int)Math.Ceiling(solid.B - t) : -(int)Math.Ceiling(b - solid.T);
+        }
+
+        /// <summary>
+        /// Set her down in the nearest free spot, without crushing her: what a window that
+        /// jumped rather than moved gets, there being no shove to speak of. The search widens
+        /// well past the squish wiggle, since a teleport can leave her deep inside something.
+        /// </summary>
+        public void DisplaceOutOfSolids()
+        {
+            if (!CollideAt(Pos.X, Pos.Y)) return;
+            // Nearest first, and nearest means nearest: the squish wiggle walks its offsets in
+            // a fixed order that would take a twenty pixel drop over a one pixel sidestep, and
+            // at this range that is the difference between being nudged aside and being thrown.
+            for (int radius = 1; radius <= DisplaceReach; radius++)
+                for (int x = -radius; x <= radius; x++)
+                    for (int y = -radius; y <= radius; y++)
+                    {
+                        if (Math.Max(Math.Abs(x), Math.Abs(y)) != radius) continue;
+                        if (CollideAt(Pos.X + x, Pos.Y + y)) continue;
+                        Pos = new PointF(Pos.X + x, Pos.Y + y);
+                        return;
+                    }
+            // Nowhere within reach: leave her where she is rather than kill her for it. She is
+            // inside something and can walk out, which is what she could always do.
+        }
+
+        /// <summary>
+        /// How far a displacement may carry her. A window border is a few pixels thick, so
+        /// stepping out of one is a small move; the rest of the room is for the odd wide frame.
+        /// Beyond this she is left alone, because moving her further than she can see herself
+        /// move is worse than leaving her standing in a window.
+        /// </summary>
+        const int DisplaceReach = 12;
+
+        /// <summary>The same, vertically.</summary>
+        public bool PushV(int amount, Solid pusher)
+        {
+            int sign = Math.Sign(amount);
+            for (int i = 0; i < Math.Abs(amount); i++)
+            {
+                if (!StepBlocked(0, sign)) { Pos.Y += sign; continue; }
+                return OnSquish(pusher);
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Whether one pixel that way is into something. A solid she is already inside does not
+        /// count, which is the rule MoveHExact uses: being pushed out of the thing pushing her
+        /// is the whole point, and only a second solid can stop it.
+        /// </summary>
+        bool StepBlocked(int dx, int dy)
+        {
+            HitboxAt(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
+            HitboxAt(Pos.X + dx, Pos.Y + dy, out float l, out float t, out float r, out float b);
+            foreach (var s in Solids)
+            {
+                if (!Overlap(l, t, r, b, s)) continue;
+                if (!Overlap(l0, t0, r0, b0, s)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Player.OnSquish: duck out of it, wiggle out of it, or die. Ducking is tried first
+        /// and only when she is not already ducking or climbing; then every offset within
+        /// three pixels across and five up or down; and only then is she crushed.
+        /// </summary>
+        /// <returns>False if she was crushed.</returns>
+        bool OnSquish(Solid pusher)
+        {
+            bool ducked = false;
+            if (!Ducking && State != StClimb)
+            {
+                ducked = true;
+                Ducking = true;
+                if (!CollideAt(Pos.X, Pos.Y)) return true;
+            }
+            if (TrySquishWiggle())
+            {
+                if (ducked && CanUnDuck) Ducking = false;
+                return true;
+            }
+            if (ducked) Ducking = false;
+            // A Celeste room reload puts her back at the map's spawn; a desktop has none, so
+            // every death here has to say where she comes back. Without this a crush reuses
+            // whatever position was last reset to, which is wherever she happened to start.
+            PointF centre = new PointF((pusher.L + pusher.R) / 2f, (pusher.T + pusher.B) / 2f);
+            PointF away = new PointF(Pos.X - centre.X, Pos.Y - 5f - centre.Y);
+            if (away.IsEmpty) away = new PointF(0f, -1f);
+            deathRespawnPos = FindNearbySafeRespawn(centre, away);
+            Die(PointF.Empty);
+            return false;
+        }
+
+        /// <summary>Actor.TrySquishWiggle: the first free spot within three across, five down.</summary>
+        bool TrySquishWiggle(int wiggleX = 3, int wiggleY = 5)
+        {
+            for (int x = 0; x <= wiggleX; x++)
+                for (int y = 0; y <= wiggleY; y++)
+                {
+                    if (x == 0 && y == 0) continue;
+                    for (int sx = 1; sx >= -1; sx -= 2)
+                        for (int sy = 1; sy >= -1; sy -= 2)
+                            if (!CollideAt(Pos.X + x * sx, Pos.Y + y * sy))
+                            {
+                                Pos = new PointF(Pos.X + x * sx, Pos.Y + y * sy);
+                                return true;
+                            }
+                }
+            return false;
+        }
+
         // ===== Swim state =====
         // Player.SwimBegin/SwimUpdate. Vanilla's numbers, in the order it applies them:
         // rise 60/s while neutral, 80/s under steering (60 while fully under), approached at

@@ -41,6 +41,20 @@ namespace DeskMadeline
         public readonly Queue<SeekerParticleEvent> ParticleEvents = new Queue<SeekerParticleEvent>();
         public readonly List<SeekerTrail> Trails = new List<SeekerTrail>();
         public bool Removed { get; private set; }
+
+        /// <summary>
+        /// Squished with nowhere to wiggle to. Seeker sets its own SquishCallback rather than
+        /// taking the Actor default: its own sound, and gone at once. The burst it leaves is
+        /// not part of it -- vanilla adds a separate entity to carry the DeathEffect and calls
+        /// RemoveSelf immediately, so nothing of the seeker is left to be collided with while
+        /// the burst plays. PetWindow owns the burst here for the same reason.
+        /// </summary>
+        public void Crush()
+        {
+            if (Removed) return;
+            Removed = true;
+            SoundEvents.Enqueue(new PlayerSoundEvent("event:/game/05_mirror_temple/seeker_death"));
+        }
         public bool BeingDragged { get; private set; }
 
         readonly Animator animator;

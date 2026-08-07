@@ -58,7 +58,13 @@ static class TheoChecks
 
         Check("he breaks rather than vanishing", everDying);
         Check("the death sound plays at the crystal", sounds.Contains("death"));
-        Check("the player dies with him", player.IsDead || player.IsRespawning);
+        // Vanilla's TheoCrystal.Die calls Die on the player first, because in Celeste losing
+        // the crystal means restarting the room and killing her is how a room restarts. A
+        // desktop has no rooms, and him dropping off the bottom of the screen is no reason for
+        // her to die wherever she happens to be standing, so here he goes alone. Deliberate,
+        // and pinned so that it stays a decision rather than becoming a regression.
+        Check("and he goes alone, unlike the game, there being no room to restart",
+            !player.IsDead && !player.IsRespawning);
         Check("the burst runs forward, not backwards", monotonic);
         Check("he is gone once it finishes", theo.Removed && lastPercent >= 1f);
         // One DeathEffect.Duration at 60Hz, plus the frame that started it.
