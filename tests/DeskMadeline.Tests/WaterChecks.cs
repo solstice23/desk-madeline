@@ -153,6 +153,24 @@ static class WaterChecks
             jelly.Pos.Y > before + 20f);
 
         Console.WriteLine();
+        Console.WriteLine("  Carrying something into it");
+        // Picked up above the water, then carried into it, which is how it happens: pickup
+        // lives in the normal state, as it does in vanilla, and swimming never offers it.
+        var carrying = InPool(Surface - 40f);
+        var carried = new Glider(new PointF(0f, Surface - 40f));
+        carrying.Holdables = new List<IPetHoldable> { carried };
+        carrying.Update(Dt, new PetInput { GrabHeld = true });
+        Check("she picks a jellyfish up out of the water", carrying.Holding != null);
+        for (int i = 0; i < 120 && carrying.State != 3; i++)
+        {
+            carrying.Update(Dt, new PetInput { GrabHeld = true });
+            carried.Update(Dt, new PetInput(), carrying.Solids, -100000f, 100000f);
+        }
+        Check("and swims with it in hand", carrying.State == 3 && carrying.Holding != null);
+        Run(carrying, new PetInput { MoveY = 1 }, 2);      // let go of grab, holding down
+        Check("and can let go of it while swimming", carrying.Holding == null);
+
+        Console.WriteLine();
         Console.WriteLine("  Grab, at the edge of a pool");
         var wall = new Solid { Id = new IntPtr(9), L = 4f, T = Surface - 100f, R = 100f, B = 0f };
         var states = new List<int>();

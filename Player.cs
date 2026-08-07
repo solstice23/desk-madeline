@@ -1641,11 +1641,7 @@ namespace DeskMadeline
                 return;
             }
 
-            if (Holding != null && !input.GrabHeld && minHoldTimer <= 0f)
-            {
-                if (input.MoveY == 1) DropGlider();
-                else ThrowGlider();
-            }
+            TryReleaseHoldable(input);
 
             // Duck / stand
             if (Holding != null)
@@ -2163,6 +2159,24 @@ namespace DeskMadeline
         const float SwimReduce = 400f;
         const float SwimDashSpeedMult = 0.75f;
 
+        /// <summary>Letting go of a carried jellyfish or crystal: put down, or thrown.</summary>
+        /// <remarks>
+        /// Vanilla has one Throw() and it is inside NormalUpdate, so letting go while swimming
+        /// releases nothing there either -- not a decision, an absence: Celeste never places
+        /// anything to carry near water, though mods do, and they inherit the same trap. On a
+        /// desktop the two meet the moment somebody drags a jellyfish into a window, and a hold
+        /// that cannot be let go of is a trap wherever it happens, so the rule is the same one,
+        /// asked from the swim state as well. Desktop-specific, by necessity rather than
+        /// preference.
+        /// </remarks>
+        bool TryReleaseHoldable(PetInput input)
+        {
+            if (Holding == null || input.GrabHeld || minHoldTimer > 0f) return false;
+            if (input.MoveY == 1) DropGlider();
+            else ThrowGlider();
+            return true;
+        }
+
         void SwimBegin()
         {
             if (Speed.Y > 0f) Speed.Y *= SwimYSpeedMult;
@@ -2179,6 +2193,8 @@ namespace DeskMadeline
                 State = BeginDash(input, crouchDash);
                 return;
             }
+
+            TryReleaseHoldable(input);
 
             bool underwater = SwimUnderwaterCheck();
             // Out of the water onto a wall, which is how a pool with a lip is left. Vanilla
