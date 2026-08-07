@@ -138,6 +138,38 @@ static class WaterChecks
         Check("falling above the water does not", airborne.Dashes == 0);
 
         Console.WriteLine();
+        Console.WriteLine("  What else is loose on the desktop");
+        // Only Player and CrushBlock carry a WaterInteraction in Celeste; the jellyfish, the
+        // crystal and the seeker have no water code at all and fall straight through it. That
+        // is a decision of the game's rather than an omission here, so it is pinned: giving
+        // them buoyancy would be inventing a mechanic, which AGENTS.md says not to do.
+        var jelly = new Glider(new PointF(0f, Surface - 20f));
+        var noSolids = new List<Solid>();
+        float before = jelly.Pos.Y;
+        for (int i = 0; i < 60; i++) jelly.Update(Dt, new PetInput(), noSolids, -100000f, 100000f);
+        // It drifts rather than falls -- that is what a jellyfish does -- so what is being
+        // asked is only that the water neither held it up nor slowed it.
+        Check($"a jellyfish drifts through water as if it were not there ({before:F0} to {jelly.Pos.Y:F0})",
+            jelly.Pos.Y > before + 20f);
+
+        Console.WriteLine();
+        Console.WriteLine("  Grab, at the edge of a pool");
+        var wall = new Solid { Id = new IntPtr(9), L = 4f, T = Surface - 100f, R = 100f, B = 0f };
+        var states = new List<int>();
+        var grabbing = InPool(Surface + 10f, wall);
+        grabbing.Facing = 1;
+        for (int i = 0; i < 40; i++)
+        {
+            grabbing.Update(Dt, new PetInput { GrabHeld = true });
+            states.Add(grabbing.State);
+        }
+        int swaps = 0;
+        for (int i = 1; i < states.Count; i++) if (states[i] != states[i - 1]) swaps++;
+        Console.WriteLine($"      states: {string.Join("", states)}  ({swaps} changes)");
+        Check($"holding grab beside a wall settles instead of flickering ({swaps} changes)",
+            swaps <= 2);
+
+        Console.WriteLine();
         Console.WriteLine("  Sounds");
         var splashing = InPool(Surface - 40f);
         splashing.Speed = new PointF(0f, 200f);
