@@ -38,6 +38,24 @@ namespace DeskMadeline
             }
         }
 
+        /// <summary>
+        /// Binding.Pressed for the pad half: any one bound button going down counts, even while
+        /// another bound to the same action is already held. The two readings are handed in
+        /// rather than remembered here, since the poll already keeps them.
+        /// </summary>
+        public bool Pressed(PadState state, PadState before, PetAction action, float threshold)
+        {
+            if (!state.Connected) return false;
+            lock (sync)
+            {
+                var binding = buttons[action];
+                for (int i = 0; i < binding.Length; i++)
+                    if (binding[i] != PadButton.None && state.Check(binding[i], threshold) &&
+                        !before.Check(binding[i], threshold)) return true;
+                return false;
+            }
+        }
+
         public PadButton[] Get(PetAction action)
         {
             lock (sync) return (PadButton[])buttons[action].Clone();

@@ -25,6 +25,11 @@ adding an assertion, and what these need is a fixed timestep and vanilla's const
 | `EntityDreamChecks.cs` | A crystal, jelly or seeker dropped inside a dream block is held there, while a window border still lets it go |
 | `TheoChecks.cs` | How the Theo crystal breaks: the death sound, the forest-green burst, and being gone once it finishes |
 | `DreamHyperChecks.cs` | The dream hyper, and the crouch on the way in that decides whether it lands as a hyper or a super |
+| `PushChecks.cs` | A window edge arriving where she stands: the push, the crush at every drag speed, where a crush puts her back, and the same for the crystal, the jelly and the seeker |
+| `WaterChecks.cs` | Swimming, when the windows are water: the speeds, the surface, the dash refill, and what a held crystal does down there |
+| `MoonChecks.cs` | Windows as moon blocks: the drift, the sink under whoever rides one, the shove from a dash, a home that survives being dragged, and her standing on and hanging off one |
+| `InputChecks.cs` | Three keys and three buttons to an action: any one of them going down is a press, held siblings or not |
+| `HairChecks.cs` | The hair table read out of the game's `Sprites.xml`, and which entries this port tunes away from it |
 | `SettingsChecks.cs` | Settings defaults on a fresh install, and an existing `settings.txt` still winning |
 | `SnapChecks.cs` | Snapping back onto the displays after a drag, including seams between mismatched monitors and each wrap axis |
 | `SoundBankChecks.cs` | Every event the port plays resolves in Celeste's banks (opt-in, see above) |

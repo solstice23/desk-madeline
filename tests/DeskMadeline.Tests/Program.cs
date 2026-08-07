@@ -25,6 +25,7 @@ static class Program
         failed += DreamHyperChecks.Run(); // the dream hyper, and the crouch that decides it
         failed += TheoChecks.Run();       // how the Theo crystal breaks
         failed += EntityDreamChecks.Run();// crystal, jelly and seeker dropped inside a block
+        failed += InputChecks.Run();     // bindings: three keys on an action, and what a press is
         failed += SettingsChecks.Run();   // settings defaults, and snapping back onto the displays
         failed += HairChecks.Run();      // the hair table, read from the game rather than copied
         failed += AtlasChecks.Run();      // sprites read out of an installed Celeste

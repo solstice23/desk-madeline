@@ -22,6 +22,9 @@ namespace DeskMadeline
     {
         readonly object sync = new object();
         readonly Dictionary<PetAction, int[]> keys = new Dictionary<PetAction, int[]>();
+        // Per key, not per action: see Poll.
+        readonly Dictionary<PetAction, bool[]> down = new Dictionary<PetAction, bool[]>();
+        readonly Dictionary<PetAction, bool[]> wasDown = new Dictionary<PetAction, bool[]>();
         readonly string path;
 
         public static readonly PetAction[] Actions =
@@ -34,20 +37,70 @@ namespace DeskMadeline
         public KeyBindings(string path)
         {
             this.path = path;
+            foreach (PetAction action in Actions)
+            {
+                down[action] = new bool[3];
+                wasDown[action] = new bool[3];
+            }
             ResetDefaults(save: false);
             Load();
         }
 
+        /// <summary>
+        /// One reading of the keyboard for the frame, as MInput.Update takes one: every bound
+        /// key, kept beside what it was the frame before.
+        /// </summary>
+        /// <remarks>
+        /// Each key is remembered separately rather than as one "is anything bound to this
+        /// down", because Binding.Pressed asks every key for its own edge -- hold one of the
+        /// keys bound to jump, press another, and Celeste jumps. Reading the whole binding as a
+        /// single button loses that: the button was already down, so nothing happened.
+        ///
+        /// It runs on every frame, including the ones where the pet is not listening, so that
+        /// a key held down while typing somewhere else is not a fresh press the moment the pet
+        /// is focused again.
+        /// </remarks>
+        public void Poll()
+        {
+            lock (sync)
+            {
+                foreach (PetAction action in Actions)
+                {
+                    int[] binding = keys[action];
+                    bool[] now = down[action], before = wasDown[action];
+                    for (int i = 0; i < binding.Length; i++)
+                    {
+                        before[i] = now[i];
+                        now[i] = binding[i] != 0 && ReadKey(binding[i]);
+                    }
+                }
+            }
+        }
+
+        /// <summary>Binding.Check: any of them down.</summary>
         public bool IsDown(PetAction action)
         {
             lock (sync)
             {
-                var binding = keys[action];
-                for (int i = 0; i < binding.Length; i++)
-                    if (binding[i] != 0 && Win32.KeyDown(binding[i])) return true;
+                bool[] now = down[action];
+                for (int i = 0; i < now.Length; i++) if (now[i]) return true;
                 return false;
             }
         }
+
+        /// <summary>Binding.Pressed: any of them going down, whether or not a sibling is held.</summary>
+        public bool Pressed(PetAction action)
+        {
+            lock (sync)
+            {
+                bool[] now = down[action], before = wasDown[action];
+                for (int i = 0; i < now.Length; i++) if (now[i] && !before[i]) return true;
+                return false;
+            }
+        }
+
+        /// <summary>Where the keyboard is read from; the checks hand it one they can drive.</summary>
+        internal Func<int, bool> ReadKey = Win32.KeyDown;
 
         public int[] Get(PetAction action)
         {

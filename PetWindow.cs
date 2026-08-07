@@ -75,7 +75,7 @@ namespace DeskMadeline
         int pollCounter;
 
         // Input state
-        bool prevJump, prevDash, prevCrouchDash;
+        PadState prevPad;
 
         // Dragging
         volatile bool dragging;
@@ -1548,13 +1548,15 @@ namespace DeskMadeline
                 (!InputWhenUnfocused && !IsPetInputWindow(Win32.GetForegroundWindow()));
             bool useKeys = InputEnabled && !blocked;
             bool usePad = PadInputEnabled && !blocked;
-            if (!useKeys && !usePad)
-            {
-                prevJump = prevDash = prevCrouchDash = false;
-                return input;
-            }
 
-            PadState pad = usePad ? XInputPad.Poll() : default;
+            // Read on every frame, gated or not, the way MInput.Update does: what is wanted from
+            // a gated frame is that it be remembered, so that a key still held when the pet is
+            // focused again is a key held rather than a key pressed.
+            bindings.Poll();
+            PadState pad = PadInputEnabled ? XInputPad.Poll() : default;
+            PadState padBefore = prevPad;
+            prevPad = pad;
+            if (!useKeys && !usePad) return input;
             // Keyboard bindings are digital, so the threshold only ever affects the controller;
             // it reproduces Celeste's per-virtual-input deadzones.
             bool Held(PetAction action, float threshold)
@@ -1587,14 +1589,19 @@ namespace DeskMadeline
             input.GrabHeld = grab;
             input.ElytraHeld = elytra;
 
-            if (jump && !prevJump) player.BufferJump();
+            // Binding.Pressed, which asks each bound key and button for its own edge rather than
+            // asking the binding as a whole: one of the keys bound to jump being held is no
+            // reason for another of them to do nothing.
+            bool Pressed(PetAction action, float threshold)
+                => (useKeys && bindings.Pressed(action))
+                || (usePad && padBindings.Pressed(pad, padBefore, action, threshold));
+
+            if (Pressed(PetAction.Jump, PadBindings.ButtonThreshold)) player.BufferJump();
             // Crouch Dash wins if both actions are pressed on the same frame, as it explicitly
             // requests the crouched dash path used for demos/hypers in Celeste.
-            if (crouchDash && !prevCrouchDash) player.BufferDash(crouchDash: true);
-            else if (dash && !prevDash) player.BufferDash();
-            prevJump = jump;
-            prevDash = dash;
-            prevCrouchDash = crouchDash;
+            if (Pressed(PetAction.CrouchDash, PadBindings.ButtonThreshold))
+                player.BufferDash(crouchDash: true);
+            else if (Pressed(PetAction.Dash, PadBindings.ButtonThreshold)) player.BufferDash();
 
             input.JumpPressed = player.HasJumpBuffer;
             input.DashPressed = player.HasDashBuffer;
