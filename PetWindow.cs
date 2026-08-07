@@ -146,10 +146,13 @@ namespace DeskMadeline
         int speedometerMode;
         bool hitboxesEnabled;
         // What the windows are made of: solid ledges, dream blocks, or water.
-        const int WindowsSolid = 0, WindowsDream = 1, WindowsWater = 2;
+        const int WindowsSolid = 0, WindowsDream = 1, WindowsWater = 2, WindowsMoon = 3;
         int windowMode;
         bool dreamBlockMode => windowMode == WindowsDream;
         bool waterMode => windowMode == WindowsWater;
+        /// <summary>Moon blocks are ordinary window borders that will not hold still.</summary>
+        bool moonMode => windowMode == WindowsMoon;
+        readonly MoonWindows moonWindows = new MoonWindows();
         volatile bool ignoreMaximizedWindows;   // read by the poll on the game-loop thread
         int edgeWrapMode;
         readonly List<RectangleF> monitorGameBounds = new List<RectangleF>();
@@ -2003,6 +2006,57 @@ namespace DeskMadeline
             return true;
         }
 
+        /// <summary>
+        /// Moon-block mode: hand every window to MoonWindows, along with which of them have
+        /// something standing on them and whether she has just dashed into one.
+        /// </summary>
+        /// <remarks>
+        /// A FloatySpaceBlock sinks under any rider, so anything standing on a window counts --
+        /// her, the crystal, the jellyfish, the seeker. The dash is asked here rather than in
+        /// Player because the block is the desktop's idea, not hers: vanilla routes it through
+        /// a DashCollision on the block itself, which is the same question asked from the other
+        /// side -- is she dashing into this thing right now.
+        /// </remarks>
+        void DriftMoonWindows(float dt, List<Solid> solids, List<PolledWindow> zorder)
+        {
+            var ridden = new HashSet<IntPtr>();
+            if (player.GroundId != IntPtr.Zero) ridden.Add(player.GroundId);
+            foreach (Solid piece in solids)
+            {
+                if (ridden.Contains(piece.Id)) continue;
+                foreach (Glider glider in gliders)
+                    if (!glider.IsHeld && ActorSweep.RidingOn(piece, glider.Pos, Glider.HalfWidth, 0f))
+                        ridden.Add(piece.Id);
+                foreach (TheoCrystal theo in theos)
+                    if (!theo.IsHeld && !theo.Removed &&
+                        ActorSweep.RidingOn(piece, theo.Pos, TheoCrystal.HalfWidth, 0f))
+                        ridden.Add(piece.Id);
+                foreach (Seeker seeker in seekers)
+                    if (!seeker.Removed &&
+                        ActorSweep.RidingOn(piece, seeker.Pos, Seeker.HalfSize, Seeker.HalfSize))
+                        ridden.Add(piece.Id);
+            }
+
+            // FloatySpaceBlock.OnDash: the window she dashed into takes a shove along the way
+            // the blow came. Player collects these where Celeste calls Solid.OnDashCollide --
+            // on the collision itself, so a dash that stops short of a border never counts.
+            foreach (DashCollision hit in player.DashCollisions)
+                moonWindows.Dashed(hit.Id, hit.Direction);
+
+            // Read fresh, and with GetWindowRect rather than the poll's DWM frame: this is the
+            // one place the pet writes a window's position instead of reading it, and it has to
+            // ask and answer in the same coordinates SetWindowPos uses. The poll is four times a
+            // second, which for something moved every frame would be far too stale anyway.
+            var info = new List<PolledWindowInfo>(zorder.Count);
+            foreach (PolledWindow window in zorder)
+            {
+                if (!window.IsPlatform) continue;
+                if (!Win32.GetWindowRect(window.Handle, out Win32.RECT raw)) continue;
+                info.Add(new PolledWindowInfo(window.Handle, raw, true));
+            }
+            moonWindows.Update(dt, GameScale, info, ridden);
+        }
+
         /// <summary>A window the poll kept: its frame, and whether it may be stood on.</summary>
         readonly struct PolledWindow
         {
@@ -2090,7 +2144,16 @@ namespace DeskMadeline
             }
             // Asking where every window is costs a call each; working out what that means costs
             // rather more, and on a still desktop it would mean the same thing every frame.
-            if (!moved && !windowsChanged) return;
+            if (!moved && !windowsChanged)
+            {
+                // Except that moon blocks keep a clock, and it has to tick on the frames where
+                // nothing moved as well -- they move in whole game pixels, so a bob spends five
+                // frames out of six holding still, and a clock that only ran when something had
+                // already moved would wind down and stop. The geometry is last frame's, which
+                // is exactly right: nothing moved.
+                if (moonMode) DriftMoonWindows(dt, player.Solids, zorder);
+                return;
+            }
             polledWindows = zorder;
             windowsChanged = false;
 
@@ -2211,6 +2274,8 @@ namespace DeskMadeline
             else player.EndRide();
 
             PushOutOfMovedWindows(solids, cur, dt);
+            if (moonMode) DriftMoonWindows(dt, solids, zorder);
+            else if (moonWindows.Active) moonWindows.Restore();
 
             lastRects.Clear();
             foreach (var kv in cur) lastRects[kv.Key] = kv.Value;
@@ -4035,7 +4100,8 @@ namespace DeskMadeline
             {
                 new KeyValuePair<int, string>(WindowsSolid, Loc.T("Windows.Solid")),
                 new KeyValuePair<int, string>(WindowsDream, Loc.T("Windows.DreamBlocks")),
-                new KeyValuePair<int, string>(WindowsWater, Loc.T("Windows.Water"))
+                new KeyValuePair<int, string>(WindowsWater, Loc.T("Windows.Water")),
+                new KeyValuePair<int, string>(WindowsMoon, Loc.T("Windows.MoonBlocks"))
             })
             {
                 int mode = option.Key;
@@ -4046,6 +4112,7 @@ namespace DeskMadeline
                 };
                 choice.Click += (_, __) =>
                 {
+                    if (windowMode == WindowsMoon && mode != WindowsMoon) moonWindows.Restore();
                     windowMode = mode;
                     pollCounter = 999;
                     SaveSettings();
@@ -4478,6 +4545,9 @@ namespace DeskMadeline
             // Wait for the game-loop thread to finish the current frame before releasing resources so the render thread is not still using GPU objects
             if (loopThread != null && loopThread != Thread.CurrentThread)
                 loopThread.Join(1500);
+            // Moon mode holds windows off their homes; leaving them there would be leaving the
+            // desk untidied. After the join, so the loop cannot drift them again afterwards.
+            moonWindows.Restore();
             soundEffects.Dispose();
             tray.Visible = false;
             tray.Dispose();

@@ -28,7 +28,7 @@ namespace DeskMadeline
         public int HairColor2 = 0xFF6DEF;
         public int SpeedometerMode;
         public bool HitboxesEnabled;
-        /// <summary>What the windows are: 0 solid, 1 dream blocks, 2 water.</summary>
+        /// <summary>What the windows are: 0 solid, 1 dream blocks, 2 water, 3 moon blocks.</summary>
         public int WindowMode;
         public bool IgnoreMaximizedWindows = true;
         public bool RespawnReversalEnabled = true;
@@ -88,7 +88,7 @@ namespace DeskMadeline
                 // turns back to ordinary windows on upgrade.
                 if (values.TryGetValue("WindowMode", out string windowMode) &&
                     int.TryParse(windowMode, out int windowModeValue))
-                    result.WindowMode = Math.Max(0, Math.Min(2, windowModeValue));
+                    result.WindowMode = Math.Max(0, Math.Min(3, windowModeValue));
                 else if (values.TryGetValue("DreamBlockMode", out string dreamBlocks) &&
                     bool.TryParse(dreamBlocks, out bool dreamBlocksValue) && dreamBlocksValue)
                     result.WindowMode = 1;

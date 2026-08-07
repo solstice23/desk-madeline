@@ -36,6 +36,22 @@ namespace DeskMadeline
         public bool ElytraHeld;
     }
 
+    /// <summary>
+    /// A solid she hit while dashing into it, and which way the hit came from -- Celeste's
+    /// Solid.OnDashCollide, which the block on the other end answers however it likes.
+    /// </summary>
+    /// <remarks>
+    /// The direction is the collision's own, one axis at a time, not the dash vector: a
+    /// diagonal dash into a wall reports the wall, sideways. It is what vanilla hands to
+    /// OnDashCollide, and what a floaty block shoves itself along.
+    /// </remarks>
+    public readonly struct DashCollision
+    {
+        public readonly IntPtr Id;
+        public readonly PointF Direction;
+        public DashCollision(IntPtr id, PointF direction) { Id = id; Direction = direction; }
+    }
+
     public readonly struct PlayerSoundEvent
     {
         public readonly string Path, Parameter;
@@ -146,6 +162,8 @@ namespace DeskMadeline
         public bool onGround;
         public IntPtr GroundId;
         public PointF DashDir;
+        /// <summary>What she dashed into this frame; read and emptied by whoever owns the solids.</summary>
+        public readonly List<DashCollision> DashCollisions = new List<DashCollision>();
         public IList<IPetHoldable> Holdables;
         public IPetHoldable Holding { get; private set; }
         public bool IsHoldingGlider => Holding is Glider;
@@ -739,6 +757,7 @@ namespace DeskMadeline
                 HitboxAt(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
                 HitboxAt(Pos.X + sign, Pos.Y, out float l, out float t, out float r, out float b);
                 bool blocked = false, held = false;
+                IntPtr hit = IntPtr.Zero;
                 foreach (var s in Solids)
                 {
                     if (!Overlap(l, t, r, b, s)) continue;
@@ -748,7 +767,7 @@ namespace DeskMadeline
                     // her as it does in Celeste, where Actor.MoveHExact tests the destination
                     // and nothing else -- being inside one is meant to be a trap, and a dash
                     // is always the way out of it.
-                    if (s.Dream || !inside) { blocked = true; held = inside; break; }
+                    if (s.Dream || !inside) { hit = s.Id; blocked = true; held = inside; break; }
                 }
                 if (blocked)
                 {
@@ -758,6 +777,11 @@ namespace DeskMadeline
                     // reporting one every frame she is in there would repeat its sound and its
                     // squash, and she is meant to simply sit in the block.  A dash reports as
                     // usual, because that is where the dream dash out of it begins.
+                    // Player.OnCollideH's first question, before anything of its own: was this a
+                    // dash into something that answers dashes, and along the dash. Whoever owns
+                    // the solid decides what that means; vanilla's floaty block takes a shove.
+                    if (DashAttacking && Math.Sign(DashDir.X) == sign && hit != IntPtr.Zero)
+                        DashCollisions.Add(new DashCollision(hit, new PointF(sign, 0f)));
                     if (held && !DashAttacking) Speed.X = 0f;
                     else OnCollideH(sign);
                     return; // Actor.MoveH discards the blocked movement remainder.
@@ -781,16 +805,19 @@ namespace DeskMadeline
                 HitboxAt(Pos.X, Pos.Y, out float l0, out float t0, out float r0, out float b0);
                 HitboxAt(Pos.X, Pos.Y + sign, out float l, out float t, out float r, out float b);
                 bool blocked = false, held = false;
+                IntPtr hit = IntPtr.Zero;
                 foreach (var s in Solids)
                 {
                     if (!Overlap(l, t, r, b, s)) continue;
                     bool inside = Overlap(l0, t0, r0, b0, s);
-                    if (s.Dream || !inside) { blocked = true; held = inside; break; }
+                    if (s.Dream || !inside) { hit = s.Id; blocked = true; held = inside; break; }
                 }
                 if (blocked)
                 {
                     counter.Y = 0;
                     if (!notifyCollision) return;
+                    if (DashAttacking && Math.Sign(DashDir.Y) == sign && hit != IntPtr.Zero)
+                        DashCollisions.Add(new DashCollision(hit, new PointF(0f, sign)));
                     // Held, not hit: see MoveHExact.  Without this she lands on the block she
                     // is sitting in every single frame, footstep and all.
                     if (held && !DashAttacking) Speed.Y = 0f;
@@ -1160,6 +1187,7 @@ namespace DeskMadeline
         // ===== Main update =====
         public void Update(float dt, PetInput input)
         {
+            DashCollisions.Clear();
             if (IsDead)
             {
                 if (IsPreDeath)
