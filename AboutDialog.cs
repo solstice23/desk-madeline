@@ -1,7 +1,6 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
-using System.Globalization;
 using System.Reflection;
 using System.Windows.Forms;
 
@@ -168,35 +167,18 @@ namespace DeskMadeline
         /// running" in a way a version number nobody bumps does not.
         /// </summary>
         /// <remarks>
-        /// Both are stamped in at build time by the StampCommit target; a build from a tree with
-        /// no git to ask has neither, and falls back to the assembly's version.
+        /// A build from a tree with no git to ask has neither, and falls back to the assembly's
+        /// version; see BuildStamp.
         /// </remarks>
         static string Version()
         {
-            var assembly = Assembly.GetExecutingAssembly();
-            string hash = Metadata(assembly, "CommitHash");
-            if (hash.Length > 0)
-            {
-                // Shown in the reader's own zone and format: the commit was made in somebody
-                // else's, and neither of those is the interesting part of it.
-                if (DateTimeOffset.TryParse(Metadata(assembly, "CommitDate"),
-                    CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTimeOffset made))
-                    return hash + "  ·  " + made.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
-                return hash;
-            }
+            if (BuildStamp.Known) return BuildStamp.Describe(BuildStamp.Commit, BuildStamp.Made);
 
+            var assembly = Assembly.GetExecutingAssembly();
             string version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
                 ?.InformationalVersion ?? assembly.GetName().Version?.ToString() ?? "";
             int build = version.IndexOf('+');          // the commit the SDK appends, if any
             return build > 0 ? version.Substring(0, build) : version;
-        }
-
-        static string Metadata(Assembly assembly, string key)
-        {
-            foreach (AssemblyMetadataAttribute attribute in
-                assembly.GetCustomAttributes<AssemblyMetadataAttribute>())
-                if (attribute.Key == key) return attribute.Value ?? "";
-            return "";
         }
     }
 }

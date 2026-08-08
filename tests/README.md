@@ -30,6 +30,7 @@ adding an assertion, and what these need is a fixed timestep and vanilla's const
 | `MoonChecks.cs` | Windows as moon blocks: the drift, the sink under whoever rides one, the shove from a dash, a home that survives being dragged, and her standing on and hanging off one |
 | `InputChecks.cs` | Three keys and three buttons to an action: any one of them going down is a press, held siblings or not |
 | `HairChecks.cs` | The hair table read out of the game's `Sprites.xml`, and which entries this port tunes away from it |
+| `UpdateChecks.cs` | Whether the build server's newest build is one this copy does not have, including a build made from work that was never pushed |
 | `SettingsChecks.cs` | Settings defaults on a fresh install, and an existing `settings.txt` still winning |
 | `SnapChecks.cs` | Snapping back onto the displays after a drag, including seams between mismatched monitors and each wrap axis |
 | `SoundBankChecks.cs` | Every event the port plays resolves in Celeste's banks (opt-in, see above) |

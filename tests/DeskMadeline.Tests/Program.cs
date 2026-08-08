@@ -26,6 +26,7 @@ static class Program
         failed += TheoChecks.Run();       // how the Theo crystal breaks
         failed += EntityDreamChecks.Run();// crystal, jelly and seeker dropped inside a block
         failed += InputChecks.Run();     // bindings: three keys on an action, and what a press is
+        failed += UpdateChecks.Run();    // whether the build server has a newer build
         failed += SettingsChecks.Run();   // settings defaults, and snapping back onto the displays
         failed += HairChecks.Run();      // the hair table, read from the game rather than copied
         failed += AtlasChecks.Run();      // sprites read out of an installed Celeste

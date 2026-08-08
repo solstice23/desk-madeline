@@ -4286,6 +4286,8 @@ namespace DeskMadeline
                 MessageBox.Show(
                     Loc.T("Help.ControlsBody"),
                     Loc.T("App.Title"), MessageBoxButtons.OK, MessageBoxIcon.Information));
+            var updateItem = new ToolStripMenuItem(Loc.T("Menu.CheckUpdate"), null,
+                (_, __) => CheckForUpdate());
             var aboutItem = new ToolStripMenuItem(Loc.T("Menu.About"), null, (_, __) => ShowAbout());
             var exitItem = new ToolStripMenuItem(Loc.T("Common.Exit"), null, (_, __) => ExitApp());
 
@@ -4311,7 +4313,7 @@ namespace DeskMadeline
             menu.Items.Add(new ToolStripSeparator());
             AddAll(menu, topItem, startupItem, languageItem);
             if (NeedsCelesteInstall) AddAll(menu, BuildCelesteMenu());
-            AddAll(menu, helpItem, aboutItem);
+            AddAll(menu, helpItem, updateItem, aboutItem);
             menu.Items.Add(new ToolStripSeparator());
             AddAll(menu, exitItem);
             return menu;
@@ -4341,6 +4343,22 @@ namespace DeskMadeline
         {
             using var about = new AboutDialog();
             about.ShowDialog();
+        }));
+
+        bool askingGitHub;
+
+        /// <summary>Ask the build server whether it has anything newer, and say so either way.</summary>
+        /// <remarks>
+        /// After the click has unwound, as ShowAbout is, since this puts up a modal dialog too.
+        /// The guard is against a second one behind the first: the menu closes on click, so
+        /// nothing about it says a dialog is already on its way.
+        /// </remarks>
+        void CheckForUpdate() => BeginInvoke(new Action(() =>
+        {
+            if (askingGitHub) return;
+            askingGitHub = true;
+            try { UpdateCheck.Ask(this); }
+            finally { askingGitHub = false; }
         }));
 
         /// <summary>
