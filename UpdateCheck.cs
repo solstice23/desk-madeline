@@ -87,8 +87,7 @@ namespace DeskMadeline
             }
         }
 
-        /// <summary>Shared with SelfUpdate, which fetches from the same host.</summary>
-        internal static readonly HttpClient Http = Client();
+        static readonly HttpClient Http = Client();
 
         static HttpClient Client()
         {

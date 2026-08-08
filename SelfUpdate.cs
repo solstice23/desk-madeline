@@ -32,6 +32,21 @@ namespace DeskMadeline
         /// <summary>Where the new build is put together, well away from the one in use.</summary>
         static string Work => Path.Combine(Path.GetTempPath(), "DeskMadeline-update");
 
+        /// <summary>
+        /// Its own, rather than the one the question was asked with: a timeout that suits asking
+        /// GitHub a question is not one that suits pulling a few megabytes down a slow line,
+        /// where the same fifteen seconds would cut the download off part way. Nothing here
+        /// waits forever regardless -- the cancel button ends it, and so does closing the dialog.
+        /// </summary>
+        static readonly HttpClient Http = Client();
+
+        static HttpClient Client()
+        {
+            var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+            client.DefaultRequestHeaders.Add("User-Agent", "DeskMadeline");
+            return client;
+        }
+
         /// <summary>Whether an update could be carried out at all from where this is running.</summary>
         public static bool Possible => !string.IsNullOrEmpty(Environment.ProcessPath);
 
@@ -71,7 +86,7 @@ namespace DeskMadeline
             string unpacked = Path.Combine(Work, "build");
             if (Directory.Exists(unpacked)) Directory.Delete(unpacked, true);
 
-            using (HttpResponseMessage response = await UpdateCheck.Http.GetAsync(
+            using (HttpResponseMessage response = await Http.GetAsync(
                 url, HttpCompletionOption.ResponseHeadersRead, cancel))
             {
                 response.EnsureSuccessStatusCode();
