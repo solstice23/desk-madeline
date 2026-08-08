@@ -4357,7 +4357,7 @@ namespace DeskMadeline
         {
             if (askingGitHub) return;
             askingGitHub = true;
-            try { UpdateCheck.Ask(this); }
+            try { UpdateCheck.Ask(this, ExitApp); }
             finally { askingGitHub = false; }
         }));
 

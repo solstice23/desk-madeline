@@ -82,11 +82,7 @@ jobs:
           $short = $env:GITHUB_SHA.Substring(0, 7)
           $committed = git log -1 --format=%cI
           $notes = @"
-          The build of master as it stands. Unzip it anywhere and run DeskMadeline.exe; it reads
-          Celeste's artwork and sounds from your own installed copy of the game, so it needs one.
-
-          This release is replaced by every push to master. The two lines below are how the pet's
-          own update check knows which build this is.
+          This is the latest nightly build of the project.
 
           commit: $env:GITHUB_SHA
           committed: $committed

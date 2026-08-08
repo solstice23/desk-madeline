@@ -100,6 +100,19 @@ static class UpdateChecks
         Check("and where to find it when the release has no file on it",
             UpdateCheck.Result.Found(Theirs, Noon, "p").Describe() == Loc.T("Update.OnThePage"));
 
+        Console.WriteLine();
+        Console.WriteLine("  What the download says as it comes down");
+        Check("kilobytes, out of how many, and the percentage between them",
+            new SelfUpdate.Fetched(524_288, 3_670_016).ToString() == "512 KB of 3,584 KB  ·  14%");
+        Check("nothing yet is nothing of the whole",
+            new SelfUpdate.Fetched(0, 3_670_016).ToString() == "0 KB of 3,584 KB  ·  0%");
+        Check("and all of it is all of it",
+            new SelfUpdate.Fetched(3_670_016, 3_670_016).ToString() == "3,584 KB of 3,584 KB  ·  100%");
+        // A server that will not say how big the file is leaves nothing to be a fraction of.
+        Check("a length nobody gave is left out rather than guessed",
+            new SelfUpdate.Fetched(524_288, 0).ToString() == "512 KB");
+        Check("and the bar has nowhere to be", new SelfUpdate.Fetched(524_288, 0).Percent == 0);
+
         return failed;
     }
 
