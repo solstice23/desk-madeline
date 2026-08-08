@@ -81,6 +81,13 @@ jobs:
 
           $short = $env:GITHUB_SHA.Substring(0, 7)
           $committed = git log -1 --format=%cI
+          # In the title, because the line GitHub puts beside it cannot be moved: published_at
+          # is set once, when a release is first published, and only republishing resets it --
+          # which is the thing that notifies everyone watching. So the release goes on saying it
+          # was published whenever the first build was, and the title is where it says what it
+          # actually is now.
+          $when = ([datetimeoffset]$committed).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'")
+          $title = "Latest build ($short) - $when"
           $notes = @"
           This is the latest nightly build of the project.
 
@@ -94,8 +101,8 @@ jobs:
             # The name carries the commit, so yesterday's does not sit there beside today's.
             gh release view nightly --json assets -q '.assets[].name' |
               ForEach-Object { gh release delete-asset nightly $_ --yes }
-            gh release edit nightly --title "Latest build ($short)" --notes-file notes.md
+            gh release edit nightly --title $title --notes-file notes.md
           } else {
-            gh release create nightly --title "Latest build ($short)" --notes-file notes.md
+            gh release create nightly --title $title --notes-file notes.md
           }
           gh release upload nightly $zip --clobber
