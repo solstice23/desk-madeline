@@ -61,6 +61,41 @@
   </ItemGroup>
 
   <!--
+    Which commit this was built from, stamped into the assembly for the About window to show.
+    A version number nobody remembers to bump says nothing about what somebody is running; the
+    commit says exactly. Both readings are asked of git rather than kept in a file, so there is
+    nothing to forget to update; a tree with no git to ask of, a source zip say, simply does not
+    get them and the About window falls back to the version above.
+
+    Git's format specifier has to survive two readers to reach it. MSBuild reads %XX as an
+    escape, so a literal percent is written %25; Exec then runs the command through a batch
+    file, which eats a single percent, so it takes two of them.
+  -->
+  <Target Name="StampCommit" BeforeTargets="GetAssemblyAttributes">
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-parse --short=7 HEAD"
+          ConsoleToMSBuild="true" StandardOutputImportance="low"
+          ContinueOnError="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="CommitHash" />
+      <Output TaskParameter="ExitCode" PropertyName="CommitHashExit" />
+    </Exec>
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; log -1 --format=%25%25cI"
+          ConsoleToMSBuild="true" StandardOutputImportance="low"
+          ContinueOnError="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="CommitDate" />
+    </Exec>
+    <ItemGroup Condition="'$(CommitHashExit)' == '0' And '$(CommitHash)' != ''">
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>CommitHash</_Parameter1>
+        <_Parameter2>$(CommitHash.Trim())</_Parameter2>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>CommitDate</_Parameter1>
+        <_Parameter2>$(CommitDate.Trim())</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
+  <!--
     A bundled build carries Celeste's own artwork and audio so it can run on a machine without
     the game. Neither belongs in this repository, so both are copied out of an install at
     build time, in the layout the game uses and the app already knows how to read: the
