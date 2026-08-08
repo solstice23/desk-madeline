@@ -4,7 +4,8 @@ A Madeline pet for Windows, recreating the physics of the game [Celeste](https:/
 
 # Download
 
-Download the latest build from [Actions](https://github.com/solstice23/desk-madeline/actions) (go to the latest workflow run and download the artifact).
+Download the latest build from [Release](https://github.com/solstice23/desk-madeline/releases/tag/nightly).
+You can also check for updates in the pet's tray menu.
 
 You need to own a copy of [Celeste](https://www.celestegame.com/) and have it locally installed to let the pet run, as it uses the game's assets on the fly.
 

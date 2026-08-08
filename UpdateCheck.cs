@@ -11,38 +11,56 @@ namespace DeskMadeline
     /// Whether the build server has a newer build than this one, and where to get it.
     /// </summary>
     /// <remarks>
-    /// There are no releases to check: every push to master is built by the build workflow and
-    /// what comes out is an artifact of that run. So the question "is there a newer one" is
-    /// asked of the workflow's runs -- the newest that succeeded on master -- and answered by
-    /// comparing its commit against the one stamped into this build. Hash first, since two
-    /// builds of the same commit are the same build whatever their times say; then the commit
-    /// dates, so that a local build made after the server's newest is not told to update.
+    /// Every push to master is built and hung off one rolling release, tagged nightly, which is
+    /// what this asks about. Which commit that release was built from is written in its notes by
+    /// the build workflow -- the run that made it knows, and nothing else on the release says --
+    /// and the answer is that commit compared against the one stamped into this build. Hash
+    /// first, since two builds of the same commit are the same build whatever their times say;
+    /// then the commit dates, so that a build made here after the server's newest is not told to
+    /// update to something older than itself.
     ///
-    /// Asked only when the user asks. Nothing here runs on a timer, and nothing is downloaded:
-    /// the newer build is offered as a link to the page it is on, which is as far as this goes
-    /// towards replacing itself.
+    /// Asked only when the user asks. Nothing runs on a timer, and nothing is downloaded here:
+    /// the newer build is offered as a link, which is as far as this goes towards replacing
+    /// itself. The link is to the file, since a release asset needs no GitHub account.
     /// </remarks>
     internal static class UpdateCheck
     {
-        const string Runs = "https://api.github.com/repos/solstice23/desk-madeline/actions/"
-            + "workflows/build.yml/runs?branch=master&status=success&per_page=1";
+        const string Release =
+            "https://api.github.com/repos/solstice23/desk-madeline/releases/tags/nightly";
 
         internal readonly struct Result
         {
-            /// <summary>The build server's newest commit, full length, or empty.</summary>
+            /// <summary>The commit that release was built from, full length, or empty.</summary>
             public readonly string Commit;
             public readonly DateTimeOffset? Made;
-            /// <summary>That run's page, where its artifact is.</summary>
+            /// <summary>The release's own page.</summary>
             public readonly string Page;
+            /// <summary>The file itself, which is what the download button opens.</summary>
+            public readonly string Download;
+            public readonly string FileName;
+            public readonly long Bytes;
             /// <summary>Why there is no answer, or null.</summary>
             public readonly string Error;
 
-            Result(string commit, DateTimeOffset? made, string page, string error)
-            { Commit = commit; Made = made; Page = page; Error = error; }
+            Result(string commit, DateTimeOffset? made, string page, string download,
+                string fileName, long bytes, string error)
+            {
+                Commit = commit; Made = made; Page = page;
+                Download = download; FileName = fileName; Bytes = bytes; Error = error;
+            }
 
-            public static Result Found(string commit, DateTimeOffset? made, string page)
-                => new Result(commit, made, page, null);
-            public static Result Failed(string why) => new Result("", null, "", why);
+            public static Result Found(string commit, DateTimeOffset? made, string page,
+                string download = "", string fileName = "", long bytes = 0)
+                => new Result(commit, made, page, download, fileName, bytes, null);
+            public static Result Failed(string why)
+                => new Result("", null, "", "", "", 0, why);
+
+            /// <summary>The file and how big it is, for the line under the offer.</summary>
+            public string Describe()
+                => FileName.Length == 0 ? Loc.T("Update.OnThePage")
+                    : Bytes <= 0 ? FileName
+                    : FileName + "  ·  " + (Bytes / 1048576.0).ToString("0.0",
+                        System.Globalization.CultureInfo.CurrentCulture) + " MB";
 
             /// <summary>Its hash as it is written everywhere else: the first seven of it.</summary>
             public string Short => Commit.Length >= 7 ? Commit.Substring(0, 7) : Commit;
@@ -76,33 +94,59 @@ namespace DeskMadeline
             return client;
         }
 
-        /// <summary>The newest build of master that came out whole. Never throws.</summary>
+        /// <summary>The build hanging off the rolling release. Never throws.</summary>
         public static async Task<Result> Newest()
         {
             try
             {
-                using HttpResponseMessage response = await http.GetAsync(Runs);
+                using HttpResponseMessage response = await http.GetAsync(Release);
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    return Result.Failed(Loc.T("Update.NoBuilds"));
                 if (!response.IsSuccessStatusCode)
                     return Result.Failed((int)response.StatusCode + " " + response.ReasonPhrase);
 
                 using JsonDocument json = JsonDocument.Parse(
                     await response.Content.ReadAsStringAsync());
-                if (!json.RootElement.TryGetProperty("workflow_runs", out JsonElement runs) ||
-                    runs.ValueKind != JsonValueKind.Array || runs.GetArrayLength() == 0)
-                    return Result.Failed(Loc.T("Update.NoBuilds"));
+                JsonElement release = json.RootElement;
+                string body = Text(release, "body");
+                string commit = Labelled(body, "commit");
+                DateTimeOffset? made = BuildStamp.Parse(Labelled(body, "committed"));
+                // Whoever edits those notes by hand can lose the commit; the release still has a
+                // date of its own, and it is better to offer a build with the wrong date on it
+                // than to say there is nothing there.
+                if (!made.HasValue) made = BuildStamp.Parse(Text(release, "published_at"));
 
-                JsonElement run = runs[0];
-                string commit = Text(run, "head_sha");
-                string page = Text(run, "html_url");
-                // head_commit is the commit itself, so its timestamp is the one to compare with
-                // the stamp in this build; the run's own times are when the server got to it.
-                DateTimeOffset? made = run.TryGetProperty("head_commit", out JsonElement head)
-                    && head.ValueKind == JsonValueKind.Object
-                    ? BuildStamp.Parse(Text(head, "timestamp")) : null;
-                if (commit.Length == 0) return Result.Failed(Loc.T("Update.NoBuilds"));
-                return Result.Found(commit, made, page);
+                string download = "", fileName = "";
+                long bytes = 0;
+                if (release.TryGetProperty("assets", out JsonElement assets) &&
+                    assets.ValueKind == JsonValueKind.Array)
+                    foreach (JsonElement asset in assets.EnumerateArray())
+                    {
+                        string name = Text(asset, "name");
+                        if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
+                        fileName = name;
+                        download = Text(asset, "browser_download_url");
+                        bytes = asset.TryGetProperty("size", out JsonElement size) &&
+                            size.ValueKind == JsonValueKind.Number ? size.GetInt64() : 0;
+                        break;
+                    }
+
+                return Result.Found(commit, made, Text(release, "html_url"),
+                    download, fileName, bytes);
             }
             catch (Exception ex) { return Result.Failed(ex.Message); }
+        }
+
+        /// <summary>One of the "name: value" lines the build workflow writes into the notes.</summary>
+        static string Labelled(string body, string name)
+        {
+            foreach (string line in body.Split('\n'))
+            {
+                string trimmed = line.Trim();
+                if (!trimmed.StartsWith(name + ":", StringComparison.OrdinalIgnoreCase)) continue;
+                return trimmed.Substring(name.Length + 1).Trim();
+            }
+            return "";
         }
 
         static string Text(JsonElement element, string name)
@@ -192,9 +236,12 @@ namespace DeskMadeline
             page.Heading = Loc.T("Update.Available");
             page.Text = string.Format(Loc.T("Update.Newest"), newest) + Environment.NewLine
                 + string.Format(Loc.T("Update.Yours"), yours);
-            page.Footnote = new TaskDialogFootnote(Loc.T("Update.Artifact"));
+            page.Footnote = new TaskDialogFootnote(result.Describe());
 
-            download = new TaskDialogButton(Loc.T("Update.Download")) { Tag = result.Page };
+            // The file itself where there is one: a release asset is handed to anybody, so
+            // there is no reason to send the user to a page to find the same link.
+            download = new TaskDialogButton(Loc.T("Update.Download"))
+            { Tag = result.Download.Length > 0 ? result.Download : result.Page };
             page.Buttons.Add(download);
             page.Buttons.Add(new TaskDialogButton(Loc.T("Update.Later")));
             page.DefaultButton = download;

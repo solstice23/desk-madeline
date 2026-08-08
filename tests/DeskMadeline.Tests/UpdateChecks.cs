@@ -1,11 +1,12 @@
 using System;
 using DeskMadeline;
 
-// Is the build server's newest build one this copy does not have?
+// Is the build hanging off the rolling release one this copy does not have?
 //
-// The comparison, not the request: what comes back from GitHub is made up here so that the
-// awkward answers can be asked for. The awkward one is a build made from work that has not been
-// pushed -- its commit is not the server's, and it is not behind it either.
+// The comparison and the reading of the release notes, not the request: what comes back from
+// GitHub is made up here so that the awkward answers can be asked for. The awkward one is a
+// build made from work that has not been pushed -- its commit is not the server's, and it is
+// not behind it either.
 static class UpdateChecks
 {
     static int failed;
@@ -22,6 +23,16 @@ static class UpdateChecks
 
     static UpdateCheck.Result Server(string commit, DateTimeOffset? made)
         => UpdateCheck.Result.Found(commit, made, "https://example.invalid/runs/1");
+
+    /// <summary>Notes shaped like the ones the build workflow writes.</summary>
+    static string Notes(string commit, string committed) => string.Join("\r\n", new[]
+    {
+        "The build of master as it stands. Unzip it anywhere and run DeskMadeline.exe.",
+        "",
+        "commit: " + commit,
+        "committed: " + committed,
+        "",
+    });
 
     public static int Run()
     {
@@ -67,6 +78,34 @@ static class UpdateChecks
             BuildStamp.Describe("c0ffee1", null) == "c0ffee1");
         Check("with one, both", BuildStamp.Describe("c0ffee1", Noon).StartsWith("c0ffee1  ·  "));
 
+        // The notes the build workflow writes, read back. Two labelled lines in among prose
+        // that anybody might edit, so what matters is finding them and not the rest.
+        Console.WriteLine();
+        Console.WriteLine("  Reading which build a release is");
+        string notes = Notes(Theirs, "2026-08-08T12:00:00+00:00");
+        Check("the commit comes back out", Labelled(notes, "commit") == Theirs);
+        Check("and the date, as the moment it says",
+            BuildStamp.Parse(Labelled(notes, "committed")) == Noon);
+        Check("a line that is not there is not invented", Labelled(notes, "author") == "");
+        Check("and neither is one from notes somebody emptied", Labelled("", "commit") == "");
+
+        Console.WriteLine();
+        Console.WriteLine("  What the offer says it is handing over");
+        Check("the file and its size",
+            UpdateCheck.Result.Found(Theirs, Noon, "p", "u", "DeskMadeline-c0ffee1.zip",
+                3_500_000).Describe() == "DeskMadeline-c0ffee1.zip  ·  3.3 MB");
+        Check("the file alone when its size is unknown",
+            UpdateCheck.Result.Found(Theirs, Noon, "p", "u", "DeskMadeline-c0ffee1.zip")
+                .Describe() == "DeskMadeline-c0ffee1.zip");
+        Check("and where to find it when the release has no file on it",
+            UpdateCheck.Result.Found(Theirs, Noon, "p").Describe() == Loc.T("Update.OnThePage"));
+
         return failed;
     }
+
+    /// <summary>UpdateCheck's own reader, reached the way the checks reach any private part.</summary>
+    static string Labelled(string body, string name)
+        => (string)typeof(UpdateCheck).GetMethod("Labelled",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            .Invoke(null, new object[] { body, name });
 }

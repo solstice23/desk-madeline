@@ -18,6 +18,9 @@ defaults:
 jobs:
   windows:
     runs-on: windows-latest
+    # To move the nightly tag and hang the build off it; nothing else here writes.
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -52,3 +55,51 @@ jobs:
           name: ${{ steps.gather.outputs.name }}
           path: stage
           if-no-files-found: error
+
+      # As well as the artifact above, which every run keeps and pull requests only have: the
+      # build of master also goes out as a release. An artifact is handed only to somebody
+      # signed in to GitHub and is swept away after ninety days, and a release is neither.
+      #
+      # One rolling release rather than one per commit, since a tag and a notification for every
+      # push to a desktop pet is a lot of noise for what is always just "the newest build".
+      #
+      # The tag is moved rather than the release republished: republishing is what notifies
+      # everyone watching, and moving it keeps the release's own links pointing at the commit
+      # the download was actually built from. Pushing a tag does not start this workflow again;
+      # the trigger above is filtered to branches.
+      #
+      # The two labelled lines in the notes are read back by the pet's update check, which
+      # compares that commit against the one stamped into itself. Keep them, and their names.
+      - name: Publish
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = "${{ steps.gather.outputs.name }}.zip"
+          Compress-Archive -Path stage\* -DestinationPath $zip
+          git push -f origin HEAD:refs/tags/nightly
+
+          $short = $env:GITHUB_SHA.Substring(0, 7)
+          $committed = git log -1 --format=%cI
+          $notes = @"
+          The build of master as it stands. Unzip it anywhere and run DeskMadeline.exe; it reads
+          Celeste's artwork and sounds from your own installed copy of the game, so it needs one.
+
+          This release is replaced by every push to master. The two lines below are how the pet's
+          own update check knows which build this is.
+
+          commit: $env:GITHUB_SHA
+          committed: $committed
+          "@
+          Set-Content notes.md -Value $notes -Encoding utf8
+
+          gh release view nightly *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # The name carries the commit, so yesterday's does not sit there beside today's.
+            gh release view nightly --json assets -q '.assets[].name' |
+              ForEach-Object { gh release delete-asset nightly $_ --yes }
+            gh release edit nightly --title "Latest build ($short)" --notes-file notes.md
+          } else {
+            gh release create nightly --title "Latest build ($short)" --notes-file notes.md
+          }
+          gh release upload nightly $zip --clobber
