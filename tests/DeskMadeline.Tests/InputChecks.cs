@@ -99,6 +99,27 @@ static class InputChecks
             bindings.Pressed(PetAction.Dash) && bindings.Pressed(PetAction.Grab));
 
         Console.WriteLine();
+        Console.WriteLine("  Both directions held at once");
+        // VirtualIntegerAxis at TakeNewer, which is what Celeste leaves MoveX on: the key that
+        // arrived last wins, so pressing left without letting go of right turns her round.
+        var axis = new IntegerAxis();
+        Check("right alone is right", axis.Update(false, true) == 1);
+        Check("holding it stays right", axis.Update(false, true) == 1);
+        Check("left, without letting go of right, is left", axis.Update(true, true) == -1);
+        Check("and it stays left while both are held", axis.Update(true, true) == -1);
+        Check("letting go of left leaves her going right again", axis.Update(false, true) == 1);
+        Check("pressing left again turns her round again", axis.Update(true, true) == -1);
+        Check("letting go of right leaves her going left", axis.Update(true, false) == -1);
+        Check("and letting go of both stops her", axis.Update(false, false) == 0);
+
+        // Vanilla's oddity, kept: both arriving on one frame turn a zero around, which is zero.
+        var together = new IntegerAxis();
+        Check("both on the same frame from a standstill is a standstill",
+            together.Update(true, true) == 0);
+        Check("and stays one until a key is let go", together.Update(true, true) == 0);
+        Check("letting go of one starts her the other way", together.Update(true, false) == -1);
+
+        Console.WriteLine();
         Console.WriteLine("  The same on a controller");
         var pad = new PadBindings(Path.Combine(Path.GetTempPath(),
             "deskmadeline-pad-check.txt"));

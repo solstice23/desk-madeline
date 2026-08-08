@@ -76,6 +76,11 @@ namespace DeskMadeline
 
         // Input state
         PadState prevPad;
+        // Celeste's MoveX, MoveY, GliderMoveY, Aim and Feather, each its own virtual input.
+        readonly IntegerAxis moveX = new IntegerAxis(), moveY = new IntegerAxis();
+        readonly IntegerAxis gliderMoveY = new IntegerAxis();
+        readonly IntegerAxis aimX = new IntegerAxis(), aimY = new IntegerAxis();
+        readonly IntegerAxis featherX = new IntegerAxis(), featherY = new IntegerAxis();
 
         // Dragging
         volatile bool dragging;
@@ -1572,19 +1577,22 @@ namespace DeskMadeline
             bool crouchDash = Held(PetAction.CrouchDash, PadBindings.ButtonThreshold);
             bool elytra = Held(PetAction.DeployElytra, PadBindings.ButtonThreshold);
 
-            input.MoveX = (right ? 1 : 0) - (left ? 1 : 0);
-            input.MoveY = (down ? 1 : 0) - (up ? 1 : 0);
-            input.AimX = (Held(PetAction.Right, PadBindings.AimThreshold) ? 1 : 0)
-                - (Held(PetAction.Left, PadBindings.AimThreshold) ? 1 : 0);
-            input.AimY = (Held(PetAction.Down, PadBindings.AimThreshold) ? 1 : 0)
-                - (Held(PetAction.Up, PadBindings.AimThreshold) ? 1 : 0);
-            input.GliderMoveY = (Held(PetAction.Down, PadBindings.GliderMoveYThreshold) ? 1 : 0)
-                - (Held(PetAction.Up, PadBindings.GliderMoveYThreshold) ? 1 : 0);
+            // Both directions at once is not nothing: see IntegerAxis. Each of these is one of
+            // Celeste's virtual inputs, so each keeps its own.
+            input.MoveX = moveX.Update(left, right);
+            input.MoveY = moveY.Update(up, down);
+            input.AimX = aimX.Update(Held(PetAction.Left, PadBindings.AimThreshold),
+                Held(PetAction.Right, PadBindings.AimThreshold));
+            input.AimY = aimY.Update(Held(PetAction.Up, PadBindings.AimThreshold),
+                Held(PetAction.Down, PadBindings.AimThreshold));
+            input.GliderMoveY = gliderMoveY.Update(
+                Held(PetAction.Up, PadBindings.GliderMoveYThreshold),
+                Held(PetAction.Down, PadBindings.GliderMoveYThreshold));
             // Input.Feather is a joystick on the move bindings at the aim deadzone.
-            input.FeatherX = (Held(PetAction.Right, PadBindings.AimThreshold) ? 1 : 0)
-                - (Held(PetAction.Left, PadBindings.AimThreshold) ? 1 : 0);
-            input.FeatherY = (Held(PetAction.Down, PadBindings.AimThreshold) ? 1 : 0)
-                - (Held(PetAction.Up, PadBindings.AimThreshold) ? 1 : 0);
+            input.FeatherX = featherX.Update(Held(PetAction.Left, PadBindings.AimThreshold),
+                Held(PetAction.Right, PadBindings.AimThreshold));
+            input.FeatherY = featherY.Update(Held(PetAction.Up, PadBindings.AimThreshold),
+                Held(PetAction.Down, PadBindings.AimThreshold));
             input.JumpHeld = jump;
             input.GrabHeld = grab;
             input.ElytraHeld = elytra;
