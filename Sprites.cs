@@ -181,6 +181,7 @@ namespace DeskMadeline
                 {
                     ("characters/player/", ""),
                     ("objects/glider/", "glider/"),
+                    ("objects/bumper/", "bumper/"),
                     ("characters/monsters/", "seeker/"),
                     ("characters/theoCrystal/", "theoCrystal/"),
                     ("pico8/", "pico8/"),

@@ -56,10 +56,12 @@ namespace DeskMadeline
         int pendingGliderSpawns;
         int pendingTheoSpawns;
         int pendingSeekerSpawns;
+        int pendingBumperSpawns;
         int pendingRemoveAllEntities;
         readonly Queue<Glider> pendingGliderRemovals = new Queue<Glider>();
         readonly Queue<TheoCrystal> pendingTheoRemovals = new Queue<TheoCrystal>();
         readonly Queue<Seeker> pendingSeekerRemovals = new Queue<Seeker>();
+        readonly Queue<Bumper> pendingBumperRemovals = new Queue<Bumper>();
         bool introWakeUp = true;   // On startup play the wake-up animation (wakeUp 00-14), then switch to idle
 
         // Rendering
@@ -104,6 +106,8 @@ namespace DeskMadeline
         // Particles / effects
         readonly ParticleSystem particles = new ParticleSystem();
         readonly ParticleSystem seekerParticles = new ParticleSystem();
+        PType bumperLaunch, bumperAmbience;
+        readonly Random bumperSparkle = new Random();
         readonly Dictionary<int, Bitmap> seekerParticleBitmaps = new Dictionary<int, Bitmap>();
         Bitmap gliderDebugStamp, theoDebugStamp;
         readonly Bitmap[] seekerDebugStamps = new Bitmap[3];
@@ -174,6 +178,10 @@ namespace DeskMadeline
         readonly object seekerWindowLock = new object();
         readonly Dictionary<Seeker, SeekerInputWindow> seekerWindows = new Dictionary<Seeker, SeekerInputWindow>();
         readonly Dictionary<Seeker, GliderStampCache> seekerStampCache = new Dictionary<Seeker, GliderStampCache>();
+        readonly List<Bumper> bumpers = new List<Bumper>();
+        readonly object bumperWindowLock = new object();
+        readonly Dictionary<Bumper, BumperInputWindow> bumperWindows = new Dictionary<Bumper, BumperInputWindow>();
+        readonly Dictionary<Bumper, GliderStampCache> bumperStampCache = new Dictionary<Bumper, GliderStampCache>();
         Glider draggedGlider;
         PointF gliderDragOffset, gliderCursorVelocity;
         Point lastGliderCursor;
@@ -183,6 +191,9 @@ namespace DeskMadeline
         Seeker draggedSeeker;
         PointF seekerDragOffset, seekerCursorVelocity;
         Point lastSeekerCursor;
+        // A bumper is put somewhere rather than thrown, so the drag keeps no speed for it.
+        Bumper draggedBumper;
+        PointF bumperDragOffset;
         bool seekerRespawnDormant, observedPlayerRespawning;
 
         sealed class GliderStampCache
@@ -377,6 +388,23 @@ namespace DeskMadeline
                 SpeedMin = 20f, SpeedMax = 40f, SpeedMultiplier = .4f, LateFade = true
             };
             seekerStomp = seekerAttack;
+            // Bumper.P_Launch and P_Ambience. The teal pair is the bumper's own; the rect is
+            // the four-by-two particles/rect the game draws them all with.
+            bumperLaunch = new PType
+            {
+                Tex = new[] { "rect" }, Color = Color.FromArgb(0x47, 0xB5, 0xCC),
+                Color2 = Color.FromArgb(0xC4, 0xF4, 0xFF), BlinkColor = true,
+                LifeMin = .6f, LifeMax = 1.2f, Size = .5f, SizeRange = .2f,
+                SpeedMin = 40f, SpeedMax = 140f, SpeedMultiplier = .1f,
+                GravY = 10f, LateFade = true
+            };
+            bumperAmbience = new PType
+            {
+                Tex = new[] { "rect" }, Color = Color.FromArgb(0x47, 0xB5, 0xCC),
+                Color2 = Color.FromArgb(0xC4, 0xF4, 0xFF), BlinkColor = true,
+                LifeMin = .2f, LifeMax = .4f, Size = .5f, SizeRange = .2f,
+                SpeedMin = 10f, SpeedMax = 20f
+            };
             seekerHitWall = new PType
             {
                 Tex = new[] { "dashParticle" }, Color = Color.FromArgb(0x99, 0xE5, 0x50),
@@ -646,6 +674,13 @@ namespace DeskMadeline
             if (seekerSpawnCount > 0 && IsHandleCreated)
                 BeginInvoke(new Action(EnsureSeekerWindows));
 
+            int bumperSpawnCount = Interlocked.Exchange(ref pendingBumperSpawns, 0);
+            for (int i = 0; i < bumperSpawnCount; i++)
+                bumpers.Add(new Bumper(new PointF(
+                    player.Pos.X + player.Facing * (40f + i * 30f), player.Pos.Y - 20f)));
+            if (bumperSpawnCount > 0 && IsHandleCreated)
+                BeginInvoke(new Action(EnsureBumperWindows));
+
             int theoSpawnCount = Interlocked.Exchange(ref pendingTheoSpawns, 0);
             for (int i = 0; i < theoSpawnCount; i++)
             {
@@ -667,6 +702,9 @@ namespace DeskMadeline
             if ((removeFlags & 4) != 0)
                 lock (pendingTheoRemovals)
                     foreach (TheoCrystal theo in theos) pendingTheoRemovals.Enqueue(theo);
+            if ((removeFlags & 8) != 0)
+                lock (pendingBumperRemovals)
+                    foreach (Bumper bumper in bumpers) pendingBumperRemovals.Enqueue(bumper);
 
             lock (pendingGliderRemovals)
             {
@@ -698,6 +736,22 @@ namespace DeskMadeline
                     if (draggedTheo == theo) draggedTheo = null;
                     soundEffects.StopLoop(theo);
                     if (IsHandleCreated) BeginInvoke(new Action(() => CloseTheoWindow(theo)));
+                }
+            }
+
+            lock (pendingBumperRemovals)
+            {
+                while (pendingBumperRemovals.Count > 0)
+                {
+                    Bumper bumper = pendingBumperRemovals.Dequeue();
+                    if (!bumpers.Remove(bumper)) continue;
+                    if (draggedBumper == bumper) draggedBumper = null;
+                    if (bumperStampCache.TryGetValue(bumper, out GliderStampCache bumperCache))
+                    {
+                        bumperCache.Bitmap?.Dispose();
+                        bumperStampCache.Remove(bumper);
+                    }
+                    if (IsHandleCreated) BeginInvoke(new Action(() => CloseBumperWindow(bumper)));
                 }
             }
 
@@ -886,6 +940,36 @@ namespace DeskMadeline
                 }
                 if (theo.Removed)
                     lock (pendingTheoRemovals) pendingTheoRemovals.Enqueue(theo);
+            }
+
+            foreach (Bumper bumper in bumpers)
+            {
+                if (bumper.Removed) { RequestBumperRemoval(bumper); continue; }
+                int hitsBefore = bumper.Hits;
+                bumper.Update(dt, player);
+                while (bumper.SoundEvents.Count > 0)
+                {
+                    PlayerSoundEvent sound = bumper.SoundEvents.Dequeue();
+                    soundEffects.Play(sound.Path, sound.Parameter, sound.Value);
+                }
+                // The twelve P_Launch particles, thrown the way she went. The dash slash that
+                // goes with them is already hers, from ExplodeLaunch.
+                if (bumper.Hits != hitsBefore)
+                    particles.Emit(bumperLaunch,
+                        bumper.Pos.X + bumper.LaunchDirection.X * 12f,
+                        bumper.Pos.Y + bumper.LaunchDirection.Y * 12f,
+                        (float)Math.Atan2(bumper.LaunchDirection.Y, bumper.LaunchDirection.X),
+                        .6981317f, 12, 3f, 3f);
+                // And the one it gives off while it is waiting to be hit, every twentieth of a
+                // second, thrown outwards from eight pixels out.
+                for (int puff = 0; puff < bumper.AmbientPuffs; puff++)
+                {
+                    float angle = (float)(bumperSparkle.NextDouble() * Math.PI * 2.0);
+                    particles.Emit(bumperAmbience,
+                        bumper.Pos.X + (float)Math.Cos(angle) * 8f,
+                        bumper.Pos.Y + (float)Math.Sin(angle) * 8f,
+                        angle, .5235988f, 1, 2f, 2f);
+                }
             }
 
             var seekerCamera = new RectangleF(player.Pos.X - 160f, player.Pos.Y - 90f, 320f, 180f);
@@ -1549,7 +1633,8 @@ namespace DeskMadeline
             // GetAsyncKeyState and XInput are both global. By default they are gated to
             // this pet's focus; the explicit menu opt-in permits reading them while
             // unfocused. No hook is installed and keys are never swallowed from other apps.
-            bool blocked = dragging || draggedGlider != null || draggedTheo != null || draggedSeeker != null ||
+            bool blocked = dragging || draggedGlider != null || draggedTheo != null ||
+                draggedSeeker != null || draggedBumper != null ||
                 (!InputWhenUnfocused && !IsPetInputWindow(Win32.GetForegroundWindow()));
             bool useKeys = InputEnabled && !blocked;
             bool usePad = PadInputEnabled && !blocked;
@@ -1624,7 +1709,10 @@ namespace DeskMadeline
             lock (theoWindowLock)
                 if (theoWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd)) return true;
             lock (seekerWindowLock)
-                return seekerWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd);
+                if (seekerWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd))
+                    return true;
+            lock (bumperWindowLock)
+                return bumperWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd);
         }
 
         void EnsureTheoWindows()
@@ -1689,6 +1777,61 @@ namespace DeskMadeline
             if (length < 30f) vx = vy = 0f;
             theo.EndDrag(new PointF(vx, vy));
             draggedTheo = null;
+        }
+
+        void EnsureBumperWindows()
+        {
+            lock (bumperWindowLock)
+            {
+                foreach (Bumper bumper in bumpers)
+                {
+                    if (bumperWindows.ContainsKey(bumper)) continue;
+                    var window = new BumperInputWindow(this, bumper);
+                    bumperWindows[bumper] = window;
+                    window.Show();
+                }
+            }
+        }
+
+        internal void RequestBumperRemoval(Bumper bumper)
+        {
+            lock (pendingBumperRemovals) pendingBumperRemovals.Enqueue(bumper);
+            BeginInvoke(new Action(() => CloseBumperWindow(bumper)));
+        }
+
+        void CloseBumperWindow(Bumper bumper)
+        {
+            lock (bumperWindowLock)
+            {
+                if (!bumperWindows.TryGetValue(bumper, out BumperInputWindow window)) return;
+                bumperWindows.Remove(bumper);
+                window.Close();
+                window.Dispose();
+            }
+        }
+
+        internal void BeginBumperDrag(Bumper bumper)
+        {
+            Point cursor = Cursor.Position;
+            bumper.BeginDrag();
+            draggedBumper = bumper;
+            bumperDragOffset = new PointF(cursor.X / (float)GameScale - bumper.Anchor.X,
+                cursor.Y / (float)GameScale - bumper.Anchor.Y);
+        }
+
+        internal void ContinueBumperDrag(Bumper bumper)
+        {
+            if (draggedBumper != bumper) return;
+            Point cursor = Cursor.Position;
+            bumper.DragTo(new PointF(cursor.X / (float)GameScale - bumperDragOffset.X,
+                cursor.Y / (float)GameScale - bumperDragOffset.Y));
+        }
+
+        internal void EndBumperDrag(Bumper bumper)
+        {
+            if (draggedBumper != bumper) return;
+            bumper.EndDrag();
+            draggedBumper = null;
         }
 
         void EnsureSeekerWindows()
@@ -2619,6 +2762,14 @@ namespace DeskMadeline
                         seeker.Pos.X + seeker.Shake.X, seeker.Pos.Y + seeker.Shake.Y);
                 }
             }
+            foreach (Bumper bumper in bumpers)
+            {
+                if (trailCount >= trailStamps.Length) break;
+                Bitmap bumperStamp = GetBumperStamp(bumper);
+                if (bumperStamp == null) continue;
+                trailStamps[trailCount++] = new TrailStamp(bumperStamp, bumper.Pos.X, bumper.Pos.Y, 1f);
+                entityStamps[bumper] = (bumperStamp, bumper.Pos.X, bumper.Pos.Y);
+            }
             seekerParticles.AppendPointStamps(trailStamps, ref trailCount, seekerParticleBitmaps);
             burstScratch.Clear();
             AppendDeathBursts(1f / 60f, trailStamps, ref trailCount, burstScratch);
@@ -2655,6 +2806,19 @@ namespace DeskMadeline
                         32 * s, 32 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
                     pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
                         seekerLeft, seekerTop, 32, 32, s, pair.Value.HitMask);
+                }
+            }
+            lock (bumperWindowLock)
+            {
+                foreach (var pair in bumperWindows)
+                {
+                    if (!pair.Value.IsHandleCreated) continue;
+                    int bumperLeft = ((int)Math.Round(pair.Key.Pos.X) - 16) * s;
+                    int bumperTop = ((int)Math.Round(pair.Key.Pos.Y) - 16) * s;
+                    Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, bumperLeft, bumperTop,
+                        32 * s, 32 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                    pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
+                        bumperLeft, bumperTop, 32, 32, s, pair.Value.HitMask);
                 }
             }
             lock (theoWindowLock)
@@ -2911,6 +3075,34 @@ namespace DeskMadeline
             cached.ScaleX = scaleX;
             cached.ScaleY = scaleY;
             cached.Bitmap = bitmap;
+            return bitmap;
+        }
+
+        /// <summary>
+        /// The bumper's frame, centred: its sprite is a <Center/> in the game's own definition,
+        /// so the 64x64 frame hangs half either side of where it is.
+        /// </summary>
+        Bitmap GetBumperStamp(Bumper bumper)
+        {
+            string frameId = bumper.FrameId;
+            if (bumperStampCache.TryGetValue(bumper, out GliderStampCache cached) &&
+                cached.FrameId == frameId) return cached.Bitmap;
+            Bitmap frame = Sprites.Get(frameId, false);
+            Bitmap bitmap = null;
+            if (frame != null)
+            {
+                bitmap = new Bitmap(128, 128, PixelFormat.Format32bppPArgb);
+                using var g = Graphics.FromImage(bitmap);
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.DrawImage(frame, 64f - frame.Width / 2f, 64f - frame.Height / 2f,
+                    frame.Width, frame.Height);
+            }
+            cached ??= new GliderStampCache();
+            cached.Bitmap?.Dispose();
+            cached.FrameId = frameId;
+            cached.Bitmap = bitmap;
+            bumperStampCache[bumper] = cached;
             return bitmap;
         }
 
@@ -4270,6 +4462,8 @@ namespace DeskMadeline
                 Interlocked.Increment(ref pendingGliderSpawns));
             var spawnSeekerItem = new ToolStripMenuItem(Loc.T("Menu.SpawnSeeker"), null, (_, __) =>
                 Interlocked.Increment(ref pendingSeekerSpawns));
+            var spawnBumperItem = new ToolStripMenuItem(Loc.T("Menu.SpawnBumper"), null, (_, __) =>
+                Interlocked.Increment(ref pendingBumperSpawns));
             var spawnTheoItem = new ToolStripMenuItem(Loc.T("Menu.SpawnTheo"), null, (_, __) =>
                 Interlocked.Increment(ref pendingTheoSpawns));
             var removeEntitiesItem = new ToolStripMenuItem(Loc.T("Menu.RemoveEntities"));
@@ -4281,7 +4475,7 @@ namespace DeskMadeline
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 4)));
             removeEntitiesItem.DropDownItems.Add(new ToolStripSeparator());
             removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveEverything"), null,
-                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 7)));
+                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 15)));
             var helpItem = new ToolStripMenuItem(Loc.T("Menu.Controls"), null, (_, __) =>
                 MessageBox.Show(
                     Loc.T("Help.ControlsBody"),
@@ -4298,7 +4492,7 @@ namespace DeskMadeline
             // click today, and the drop-down cannot do columns -- it scrolls instead.
             Section(menu, "Section.Madeline");
             AddAll(menu, resetItem, wakeUpItem, spawnGliderItem, spawnSeekerItem, spawnTheoItem,
-                removeEntitiesItem);
+                spawnBumperItem, removeEntitiesItem);
             Section(menu, "Section.Input");
             AddAll(menu, inputItem, padInputItem, unfocusedInputItem,
                 BuildBindingsMenu(), BuildPadBindingsMenu(),
@@ -4620,6 +4814,13 @@ namespace DeskMadeline
                 foreach (var window in seekerWindows.Values) window.Dispose();
                 seekerWindows.Clear();
             }
+            lock (bumperWindowLock)
+            {
+                foreach (var window in bumperWindows.Values) window.Dispose();
+                bumperWindows.Clear();
+            }
+            foreach (var cached in bumperStampCache.Values) cached.Bitmap?.Dispose();
+            bumperStampCache.Clear();
             foreach (var cached in seekerStampCache.Values) cached.Bitmap?.Dispose();
             seekerStampCache.Clear();
             foreach (Seeker seeker in seekers)

@@ -286,13 +286,19 @@ namespace DeskMadeline
                 Speed.X = Speed.X == 0f ? -Facing * 100f : Math.Sign(Speed.X) * 100f;
         }
 
-        public PointF ExplodeLaunch(PointF from)
+        /// <param name="snapUp">
+        /// Whether coming at it from almost straight above throws her straight up. A puffer
+        /// asks for that; a bumper does not, and takes her off the way she arrived.
+        /// </param>
+        /// <param name="sidesOnly">Flatten any launch with a sideways part into a level one.</param>
+        public PointF ExplodeLaunch(PointF from, bool snapUp = true, bool sidesOnly = false)
         {
             ApplyFreeze(.1f);
             PointF vector = SafeNormalize(Center.X - from.X, Center.Y - from.Y, 0f, -1f);
             float dotUp = vector.Y;
-            if (dotUp <= -.7f) { vector.X = 0f; vector.Y = -1f; }
+            if (snapUp && dotUp <= -.7f) { vector.X = 0f; vector.Y = -1f; }
             else if (dotUp <= .65f && dotUp >= -.55f) { vector.Y = 0f; vector.X = Math.Sign(vector.X); }
+            if (sidesOnly && vector.X != 0f) { vector.Y = 0f; vector.X = Math.Sign(vector.X); }
             Speed = new PointF(280f * vector.X, 280f * vector.Y);
             if (Speed.Y <= 50f) { Speed.Y = Math.Min(-150f, Speed.Y); autoJump = true; }
             if (Speed.X != 0f)
@@ -1615,7 +1621,12 @@ namespace DeskMadeline
         {
             if (CanDash)
             {
-                State = BeginDash(input, crouchDashBufferTimer > 0f);
+                // Vanilla's LaunchUpdate returns StartDash(), which spends the dash and the
+                // press that asked for it. Beginning one without doing that gave her the dash
+                // back for free every time something launched her, and a dash held down came
+                // out twice: once free here, once properly out of Normal a few frames later.
+                bool crouchDash = ConsumeDashRequest();
+                State = BeginDash(input, crouchDash);
                 return;
             }
             if (Holding == null && input.GrabHeld && !IsTired && !Ducking && TryPickupHoldable()) return;
@@ -2325,6 +2336,23 @@ namespace DeskMadeline
                 if (!PushV(Math.Sign(want) * Math.Min(Math.Abs(want), room), solid)) return false;
             }
             return true;
+        }
+
+        /// <summary>
+        /// Whether her hitbox reaches a circle -- what Monocle's Collide.RectToCircle answers
+        /// for a Circle collider against hers, which is what a bumper carries.
+        /// </summary>
+        /// <remarks>
+        /// Written as the nearest point on the box rather than as Monocle writes it, which is a
+        /// point-inside test and then the circle against each edge in turn. They are the same
+        /// question: the nearest point is inside when she is on it, and on the edge otherwise.
+        /// </remarks>
+        public bool OverlapsCircle(PointF centre, float radius)
+        {
+            HitboxAt(Pos.X, Pos.Y, out float l, out float t, out float r, out float b);
+            float nearestX = Math.Clamp(centre.X, l, r), nearestY = Math.Clamp(centre.Y, t, b);
+            float dx = centre.X - nearestX, dy = centre.Y - nearestY;
+            return dx * dx + dy * dy <= radius * radius;
         }
 
         /// <summary>Whether her hitbox is inside this solid.</summary>
