@@ -486,6 +486,27 @@ static class IdleChecks
             upDashed && dasher.onGround && Math.Abs(dasher.Pos.Y + 150f) <= 2f);
 
         Console.WriteLine();
+        Console.WriteLine("  The same reach begun from underneath it");
+        var under = OnFloor(130f, floater);
+        var underDirector = new IdleDirector(new Random(7));
+        underDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
+            new RectangleF(60f, -150f, 140f, 70f));
+        underDirector.ForceClimbPlanForCheck(1, 205f, -1);
+        var underCtx = Context(under);
+        for (frames = 0; frames < (int)(25f / Dt); frames++)
+        {
+            Step(underDirector, under, underCtx);
+            if (underDirector.Current != IdleDirector.Activity.ClimbWindow) break;
+            if (under.onGround && Math.Abs(under.Pos.Y + 150f) <= 2f &&
+                under.Pos.X > 62f && under.Pos.X < 198f) break;
+        }
+        Console.WriteLine($"      from x=130, under the window, the dash spot at 205 is"
+            + $" away from its middle: she is at {under.Pos.X:F0},{under.Pos.Y:F0}"
+            + $" after {frames * Dt:F1}s");
+        Check("walking away from the target toward the dash spot is not a stall",
+            under.onGround && Math.Abs(under.Pos.Y + 150f) <= 2f);
+
+        Console.WriteLine();
         Console.WriteLine("  The same window when a dash would move it");
         var mover = OnFloor(0f, floater);
         var moonDirector = new IdleDirector(new Random(7));

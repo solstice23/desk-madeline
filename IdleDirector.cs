@@ -96,6 +96,7 @@ namespace DeskMadeline
         Glider targetJelly;
         int carryStage;
         float bestDist, stall;
+        float watchdogAim = float.PositiveInfinity;
         float bestClimbY;
         bool crossingBudgeted;
         int walledLegs;
@@ -316,6 +317,7 @@ namespace DeskMadeline
             phase = Phase.Telegraph;
             phaseTime = 0f;
             bestDist = float.MaxValue;
+            watchdogAim = float.PositiveInfinity;
             bestClimbY = float.MaxValue;
             crossingBudgeted = false;
             stall = 0f;
@@ -587,7 +589,7 @@ namespace DeskMadeline
             {
                 RunDashUp(ref input, dt, ctx);
                 Drain(dt, moving: true);
-                Watchdog(dt, ctx, true, busyScaling: !ctx.Player.onGround);
+                Watchdog(dt, ctx, true, climbViaX, busyScaling: !ctx.Player.onGround);
                 return;
             }
             float aimX = target.X;
@@ -617,7 +619,7 @@ namespace DeskMadeline
             // The via-edge route walks past the target's x on the way to the edge, which
             // poisons a straight-line best-distance; while she is on the wall or in the
             // air of that plan, progress is measured as new height instead.
-            Watchdog(dt, ctx, wantTop, busyScaling:
+            Watchdog(dt, ctx, wantTop, aimX, busyScaling:
                 (crossing || (wantTop && climbPlan == 2)) &&
                 (ctx.Player.State == Player.StClimb || !ctx.Player.onGround));
         }
@@ -1080,7 +1082,17 @@ namespace DeskMadeline
         void Watchdog(float dt, in IdleContext ctx, bool wantTop, float? overrideX = null,
             bool busyScaling = false)
         {
-            float dx = Math.Abs((overrideX ?? target.X) - ctx.Player.Pos.X);
+            // Progress is measured toward the plan's current waypoint, and the yardstick
+            // starts over when the waypoint changes: a route that legitimately walks away
+            // from the final target -- out from under a window to its dash spot -- must not
+            // be judged against a best set on a different leg of the trip.
+            float aim = overrideX ?? target.X;
+            if (Math.Abs(aim - watchdogAim) > 1.5f)
+            {
+                watchdogAim = aim;
+                bestDist = float.MaxValue;
+            }
+            float dx = Math.Abs(aim - ctx.Player.Pos.X);
             float dy = wantTop ? Math.Abs(targetRect.Top - ctx.Player.Pos.Y) : 0f;
             float dist = dx + dy;
             if (dist < bestDist - 1f) { bestDist = dist; stall = 0f; }
