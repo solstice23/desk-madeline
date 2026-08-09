@@ -596,12 +596,16 @@ namespace DeskMadeline
             if (wantTop && climbPlan == 2 && Math.Abs(ctx.Player.Pos.X - climbViaX) < 14f)
             {
                 aimX = climbViaX;
-                // High enough beside it: leap across, from the grab or from the ladder.
+                // High enough beside it: leap across, from the grab or from the ladder --
+                // but only off the face that looks at the target. On that face her Facing
+                // is opposite the leap; from the far face the same leap flies away from
+                // the window, so there she keeps climbing and comes over the top instead.
                 if (ctx.Player.Pos.Y <= targetRect.Bottom - 8f)
                 {
-                    if (ctx.Player.State == Player.StClimb)
+                    if (ctx.Player.State == Player.StClimb &&
+                        ctx.Player.Facing == -climbViaDir)
                     { climbIntent = ClimbIntent.LeapAcross; intentT = .4f; }
-                    else if (!ctx.Player.onGround && wallSide != 0)
+                    else if (!ctx.Player.onGround && wallSide == -climbViaDir)
                         pendingLeap = true;
                 }
             }
@@ -1221,14 +1225,27 @@ namespace DeskMadeline
                 climbViaDir = fromLeft ? 1 : -1;
                 return true;
             }
-            if (ctx.EdgesClimbable)
+            return FindAssistWall(ctx, rect);
+        }
+
+        /// <summary>
+        /// Any wall within a leap of the window's side that stands on her ground and rises
+        /// past the window's bottom -- a screen edge and another window's border serve
+        /// equally. The gap must fit her: a chimney narrower than her body is a wall, not
+        /// a route.
+        /// </summary>
+        bool FindAssistWall(in IdleContext ctx, RectangleF rect)
+        {
+            foreach (Solid s in ctx.Solids)
             {
-                float gapL = rect.Left - ctx.EdgeLeft;
-                float gapR = ctx.EdgeRight - rect.Right;
-                if (gapL >= 0f && gapL <= 55f)
-                { climbPlan = 2; climbViaX = ctx.EdgeLeft - 2f; climbViaDir = 1; return true; }
-                if (gapR >= 0f && gapR <= 55f)
-                { climbPlan = 2; climbViaX = ctx.EdgeRight + 2f; climbViaDir = -1; return true; }
+                if (s.B < ctx.Player.Pos.Y - 30f) continue;     // does not come down to her
+                if (s.T > rect.Bottom - 8f) continue;           // does not rise past the bottom
+                float gapLeft = rect.Left - s.R;                // wall to the window's left
+                if (gapLeft >= 12f && gapLeft <= 55f)
+                { climbPlan = 2; climbViaX = s.R - 2f; climbViaDir = 1; return true; }
+                float gapRight = s.L - rect.Right;              // wall to the window's right
+                if (gapRight >= 12f && gapRight <= 55f)
+                { climbPlan = 2; climbViaX = s.L + 2f; climbViaDir = -1; return true; }
             }
             return false;
         }
@@ -1238,10 +1255,16 @@ namespace DeskMadeline
         /// down to her ground, since a floating one's wall hangs out of reach. Height is no
         /// bar -- past the tank she rides the neutral-jump ladder.
         /// </summary>
+        internal RectangleF ProbeClimbForCheck(in IdleContext ctx) => FindClimbable(ctx);
+        internal int ClimbPlanForCheck => climbPlan;
+        internal float ClimbViaXForCheck => climbViaX;
+        internal int ClimbViaDirForCheck => climbViaDir;
+
         RectangleF FindClimbable(in IdleContext ctx)
         {
             if (ctx.Windows.Count == 0) return RectangleF.Empty;
             RectangleF room = RoomAround(ctx);
+            int under = 0, occluded = 0, unreachable = 0;
             for (int attempt = 0; attempt < 8; attempt++)
             {
                 var window = ctx.Windows[rng.Next(ctx.Windows.Count)];
@@ -1252,20 +1275,27 @@ namespace DeskMadeline
                 // From underneath, a window is hollow: its borders are around her, not
                 // ahead of her, and there is no wall to walk into. Only from outside.
                 if (ctx.Player.Pos.X > rect.Left - 4f && ctx.Player.Pos.X < rect.Right + 4f)
-                    continue;
-                // And the border she would grab must actually be solid -- occlusion
-                // subtracts hidden border pieces out of the world.
-                float wallX = ctx.Player.Pos.X < rect.Left ? rect.Left : rect.Right;
+                { under++; continue; }
+                if (NearAPuffer(ctx, new PointF(rect.Left + rect.Width / 2f, rect.Top))) continue;
+                if (!ClassifyReach(ctx, rect)) { unreachable++; continue; }
+                // The border the plan would grab must actually be solid -- occlusion
+                // subtracts hidden border pieces out of the world. Which side that is
+                // depends on the route: a leap lands on the side facing the assist wall.
+                float wallX = climbPlan == 2
+                    ? (climbViaDir > 0 ? rect.Left : rect.Right)
+                    : (ctx.Player.Pos.X < rect.Left + rect.Width / 2f ? rect.Left : rect.Right);
                 bool wallThere = false;
                 foreach (Solid s in ctx.Solids)
                     if (s.L < wallX + 5f && s.R > wallX - 5f &&
                         s.T < rect.Bottom - 2f && s.B > rect.Top + 2f)
                     { wallThere = true; break; }
-                if (!wallThere) continue;
-                if (NearAPuffer(ctx, new PointF(rect.Left + rect.Width / 2f, rect.Top))) continue;
-                if (!ClassifyReach(ctx, rect)) continue;
+                if (!wallThere) { occluded++; continue; }
                 return rect;
             }
+            // The scan came up dry: say why, so the diary answers what a shrug cannot.
+            if (under + occluded + unreachable > 0)
+                PetWindow.Log($"idle: climb scan empty: under {under},"
+                    + $" occluded {occluded}, unreachable {unreachable}");
             return RectangleF.Empty;
         }
 

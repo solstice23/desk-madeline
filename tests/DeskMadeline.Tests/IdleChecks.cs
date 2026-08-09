@@ -525,6 +525,42 @@ static class IdleChecks
         Check("no up-dash where the dash itself would move the window", !moonDashed);
 
         Console.WriteLine();
+        Console.WriteLine("  Detecting a floating window beside another window's wall");
+        var neighborWall = new Solid { Id = new IntPtr(8), L = 220f, T = -140f, R = 224f, B = 40f };
+        var spotter = OnFloor(300f, floater, neighborWall);
+        var spotDirector = new IdleDirector(new Random(7));
+        var spotCtx = Context(spotter);
+        spotCtx.WindowsReactToDash = true;      // kevin or moon: the dash route is off the table
+        spotCtx.Windows = new List<KeyValuePair<IntPtr, RectangleF>>
+        { new KeyValuePair<IntPtr, RectangleF>(new IntPtr(9), new RectangleF(60f, -150f, 140f, 70f)) };
+        RectangleF spotted = default;
+        for (int i = 0; i < 20 && spotted.Width == 0f; i++)
+            spotted = spotDirector.ProbeClimbForCheck(spotCtx);
+        Console.WriteLine($"      the floater's bottom is 80 up and dashes are off:"
+            + $" found {spotted.Width > 0f}, plan {spotDirector.ClimbPlanForCheck}"
+            + $" via x={spotDirector.ClimbViaXForCheck:F0}");
+        Check("a neighbouring window's wall makes the floater a candidate, dashlessly",
+            spotted.Width > 0f && spotDirector.ClimbPlanForCheck == 2);
+        bool climbedIt = false;
+        if (spotted.Width > 0f)
+        {
+            int plan = spotDirector.ClimbPlanForCheck;
+            float viaX = spotDirector.ClimbViaXForCheck;
+            int viaDir = spotDirector.ClimbViaDirForCheck;
+            spotDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default, spotted);
+            spotDirector.ForceClimbPlanForCheck(plan, viaX, viaDir);
+            for (frames = 0; frames < (int)(35f / Dt); frames++)
+            {
+                Step(spotDirector, spotter, spotCtx);
+                if (spotter.onGround && Math.Abs(spotter.Pos.Y + 150f) <= 2f &&
+                    spotter.Pos.X > 62f && spotter.Pos.X < 198f) { climbedIt = true; break; }
+            }
+            Console.WriteLine($"      and she made it: {climbedIt}, at"
+                + $" {spotter.Pos.X:F0},{spotter.Pos.Y:F0} after {frames * Dt:F1}s");
+        }
+        Check("she climbs the neighbour and leaps back onto the floater", climbedIt);
+
+        Console.WriteLine();
         Console.WriteLine("  A high window beside the screen edge, reached by leaping across");
         var assistWall = new Solid { Id = new IntPtr(1), L = -260f, T = -2000f, R = -200f, B = 40f };
         var highWin = new Solid { Id = new IntPtr(9), L = -160f, T = -200f, R = -40f, B = -120f };
