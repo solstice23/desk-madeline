@@ -124,6 +124,62 @@ static class IdleChecks
             climber.onGround && Math.Abs(climber.Pos.Y + 50f) <= 2f);
 
         Console.WriteLine();
+        Console.WriteLine("  Hanging off the lip of the window she sits on");
+        var perch = new Solid { Id = new IntPtr(9), L = 60f, T = -50f, R = 160f, B = 0f };
+        var percher = OnFloor(0f, perch);
+        var perchDirector = new IdleDirector(new Random(7));
+        perchDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
+            new RectangleF(60f, -50f, 100f, 50f));
+        perchDirector.ForceSitHangForCheck();
+        var perchCtx = Context(percher);
+        bool stoodOnTop = false, hungBelowLip = false, backOverLip = false;
+        for (frames = 0; frames < (int)(40f / Dt); frames++)
+        {
+            Step(perchDirector, percher, perchCtx);
+            if (perchDirector.Current != IdleDirector.Activity.ClimbWindow) break;
+            if (percher.onGround && Math.Abs(percher.Pos.Y + 50f) <= 2f) stoodOnTop = true;
+            if (stoodOnTop && percher.State == Player.StClimb &&
+                percher.Pos.Y > -48f && percher.Pos.Y < -15f) hungBelowLip = true;
+            if (hungBelowLip && percher.onGround && Math.Abs(percher.Pos.Y + 50f) <= 2f)
+            { backOverLip = true; break; }
+        }
+        Console.WriteLine($"      stood on top: {stoodOnTop}; hung below the lip:"
+            + $" {hungBelowLip}; climbed back over: {backOverLip}");
+        Check("from the top she swings below the lip, hangs, and climbs back over",
+            stoodOnTop && hungBelowLip && backOverLip);
+
+        Console.WriteLine();
+        Console.WriteLine("  Jumping off a ledge instead of walking off it");
+        var high = new Solid { Id = new IntPtr(1), L = -500f, T = 0f, R = 0f, B = 40f };
+        var lower = new Solid { Id = new IntPtr(1), L = 0f, T = 60f, R = 500f, B = 100f };
+        var leaper = new Player
+        {
+            Solids = new List<Solid> { high, lower },
+            MinX = -100000f,
+            MaxX = 100000f,
+            FreezeFramesEnabled = false,
+            Dashes = 1,
+            Facing = 1,
+            Pos = new PointF(-80f, 0f)
+        };
+        for (int i = 0; i < 5; i++) leaper.Update(Dt, new PetInput());
+        var leapDirector = new IdleDirector(new Random(7));
+        leapDirector.ForceActivityForCheck(IdleDirector.Activity.Wander, new PointF(200f, 60f));
+        var leapCtx = Context(leaper);
+        bool leapt = false;
+        for (frames = 0; frames < (int)(12f / Dt); frames++)
+        {
+            Step(leapDirector, leaper, leapCtx);
+            if (leaper.Pos.X > -30f && leaper.Pos.X < 30f && leaper.Speed.Y < -60f) leapt = true;
+            if (Math.Abs(leaper.Pos.X - 200f) <= 3f && leaper.onGround) break;
+        }
+        Console.WriteLine($"      at the drop to the lower floor: jumped {leapt}, and she is"
+            + $" at {leaper.Pos.X:F0},{leaper.Pos.Y:F0} after {frames * Dt:F1}s");
+        Check("she leaves the ledge with a jump, the way a player would", leapt);
+        Check("and lands on the lower floor and carries on",
+            Math.Abs(leaper.Pos.X - 200f) <= 3f && leaper.onGround);
+
+        Console.WriteLine();
         Console.WriteLine("  Scaling a wall taller than the tank");
         var tall = new Solid { Id = new IntPtr(9), L = 60f, T = -400f, R = 160f, B = 0f };
         var scaler = OnFloor(0f, tall);
@@ -277,6 +333,41 @@ static class IdleChecks
             + $" {crosser.Pos.X:F0},{crosser.Pos.Y:F0} after {frames * Dt:F1}s");
         Check("she scales the seam, walks its top, and drops onto the other monitor",
             Math.Abs(crosser.Pos.X - 300f) <= 3f && crosser.onGround);
+
+        Console.WriteLine();
+        Console.WriteLine("  Not pinned by a crossing that cannot work");
+        var pocketFloor = new Solid { Id = new IntPtr(1), L = -500f, T = 0f, R = 0f, B = 40f };
+        var pocketWall = new Solid { Id = new IntPtr(1), L = 0f, T = -2000f, R = 100f, B = 40f };
+        var pocketRoof = new Solid { Id = new IntPtr(1), L = -60f, T = -120f, R = 0f, B = -100f };
+        var pinned = new Player
+        {
+            Solids = new List<Solid> { pocketFloor, pocketWall, pocketRoof },
+            MinX = -100000f,
+            MaxX = 100000f,
+            FreezeFramesEnabled = false,
+            Dashes = 1,
+            Facing = 1,
+            Pos = new PointF(-200f, 0f)
+        };
+        for (int i = 0; i < 5; i++) pinned.Update(Dt, new PetInput());
+        var pinDirector = new IdleDirector(new Random(7));
+        pinDirector.ForceActivityForCheck(IdleDirector.Activity.Wander, new PointF(300f, 0f));
+        var pinCtx = Context(pinned);
+        pinCtx.Monitors = new List<RectangleF>
+        {
+            new RectangleF(-400f, -300f, 400f, 340f),
+            new RectangleF(100f, -300f, 500f, 340f),
+        };
+        int freed = -1;
+        for (frames = 0; frames < (int)(20f / Dt); frames++)
+        {
+            Step(pinDirector, pinned, pinCtx);
+            if (pinDirector.Current != IdleDirector.Activity.Wander) { freed = frames; break; }
+        }
+        Console.WriteLine($"      a roof over the seam pocket stops the ladder: gave up"
+            + $" after {(freed < 0 ? -1f : freed * Dt):F1}s (forever, before)");
+        Check("a ladder gaining no height is a stall, and she gives it up",
+            freed >= 0 && freed * Dt < 12f);
 
         Console.WriteLine();
         Console.WriteLine("  What she never does uninvited");

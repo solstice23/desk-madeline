@@ -95,6 +95,8 @@ namespace DeskMadeline
         Glider targetJelly;
         int carryStage;
         float bestDist, stall;
+        float bestClimbY;
+        bool crossingBudgeted;
         readonly Dictionary<Activity, float> lastPicked = new Dictionary<Activity, float>();
         readonly Dictionary<Activity, float> shunnedUntil = new Dictionary<Activity, float>();
         readonly HashSet<IntPtr> knownWindows = new HashSet<IntPtr>();
@@ -108,10 +110,23 @@ namespace DeskMadeline
         int jumpHoldFrames;
         int neutralFrames;
         int wallSide;
+        enum ClimbIntent { Up, Down, Hang, NeutralHop, LeapAcross }
+        ClimbIntent climbIntent;
+        float intentT;
+        float climbStartY;
+        bool prevClimbing;
+        bool pendingLeap;
         float hangFor;
         int hangEdgeDir;
         float legHopX = float.NaN;
         float legDashX = float.NaN;
+        bool legLedgeJump;
+        int sitStage;
+        float sitT, sitPause;
+        bool sitHang, forceSitHang;
+        int lipDir;
+
+        internal void ForceSitHangForCheck() => forceSitHang = true;
 
         /// <summary>
         /// One leg in four gets a skip at some point along it, and a long one may get a dash
@@ -126,6 +141,7 @@ namespace DeskMadeline
             legDashX = !ctx.WindowsAreKevin && Math.Abs(span) > 140f && rng.NextDouble() < .35
                 ? ctx.Player.Pos.X + span * (.2f + (float)rng.NextDouble() * .3f)
                 : float.NaN;
+            legLedgeJump = rng.NextDouble() < .7;
         }
 
         internal void ForceLegDashForCheck(float x) => legDashX = x;
@@ -259,7 +275,10 @@ namespace DeskMadeline
 
                 case Activity.WatchCursor:
                     FaceCursor(ref input, ctx);
-                    if (cursorStillFor > 3f) Finish(ctx);
+                    // Give the watching a couple of seconds of life before deciding the
+                    // cursor has gone quiet -- beginning and instantly finishing a dozen
+                    // times a minute is a tic, not attention.
+                    if (activityTime > 2f && cursorStillFor > 3f) Finish(ctx);
                     Drain(dt, moving: false, resting: true);
                     break;
 
@@ -290,10 +309,15 @@ namespace DeskMadeline
             phase = Phase.Telegraph;
             phaseTime = 0f;
             bestDist = float.MaxValue;
+            bestClimbY = float.MaxValue;
+            crossingBudgeted = false;
             stall = 0f;
             carryStage = 0;
             hangFor = 0f;
             wallSide = 0;
+            legHopX = float.NaN;
+            legDashX = float.NaN;
+            legLedgeJump = false;
             Napping = false;
             PetWindow.Log("idle: " + next);
 
@@ -360,8 +384,21 @@ namespace DeskMadeline
         /// <summary>The watchdog's verdict: this was not working; do not try it again soon.</summary>
         void Abandon(in IdleContext ctx)
         {
-            PetWindow.Log("idle: gave up on " + Current);
-            shunnedUntil[Current] = clock + 60f;
+            PetWindow.Log($"idle: gave up on {Current} at"
+                + $" {ctx.Player.Pos.X:F0},{ctx.Player.Pos.Y:F0}");
+            // Say what was standing there, so a stuck spot can be diagnosed from the diary.
+            int said = 0;
+            foreach (Solid s in ctx.Solids)
+            {
+                if (s.R < ctx.Player.Pos.X - 80f || s.L > ctx.Player.Pos.X + 80f ||
+                    s.B < ctx.Player.Pos.Y - 80f || s.T > ctx.Player.Pos.Y + 80f) continue;
+                PetWindow.Log($"idle:   nearby solid {s.L:F0},{s.T:F0}..{s.R:F0},{s.B:F0}");
+                if (++said >= 6) break;
+            }
+            // One failed leg does not condemn wandering itself -- the next leg goes
+            // somewhere else anyway. The targeted outings keep the long shun: their
+            // target was the thing that failed.
+            shunnedUntil[Current] = clock + (Current == Activity.Wander ? 15f : 60f);
             Begin(Activity.Rest, ctx);
         }
 
@@ -376,7 +413,9 @@ namespace DeskMadeline
             var scores = new List<(Activity What, float Score)>
             {
                 (Activity.Wander, .4f + energy * .6f + Novelty(Activity.Wander)),
-                (Activity.WatchCursor, cursorNearFor > 0f && cursorStillFor < 1f ? 1.2f : .05f),
+                (Activity.WatchCursor,
+                    cursorNearFor > .5f && cursorStillFor < .5f &&
+                    Since(Activity.WatchCursor) > 20f ? 1.2f : 0f),
             };
             // Sleep is earned: tired, or a long while awake. Offering it fresh out of a nap
             // made her doze her whole day away.
@@ -448,19 +487,27 @@ namespace DeskMadeline
                         phase = Phase.Go;
                         phaseTime = 0f;
                         bestDist = float.MaxValue;
+                        bestClimbY = float.MaxValue;
+                        crossingBudgeted = false;
                         stall = 0f;
                     }
                     return;
                 }
-                // Sitting on what she climbed; the idle fidgets do the rest.
-                FaceCursorIfNear(ref input, ctx, dt);
-                Drain(dt, moving: false, resting: true);
-                if (phaseTime > 8f + (float)rng.NextDouble() * 14f) Finish(ctx);
+                // On top of what she climbed: not a statue. Settle, stroll to the lip,
+                // peer over it ducked, sometimes swing below and hang off the edge, climb
+                // back over, then lounge -- what a player parked on a ledge does.
+                RunTopSit(ref input, dt, ctx);
                 return;
             }
 
             bool wantTop = Current != Activity.Wander;
-            if (Arrived(ctx, wantTop)) { phase = Phase.Do; phaseTime = 0f; return; }
+            if (Arrived(ctx, wantTop))
+            {
+                phase = Phase.Do;
+                phaseTime = 0f;
+                if (wantTop) BeginTopSit(ctx);
+                return;
+            }
             bool crossing = false;
             if (Current == Activity.Wander)
             {
@@ -471,18 +518,40 @@ namespace DeskMadeline
                 // it is given the time it needs.
                 RectangleF room = RoomAround(ctx);
                 crossing = target.X < room.Left || target.X > room.Right;
-                if (crossing && activityBudget < activityTime + 25f)
-                    activityBudget = activityTime + 25f;
+                // Once per leg -- extending it every frame let a failed crossing pin her
+                // against the seam for as long as the seam cared to keep her.
+                if (crossing && !crossingBudgeted)
+                {
+                    crossingBudgeted = true;
+                    activityBudget = Math.Max(activityBudget, activityTime + 30f);
+                }
                 // Any other wall too tall to bother with ends the leg where she stands --
                 // she pauses, then strolls somewhere else, which is what choosing not to
                 // looks like.
                 if (!crossing && WallAhead(ctx, ctx.Player, dir, out float top) &&
                     ctx.Player.Pos.Y - top > 60f)
-                { phase = Phase.Do; phaseTime = 0f; return; }
+                {
+                    // Half of the time, a little hop against it first -- sizing it up --
+                    // and then the leg ends here.
+                    if (rng.Next(2) == 0 && ctx.Player.onGround)
+                    {
+                        ctx.Player.BufferJump();
+                        input.JumpPressed = true;
+                        input.JumpHeld = true;
+                    }
+                    phase = Phase.Do; phaseTime = 0f; return;
+                }
                 // Now and then a leg has a skip in it, for no reason a pet needs.
                 if (!float.IsNaN(legHopX) && Math.Abs(ctx.Player.Pos.X - legHopX) < 4f &&
                     ctx.Player.onGround && jumpHoldFrames == 0)
-                { ctx.Player.BufferJump(); jumpHoldFrames = 8; legHopX = float.NaN; }
+                {
+                    ctx.Player.BufferJump();
+                    jumpHoldFrames = 8;
+                    // Sometimes one skip asks for another a little further on.
+                    legHopX = rng.NextDouble() < .4
+                        ? ctx.Player.Pos.X + dir * (30f + (float)rng.NextDouble() * 60f)
+                        : float.NaN;
+                }
                 // And a long one may have a dash, on ground checked clear first.
                 if (!float.IsNaN(legDashX) && !ctx.WindowsAreKevin && ctx.Player.onGround &&
                     Math.Abs(ctx.Player.Speed.X) > 60f &&
@@ -502,6 +571,75 @@ namespace DeskMadeline
             Drain(dt, moving: true);
             Watchdog(dt, ctx, wantTop, busyScaling: crossing &&
                 (ctx.Player.State == Player.StClimb || !ctx.Player.onGround));
+        }
+
+        void BeginTopSit(in IdleContext ctx)
+        {
+            sitStage = 0;
+            sitT = 0f;
+            sitPause = 1.5f + (float)rng.NextDouble() * 2f;
+            sitHang = forceSitHang || rng.NextDouble() < .6;
+            forceSitHang = false;
+            lipDir = ctx.Player.Pos.X > targetRect.Left + targetRect.Width / 2f ? 1 : -1;
+        }
+
+        void RunTopSit(ref PetInput input, float dt, in IdleContext ctx)
+        {
+            Player p = ctx.Player;
+            sitT += dt;
+            // Off the window entirely: the visit is over, no drama.
+            if (p.Pos.Y > targetRect.Top + 50f) { Finish(ctx); return; }
+            switch (sitStage)
+            {
+                case 0:     // settle first
+                    FaceCursorIfNear(ref input, ctx, dt);
+                    Drain(dt, moving: false, resting: true);
+                    if (sitT > sitPause) { sitStage = 1; sitT = 0f; }
+                    break;
+
+                case 1:     // stroll to the lip
+                {
+                    float lipX = lipDir > 0 ? targetRect.Right - 5f : targetRect.Left + 5f;
+                    if (Math.Abs(p.Pos.X - lipX) <= 2f && p.onGround) { sitStage = 2; sitT = 0f; break; }
+                    input.MoveX = lipX > p.Pos.X ? 1 : -1;
+                    if (sitT > 4f) { sitStage = 6; sitT = 0f; }
+                    break;
+                }
+
+                case 2:     // peer over it, ducked
+                    input.MoveY = 1;
+                    if (sitT > 1.5f) { sitStage = sitHang ? 3 : 6; sitT = 0f; }
+                    break;
+
+                case 3:     // swing below: step off outward, catch the face on the way back
+                    if (p.onGround) input.MoveX = lipDir;
+                    else { input.MoveX = -lipDir; input.GrabHeld = true; }
+                    if (p.State == Player.StClimb) { sitStage = 4; sitT = 0f; }
+                    else if (sitT > 2f) { sitStage = 6; sitT = 0f; }
+                    break;
+
+                case 4:     // hanging off the edge of the window
+                    input.GrabHeld = true;
+                    input.MoveX = p.Facing;
+                    if (sitT > 1f + (float)rng.NextDouble() * 1.5f || p.Stamina < 30f)
+                    { sitStage = 5; sitT = 0f; }
+                    break;
+
+                case 5:     // back up and over the lip
+                    input.GrabHeld = true;
+                    input.MoveY = -1;
+                    input.MoveX = p.Facing;
+                    if (p.onGround && Math.Abs(p.Pos.Y - targetRect.Top) <= 2f)
+                    { sitStage = 6; sitT = 0f; }
+                    else if (sitT > 3f) Finish(ctx);
+                    break;
+
+                default:    // lounging; the outing ends from here
+                    FaceCursorIfNear(ref input, ctx, dt);
+                    Drain(dt, moving: false, resting: true);
+                    if (phaseTime > 8f + (float)rng.NextDouble() * 14f) Finish(ctx);
+                    break;
+            }
         }
 
         bool Arrived(in IdleContext ctx, bool wantTop)
@@ -647,28 +785,69 @@ namespace DeskMadeline
 
             if (p.State == Player.StClimb)
             {
+                // On a wall she is a player with options, and she picks one: keep going up,
+                // slide down a little, just hang, let go into the neutral-jump ladder, or
+                // leap across to an adjacent wall. The roll leans toward progress, so the
+                // outing still arrives; the rest is what being on a wall is for.
+                if (!prevClimbing) { climbStartY = p.Pos.Y; intentT = 0f; }
+                prevClimbing = true;
                 wallSide = p.Facing;
+                intentT -= dt;
+                if (intentT <= 0f) RollClimbIntent(ctx, p, scaleWithJumps);
                 if (p.Stamina < 30f && scaleWithJumps)
                 {
-                    // Let go: the airborne branch below wall-jumps, which is free.
+                    // The tank decides for her: let go, and the ladder below is free.
                     neutralFrames = 0;
                     return;
                 }
-                // Mid-climb: keep hold, keep going up; the climb-hop at the ledge is hers.
-                // Letting go before the tank is dry is what a player does too.
                 if (p.Stamina < 25f) { jumpHoldFrames = 0; return; }
-                input.GrabHeld = true;
-                input.MoveY = -1;
-                input.MoveX = p.Facing;
-                return;
+                switch (climbIntent)
+                {
+                    case ClimbIntent.NeutralHop:
+                        if (!scaleWithJumps) goto default;
+                        neutralFrames = 0;
+                        return;                     // release; the airborne branch jumps
+                    case ClimbIntent.LeapAcross:
+                        if (!scaleWithJumps) goto default;
+                        pendingLeap = true;
+                        return;                     // release now, leap next frame
+                    case ClimbIntent.Hang:
+                        input.GrabHeld = true;
+                        input.MoveX = p.Facing;
+                        return;
+                    case ClimbIntent.Down:
+                        // Not all the way back down: a few pixels of second thoughts.
+                        if (p.Pos.Y >= climbStartY - 6f)
+                        { climbIntent = ClimbIntent.Up; goto default; }
+                        input.GrabHeld = true;
+                        input.MoveY = 1;
+                        input.MoveX = p.Facing;
+                        return;
+                    default:
+                        input.GrabHeld = true;
+                        input.MoveY = -1;
+                        input.MoveX = p.Facing;
+                        return;
+                }
             }
+            prevClimbing = false;
 
             if (scaleWithJumps && !p.onGround && wallSide != 0)
             {
+                if (pendingLeap)
+                {
+                    // The leap across: a wall jump with the away direction held throws her
+                    // hard at the adjacent wall, and from here she is steered into it.
+                    pendingLeap = false;
+                    wallSide = -wallSide;
+                    p.BufferJump();
+                    jumpHoldFrames = 10;
+                    neutralFrames = 0;
+                }
                 // Between wall jumps. The jump itself is taken neutral so it stays a plain
                 // wall jump; then steer back into the wall, regrabbing if the tank allows,
                 // and jump again the moment the wall is in reach and the rise has stopped.
-                if (jumpHoldFrames == 0 && neutralFrames == 0 && p.Speed.Y >= -10f &&
+                else if (jumpHoldFrames == 0 && neutralFrames == 0 && p.Speed.Y >= -10f &&
                     WallWithin(ctx, p, wallSide, 0f, 5f, out _))
                 { p.BufferJump(); jumpHoldFrames = 12; neutralFrames = 2; }
                 if (neutralFrames > 0) { neutralFrames--; input.MoveX = 0; }
@@ -695,6 +874,11 @@ namespace DeskMadeline
                 float farRise = p.Pos.Y - farTop;
                 if (farRise > 14f && farRise <= 24f) { p.BufferJump(); jumpHoldFrames = 12; }
             }
+
+            // A player never walks off a ledge they could jump off.
+            if (legLedgeJump && p.onGround && jumpHoldFrames == 0 &&
+                Math.Abs(p.Speed.X) > 60f && LedgeAhead(ctx, p, dir))
+            { p.BufferJump(); jumpHoldFrames = 10; }
 
             if (WallAhead(ctx, p, dir, out float wallTop))
             {
@@ -724,8 +908,48 @@ namespace DeskMadeline
             input.JumpPressed = p.HasJumpBuffer;
         }
 
+        /// <summary>
+        /// What to do with the wall she is holding. Progress dominates; the leap is only
+        /// offered when there really is a wall within reach on the other side.
+        /// </summary>
+        void RollClimbIntent(in IdleContext ctx, Player p, bool scaling)
+        {
+            double roll = rng.NextDouble();
+            if (!scaling)
+            {
+                climbIntent = roll < .8 ? ClimbIntent.Up
+                    : roll < .95 ? ClimbIntent.Hang : ClimbIntent.Down;
+            }
+            else if (roll < .10 && WallWithin(ctx, p, -p.Facing, 6f, 55f, out _))
+                climbIntent = ClimbIntent.LeapAcross;
+            else if (roll < .50) climbIntent = ClimbIntent.Up;
+            else if (roll < .75) climbIntent = ClimbIntent.NeutralHop;
+            else if (roll < .88) climbIntent = ClimbIntent.Hang;
+            else climbIntent = ClimbIntent.Down;
+            intentT = climbIntent switch
+            {
+                ClimbIntent.Up => 1f + (float)rng.NextDouble() * 1.5f,
+                ClimbIntent.Down => .4f + (float)rng.NextDouble() * .5f,
+                ClimbIntent.Hang => .5f + (float)rng.NextDouble() * .7f,
+                _ => .3f,
+            };
+        }
+
         static bool WallAhead(in IdleContext ctx, Player p, int dir, out float top)
             => WallWithin(ctx, p, dir, 5f, 8f, out top);
+
+        /// <summary>The floor stops just ahead: nothing to stand on within a stride.</summary>
+        static bool LedgeAhead(in IdleContext ctx, Player p, int dir)
+        {
+            float l = Math.Min(p.Pos.X + dir * 6f, p.Pos.X + dir * 18f);
+            float r = Math.Max(p.Pos.X + dir * 6f, p.Pos.X + dir * 18f);
+            foreach (Solid s in ctx.Solids)
+            {
+                if (s.R <= l || s.L >= r) continue;
+                if (s.T >= p.Pos.Y - 2f && s.T <= p.Pos.Y + 12f) return false;
+            }
+            return true;
+        }
 
         static bool WallWithin(in IdleContext ctx, Player p, int dir, float from, float to,
             out float top)
@@ -752,9 +976,12 @@ namespace DeskMadeline
             float dy = wantTop ? Math.Abs(targetRect.Top - ctx.Player.Pos.Y) : 0f;
             float dist = dx + dy;
             if (dist < bestDist - 1f) { bestDist = dist; stall = 0f; }
-            // Scaling a seam is honest vertical work the horizontal distance cannot see;
-            // the outing's budget still bounds it.
-            else if (!busyScaling) stall += dt;
+            // Scaling a seam is honest vertical work the horizontal distance cannot see --
+            // but only while it keeps setting a new high-water mark. A ladder bouncing in a
+            // pocket under an overhang gains nothing, and that is a stall like any other.
+            else if (busyScaling && ctx.Player.Pos.Y < bestClimbY - 1f)
+            { bestClimbY = ctx.Player.Pos.Y; stall = 0f; }
+            else stall += dt;
             if (stall > 3f) Abandon(ctx);
         }
 
@@ -862,7 +1089,9 @@ namespace DeskMadeline
                 RectangleF rect = window.Value;
                 if (!room.IntersectsWith(rect)) continue;
                 if (rect.Width < 24f) continue;
-                if (rect.Bottom < ctx.Player.Pos.Y - 8f) continue;      // wall out of reach
+                // The wall need not touch her floor: a bottom within a jump-and-grab of
+                // her feet is a wall she can start on, and the ladder does the rest.
+                if (rect.Bottom < ctx.Player.Pos.Y - 30f) continue;
                 if (ctx.Player.Pos.Y - rect.Top < 16f) continue;        // hardly a climb
                 // From underneath, a window is hollow: its borders are around her, not
                 // ahead of her, and there is no wall to walk into. Only from outside.
@@ -874,7 +1103,7 @@ namespace DeskMadeline
                 bool wallThere = false;
                 foreach (Solid s in ctx.Solids)
                     if (s.L < wallX + 5f && s.R > wallX - 5f &&
-                        s.T < ctx.Player.Pos.Y - 4f && s.B > rect.Top + 2f)
+                        s.T < ctx.Player.Pos.Y - 4f && s.B > ctx.Player.Pos.Y - 40f)
                     { wallThere = true; break; }
                 if (!wallThere) continue;
                 if (NearAPuffer(ctx, new PointF(rect.Left + rect.Width / 2f, rect.Top))) continue;
@@ -953,12 +1182,18 @@ namespace DeskMadeline
             phase = Phase.Go;
             phaseTime = 0f;
             bestDist = float.MaxValue;
+            bestClimbY = float.MaxValue;
+            crossingBudgeted = false;
             stall = 0f;
             carryStage = 0;
             hangFor = 0f;
             wallSide = 0;
             legHopX = float.NaN;
             legDashX = float.NaN;
+            legLedgeJump = true;
+            sitStage = 0;
+            sitT = 0f;
+            sitPause = 1.5f;
             Napping = false;
         }
     }
