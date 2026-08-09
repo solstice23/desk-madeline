@@ -370,6 +370,57 @@ static class IdleChecks
             freed >= 0 && freed * Dt < 12f);
 
         Console.WriteLine();
+        Console.WriteLine("  A monitor seam one pixel tall");
+        var floorLow = new Solid { Id = new IntPtr(1), L = -500f, T = 0f, R = 0f, B = 400f };
+        var floorHigh = new Solid { Id = new IntPtr(1), L = 0f, T = -1f, R = 500f, B = 399f };
+        var stepper = new Player
+        {
+            Solids = new List<Solid> { floorLow, floorHigh },
+            MinX = -100000f,
+            MaxX = 100000f,
+            FreezeFramesEnabled = false,
+            Dashes = 1,
+            Facing = 1,
+            Pos = new PointF(-100f, 0f)
+        };
+        for (int i = 0; i < 5; i++) stepper.Update(Dt, new PetInput());
+        var stepDirector = new IdleDirector(new Random(7));
+        stepDirector.ForceActivityForCheck(IdleDirector.Activity.Wander, new PointF(200f, -1f));
+        var stepCtx = Context(stepper);
+        for (frames = 0; frames < (int)(10f / Dt); frames++)
+        {
+            Step(stepDirector, stepper, stepCtx);
+            if (Math.Abs(stepper.Pos.X - 200f) <= 3f && stepper.onGround) break;
+        }
+        Console.WriteLine($"      the floor rises one pixel at x=0, the real seam between"
+            + $" the user's monitors: she is at {stepper.Pos.X:F0},{stepper.Pos.Y:F0}"
+            + $" after {frames * Dt:F1}s");
+        Check("she hops the one-pixel step instead of stalling on it",
+            Math.Abs(stepper.Pos.X - 200f) <= 3f && stepper.onGround);
+
+        Console.WriteLine();
+        Console.WriteLine("  Climbing out of a hole");
+        var pitFloor = new Solid { Id = new IntPtr(1), L = -500f, T = 0f, R = 500f, B = 40f };
+        var pitWallL = new Solid { Id = new IntPtr(1), L = -60f, T = -100f, R = -30f, B = 0f };
+        var pitWallR = new Solid { Id = new IntPtr(1), L = 30f, T = -100f, R = 60f, B = 0f };
+        var potholed = OnFloor(0f, pitWallL, pitWallR);
+        var pitDirector = new IdleDirector(new Random(7));
+        pitDirector.ForceActivityForCheck(IdleDirector.Activity.Wander, new PointF(300f, 0f));
+        var pitCtx = Context(potholed);
+        bool escaped = false;
+        for (frames = 0; frames < (int)(40f / Dt); frames++)
+        {
+            Step(pitDirector, potholed, pitCtx);
+            if (pitDirector.Current != IdleDirector.Activity.Wander &&
+                pitDirector.Current != IdleDirector.Activity.Rest) break;
+            if (potholed.onGround && (potholed.Pos.X < -62f || potholed.Pos.X > 62f) &&
+                potholed.Pos.Y <= 0f) { escaped = true; break; }
+        }
+        Console.WriteLine($"      hundred-pixel walls both sides: she is at"
+            + $" {potholed.Pos.X:F0},{potholed.Pos.Y:F0} after {frames * Dt:F1}s");
+        Check("two walled legs in a row read as a hole, and she climbs out", escaped);
+
+        Console.WriteLine();
         Console.WriteLine("  What she never does uninvited");
         Check("not one dash was pressed in any of the above", !dashedEver);
 
@@ -411,6 +462,74 @@ static class IdleChecks
             + $" dashed {kevinDashed}");
         Check("the very same rolled dash is refused when a dash could throw a window",
             !kevinDashed);
+
+        Console.WriteLine();
+        Console.WriteLine("  A window hanging above the floor, reached with an up-dash");
+        var floater = new Solid { Id = new IntPtr(9), L = 60f, T = -150f, R = 200f, B = -80f };
+        var dasher = OnFloor(0f, floater);
+        var floatDirector = new IdleDirector(new Random(7));
+        floatDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
+            new RectangleF(60f, -150f, 140f, 70f));
+        floatDirector.ForceClimbPlanForCheck(1, 55f, 1);
+        var floatCtx = Context(dasher);
+        bool upDashed = false;
+        for (frames = 0; frames < (int)(25f / Dt); frames++)
+        {
+            Step(floatDirector, dasher, floatCtx);
+            if (dasher.State == Player.StDash) upDashed = true;
+            if (dasher.onGround && Math.Abs(dasher.Pos.Y + 150f) <= 2f &&
+                dasher.Pos.X > 62f && dasher.Pos.X < 198f) break;
+        }
+        Console.WriteLine($"      its bottom is 80 up, past any jump: dashed {upDashed},"
+            + $" and she is at {dasher.Pos.X:F0},{dasher.Pos.Y:F0} after {frames * Dt:F1}s");
+        Check("she jumps, dashes up the face, grabs it, and tops out",
+            upDashed && dasher.onGround && Math.Abs(dasher.Pos.Y + 150f) <= 2f);
+
+        Console.WriteLine();
+        Console.WriteLine("  The same window when a dash would move it");
+        var mover = OnFloor(0f, floater);
+        var moonDirector = new IdleDirector(new Random(7));
+        moonDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
+            new RectangleF(60f, -150f, 140f, 70f));
+        moonDirector.ForceClimbPlanForCheck(1, 55f, 1);
+        var moonCtx = Context(mover);
+        moonCtx.WindowsReactToDash = true;
+        bool moonDashed = false;
+        for (frames = 0; frames < (int)(10f / Dt); frames++)
+        {
+            Step(moonDirector, mover, moonCtx);
+            if (mover.State == Player.StDash) moonDashed = true;
+        }
+        Console.WriteLine($"      windows as moon or kevin blocks: dashed {moonDashed}");
+        Check("no up-dash where the dash itself would move the window", !moonDashed);
+
+        Console.WriteLine();
+        Console.WriteLine("  A high window beside the screen edge, reached by leaping across");
+        var assistWall = new Solid { Id = new IntPtr(1), L = -260f, T = -2000f, R = -200f, B = 40f };
+        var highWin = new Solid { Id = new IntPtr(9), L = -160f, T = -200f, R = -40f, B = -120f };
+        var leaperUp = OnFloor(0f, assistWall, highWin);
+        var viaDirector = new IdleDirector(new Random(7));
+        viaDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
+            new RectangleF(-160f, -200f, 120f, 80f));
+        viaDirector.ForceClimbPlanForCheck(2, -202f, 1);
+        var viaCtx = Context(leaperUp);
+        viaCtx.EdgesClimbable = true;
+        viaCtx.EdgeLeft = -200f;
+        viaCtx.EdgeRight = 400f;
+        bool viaDashed = false;
+        for (frames = 0; frames < (int)(35f / Dt); frames++)
+        {
+            Step(viaDirector, leaperUp, viaCtx);
+            if (leaperUp.State == Player.StDash) viaDashed = true;
+            if (leaperUp.onGround && Math.Abs(leaperUp.Pos.Y + 200f) <= 2f &&
+                leaperUp.Pos.X > -158f && leaperUp.Pos.X < -42f) break;
+        }
+        Console.WriteLine($"      its bottom is 120 up, the edge wall 40 away: she is at"
+            + $" {leaperUp.Pos.X:F0},{leaperUp.Pos.Y:F0} after {frames * Dt:F1}s"
+            + $" (dashed: {viaDashed})");
+        Check("she rides the edge up and leaps across onto the window",
+            leaperUp.onGround && Math.Abs(leaperUp.Pos.Y + 200f) <= 2f);
+        Check("without a single dash, so it works in every window mode", !viaDashed);
 
         return failed;
     }

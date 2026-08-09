@@ -13,6 +13,7 @@ namespace DeskMadeline
         public PointF Cursor;                                 // game px
         public bool ForegroundFullscreen;
         public bool WindowsAreKevin;                          // a dash would fling windows
+        public bool WindowsReactToDash;                       // kevin or moon: a dash moves them
         public bool EdgesClimbable;                           // no horizontal wrap: edge walls exist
         public float EdgeLeft, EdgeRight;                     // game px, virtual desktop extremes
         public bool SeekersDormant;
@@ -97,6 +98,10 @@ namespace DeskMadeline
         float bestDist, stall;
         float bestClimbY;
         bool crossingBudgeted;
+        int walledLegs;
+        bool trappedLeg;
+        int dashAimFrames;
+        int leapCatchFrames;
         readonly Dictionary<Activity, float> lastPicked = new Dictionary<Activity, float>();
         readonly Dictionary<Activity, float> shunnedUntil = new Dictionary<Activity, float>();
         readonly HashSet<IntPtr> knownWindows = new HashSet<IntPtr>();
@@ -145,6 +150,8 @@ namespace DeskMadeline
         }
 
         internal void ForceLegDashForCheck(float x) => legDashX = x;
+
+
 
         /// <summary>
         /// Whether a dash from here would arrive at nothing: no solid and no pufferfish
@@ -318,6 +325,12 @@ namespace DeskMadeline
             legHopX = float.NaN;
             legDashX = float.NaN;
             legLedgeJump = false;
+            walledLegs = 0;
+            trappedLeg = false;
+            pendingLeap = false;
+            dashAimFrames = 0;
+            leapCatchFrames = 0;
+            if (next != Activity.ClimbWindow && next != Activity.Inspect) climbPlan = 0;
             Napping = false;
             PetWindow.Log("idle: " + next);
 
@@ -340,6 +353,7 @@ namespace DeskMadeline
                 case Activity.ClimbWindow:
                 case Activity.Inspect:
                     targetRect = next == Activity.Inspect ? freshWindow : climbCandidate;
+                    if (next == Activity.Inspect && !ClassifyReach(ctx, targetRect)) climbPlan = 0;
                     target = new PointF(targetRect.Left + targetRect.Width / 2f, targetRect.Top);
                     // A taller wall is a longer outing; the watchdog still ends a stalled one.
                     activityBudget = 30f +
@@ -484,6 +498,7 @@ namespace DeskMadeline
                         if (activityTime > activityBudget - 4f) { Finish(ctx); return; }
                         target = WanderPoint(ctx);
                         RollLegSpice(ctx);
+                        trappedLeg = walledLegs >= 2;
                         phase = Phase.Go;
                         phaseTime = 0f;
                         bestDist = float.MaxValue;
@@ -505,6 +520,8 @@ namespace DeskMadeline
             {
                 phase = Phase.Do;
                 phaseTime = 0f;
+                walledLegs = 0;
+                trappedLeg = false;
                 if (wantTop) BeginTopSit(ctx);
                 return;
             }
@@ -518,6 +535,9 @@ namespace DeskMadeline
                 // it is given the time it needs.
                 RectangleF room = RoomAround(ctx);
                 crossing = target.X < room.Left || target.X > room.Right;
+                // Two legs in a row ending at walls means the ground here is a hole, not a
+                // floor with scenery: the next leg climbs out the way a player would.
+                crossing |= trappedLeg;
                 // Once per leg -- extending it every frame let a failed crossing pin her
                 // against the seam for as long as the seam cared to keep her.
                 if (crossing && !crossingBudgeted)
@@ -531,6 +551,7 @@ namespace DeskMadeline
                 if (!crossing && WallAhead(ctx, ctx.Player, dir, out float top) &&
                     ctx.Player.Pos.Y - top > 60f)
                 {
+                    walledLegs++;
                     // Half of the time, a little hop against it first -- sizing it up --
                     // and then the leg ends here.
                     if (rng.Next(2) == 0 && ctx.Player.onGround)
@@ -561,15 +582,43 @@ namespace DeskMadeline
                     if (DashPathClear(ctx, dir)) ctx.Player.BufferDash();
                 }
             }
+            if (wantTop && climbPlan == 1 && ctx.Player.State != Player.StClimb &&
+                ctx.Player.Pos.Y > targetRect.Bottom - 4f)
+            {
+                RunDashUp(ref input, dt, ctx);
+                Drain(dt, moving: true);
+                Watchdog(dt, ctx, true, busyScaling: !ctx.Player.onGround);
+                return;
+            }
+            float aimX = target.X;
+            if (wantTop && climbPlan == 2 && Math.Abs(ctx.Player.Pos.X - climbViaX) < 14f)
+            {
+                aimX = climbViaX;
+                // High enough beside it: leap across, from the grab or from the ladder.
+                if (ctx.Player.Pos.Y <= targetRect.Bottom - 8f)
+                {
+                    if (ctx.Player.State == Player.StClimb)
+                    { climbIntent = ClimbIntent.LeapAcross; intentT = .4f; }
+                    else if (!ctx.Player.onGround && wallSide != 0)
+                        pendingLeap = true;
+                }
+            }
+            else if (wantTop && climbPlan == 2 && ctx.Player.Pos.Y > targetRect.Bottom - 4f &&
+                ctx.Player.onGround)
+                aimX = climbViaX;
             // An outing that targets a top climbs whatever it takes; a stroll still climbs
             // what is modest -- a window in the way is half the fun of a desk -- and a
             // crossing leg climbs like an outing, because the seam demands it.
-            Walk(ref input, dt, ctx, target.X,
+            Walk(ref input, dt, ctx, aimX,
                 climbUpTo: wantTop || crossing ? float.MaxValue : 60f,
                 scaleWithJumps: wantTop || crossing);
             input.DashPressed = ctx.Player.HasDashBuffer;
             Drain(dt, moving: true);
-            Watchdog(dt, ctx, wantTop, busyScaling: crossing &&
+            // The via-edge route walks past the target's x on the way to the edge, which
+            // poisons a straight-line best-distance; while she is on the wall or in the
+            // air of that plan, progress is measured as new height instead.
+            Watchdog(dt, ctx, wantTop, busyScaling:
+                (crossing || (wantTop && climbPlan == 2)) &&
                 (ctx.Player.State == Player.StClimb || !ctx.Player.onGround));
         }
 
@@ -717,6 +766,53 @@ namespace DeskMadeline
         }
 
         /// <summary>
+        /// The jump-and-up-dash that reaches a window hanging above the floor: walk under
+        /// its wall, jump, dash straight up beside the face, and put the grab out. Only
+        /// offered where a dash cannot move the window.
+        /// </summary>
+        void RunDashUp(ref PetInput input, float dt, in IdleContext ctx)
+        {
+            Player p = ctx.Player;
+            if (p.onGround && (Math.Abs(p.Pos.X - climbViaX) > 3f || Math.Abs(p.Speed.X) > 30f))
+            {
+                // Settle at the spot first: jumping with leftover run speed drifts her
+                // under the window during the rise, and the dash leaves from the wrong place.
+                Walk(ref input, dt, ctx, climbViaX, climbUpTo: 0f);
+                return;
+            }
+            if (p.onGround)
+            {
+                if (jumpHoldFrames == 0) { p.BufferJump(); jumpHoldFrames = 12; }
+            }
+            else if (dashAimFrames == 0 && p.State != Player.StDash &&
+                !ctx.WindowsReactToDash && p.Speed.Y > -25f && p.Dashes > 0)
+            {
+                // The top of the jump, where the dash buys the most height.
+                p.BufferDash();
+                dashAimFrames = 8;
+            }
+            if (dashAimFrames > 0 || p.State == Player.StDash)
+            {
+                // Straight up, held across every frame the dash could read its aim from,
+                // and no sideways drift until it is done. The dash aims from AimX/AimY --
+                // the port's Input.GetAimVector -- not from MoveX/MoveY.
+                if (dashAimFrames > 0) dashAimFrames--;
+                input.MoveY = -1;
+                input.AimY = -1;
+                input.AimX = 0;
+            }
+            else if (!p.onGround && p.Speed.Y > -10f && p.Dashes == 0)
+            {
+                // Dash spent and past its rise: press into the face with the grab out.
+                input.MoveX = climbViaDir;
+                input.GrabHeld = true;
+            }
+            if (jumpHoldFrames > 0) { jumpHoldFrames--; input.JumpHeld = true; }
+            input.JumpPressed = p.HasJumpBuffer;
+            input.DashPressed = p.HasDashBuffer;
+        }
+
+        /// <summary>
         /// Up the side of the screen a little way, hold on, look at the desk from there,
         /// and drop off. The edge walls are real solids the shell builds, so this is the
         /// same grab and climb as any wall.
@@ -837,12 +933,15 @@ namespace DeskMadeline
                 if (pendingLeap)
                 {
                     // The leap across: a wall jump with the away direction held throws her
-                    // hard at the adjacent wall, and from here she is steered into it.
+                    // hard at the adjacent wall, and from here she is steered into it. The
+                    // catch that follows may land on a nearly dry tank, so the grab gate
+                    // opens for a moment.
                     pendingLeap = false;
                     wallSide = -wallSide;
                     p.BufferJump();
                     jumpHoldFrames = 10;
                     neutralFrames = 0;
+                    leapCatchFrames = 40;
                 }
                 // Between wall jumps. The jump itself is taken neutral so it stays a plain
                 // wall jump; then steer back into the wall, regrabbing if the tank allows,
@@ -850,11 +949,17 @@ namespace DeskMadeline
                 else if (jumpHoldFrames == 0 && neutralFrames == 0 && p.Speed.Y >= -10f &&
                     WallWithin(ctx, p, wallSide, 0f, 5f, out _))
                 { p.BufferJump(); jumpHoldFrames = 12; neutralFrames = 2; }
+                if (leapCatchFrames > 0) leapCatchFrames--;
                 if (neutralFrames > 0) { neutralFrames--; input.MoveX = 0; }
                 else
                 {
                     input.MoveX = wallSide;
-                    input.GrabHeld = p.Stamina > 35f;
+                    // Below 35 the regrab is refused -- a climb at a nearly dry tank lets
+                    // go the same frame it catches, and the chatter turns buffered ladder
+                    // jumps into 27.5-stamina climb jumps. The exception is the moment
+                    // after a leap, when the catch is the whole point.
+                    input.GrabHeld = p.Stamina > 35f ||
+                        (leapCatchFrames > 0 && p.Stamina > 5f);
                 }
                 if (jumpHoldFrames > 0) { jumpHoldFrames--; input.JumpHeld = true; }
                 input.JumpPressed = p.HasJumpBuffer;
@@ -885,8 +990,9 @@ namespace DeskMadeline
                 float rise = p.Pos.Y - wallTop;      // how far above her feet it stands
                 if (rise <= 14f)
                 {
-                    // A step: hop it. The buffer is the same one the keyboard fills.
-                    if (p.onGround && jumpHoldFrames == 0) { p.BufferJump(); jumpHoldFrames = 8; }
+                    // A step: hop it -- barely, for a seam a pixel or two tall.
+                    if (p.onGround && jumpHoldFrames == 0)
+                    { p.BufferJump(); jumpHoldFrames = rise <= 4f ? 2 : 8; }
                 }
                 else if (rise <= 24f)
                 {
@@ -954,7 +1060,9 @@ namespace DeskMadeline
         static bool WallWithin(in IdleContext ctx, Player p, int dir, float from, float to,
             out float top)
         {
-            // A strip at her knees and chest, some way ahead; the floor underfoot does not count.
+            // A strip at her knees and chest, some way ahead. The floor underfoot must not
+            // count, but a monitor seam one pixel taller than her floor must -- she stalled
+            // on exactly that -- so the cut is a quarter pixel above her feet, not a whole one.
             float l = Math.Min(p.Pos.X + dir * from, p.Pos.X + dir * to);
             float r = Math.Max(p.Pos.X + dir * from, p.Pos.X + dir * to);
             top = float.MaxValue;
@@ -962,7 +1070,7 @@ namespace DeskMadeline
             foreach (Solid s in ctx.Solids)
             {
                 if (s.R <= l || s.L >= r) continue;
-                if (s.B <= p.Pos.Y - 10f || s.T >= p.Pos.Y - 1f) continue;
+                if (s.B <= p.Pos.Y - 10f || s.T >= p.Pos.Y - .25f) continue;
                 found = true;
                 top = Math.Min(top, s.T);
             }
@@ -1073,6 +1181,45 @@ namespace DeskMadeline
         }
 
         RectangleF climbCandidate;
+        // How the chosen window is reached: 0 walk to its wall, 1 jump-and-up-dash to grab
+        // it, 2 climb the screen edge beside it and leap across.
+        int climbPlan;
+        float climbViaX;
+        int climbViaDir;
+
+        internal void ForceClimbPlanForCheck(int plan, float viaX, int viaDir)
+        { climbPlan = plan; climbViaX = viaX; climbViaDir = viaDir; }
+
+        /// <summary>
+        /// Whether and how she could get on top of this window from where she stands. A wall
+        /// reaching near her feet is walked to; a bottom within jump-plus-up-dash height is
+        /// dashed to, but never in kevin or moon mode, where a dash moves the window; one
+        /// hugging the screen edge is reached by climbing the edge and leaping across.
+        /// </summary>
+        bool ClassifyReach(in IdleContext ctx, RectangleF rect)
+        {
+            float bottomRise = ctx.Player.Pos.Y - rect.Bottom;
+            bool fromLeft = ctx.Player.Pos.X < rect.Left + rect.Width / 2f;
+            climbPlan = 0;
+            if (bottomRise <= 30f) return true;
+            if (!ctx.WindowsReactToDash && bottomRise <= 95f)
+            {
+                climbPlan = 1;
+                climbViaX = fromLeft ? rect.Left - 5f : rect.Right + 5f;
+                climbViaDir = fromLeft ? 1 : -1;
+                return true;
+            }
+            if (ctx.EdgesClimbable)
+            {
+                float gapL = rect.Left - ctx.EdgeLeft;
+                float gapR = ctx.EdgeRight - rect.Right;
+                if (gapL >= 0f && gapL <= 55f)
+                { climbPlan = 2; climbViaX = ctx.EdgeLeft - 2f; climbViaDir = 1; return true; }
+                if (gapR >= 0f && gapR <= 55f)
+                { climbPlan = 2; climbViaX = ctx.EdgeRight + 2f; climbViaDir = -1; return true; }
+            }
+            return false;
+        }
 
         /// <summary>
         /// A window she can actually get on top of from where she stands: its wall must come
@@ -1089,9 +1236,6 @@ namespace DeskMadeline
                 RectangleF rect = window.Value;
                 if (!room.IntersectsWith(rect)) continue;
                 if (rect.Width < 24f) continue;
-                // The wall need not touch her floor: a bottom within a jump-and-grab of
-                // her feet is a wall she can start on, and the ladder does the rest.
-                if (rect.Bottom < ctx.Player.Pos.Y - 30f) continue;
                 if (ctx.Player.Pos.Y - rect.Top < 16f) continue;        // hardly a climb
                 // From underneath, a window is hollow: its borders are around her, not
                 // ahead of her, and there is no wall to walk into. Only from outside.
@@ -1103,10 +1247,11 @@ namespace DeskMadeline
                 bool wallThere = false;
                 foreach (Solid s in ctx.Solids)
                     if (s.L < wallX + 5f && s.R > wallX - 5f &&
-                        s.T < ctx.Player.Pos.Y - 4f && s.B > ctx.Player.Pos.Y - 40f)
+                        s.T < rect.Bottom - 2f && s.B > rect.Top + 2f)
                     { wallThere = true; break; }
                 if (!wallThere) continue;
                 if (NearAPuffer(ctx, new PointF(rect.Left + rect.Width / 2f, rect.Top))) continue;
+                if (!ClassifyReach(ctx, rect)) continue;
                 return rect;
             }
             return RectangleF.Empty;
@@ -1191,6 +1336,12 @@ namespace DeskMadeline
             legHopX = float.NaN;
             legDashX = float.NaN;
             legLedgeJump = true;
+            walledLegs = 0;
+            trappedLeg = false;
+            pendingLeap = false;
+            dashAimFrames = 0;
+            leapCatchFrames = 0;
+            climbPlan = 0;
             sitStage = 0;
             sitT = 0f;
             sitPause = 1.5f;

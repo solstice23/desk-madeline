@@ -1889,6 +1889,7 @@ namespace DeskMadeline
                 Cursor = new PointF(cursor.X / s, cursor.Y / s),
                 ForegroundFullscreen = foregroundFullscreen,
                 WindowsAreKevin = kevinMode,
+                WindowsReactToDash = kevinMode || moonMode,
                 EdgesClimbable = (edgeWrapMode & 1) == 0,
                 EdgeLeft = player.MinX,
                 EdgeRight = player.MaxX,
