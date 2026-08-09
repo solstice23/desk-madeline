@@ -84,6 +84,16 @@ For anything touching `Player.cs`, add a check there rather than a throwaway har
 run the app as a smoke test: frame-level assertions and a smoke test together are the bar
 for "verified".
 
+When porting something new, most round trips are omissions: a reference method never read,
+or set aside as "only drawing". Read the whole reference class — every override, `Render`
+included — and port from a written member list before declaring anything done; "Read all of
+the reference" in `AGENTS.md` is the rule and the cautionary tale. For anything that draws,
+the smoke test is visual and stronger than a glance: burst-capture the entity on screen and
+diff consecutive frames, since a check cannot see a sprite vibrating by a pixel or an edge
+gone soft to resampling. When a visual bug is reported anyway, reproduce it with such an
+instrument *before* changing code, and consider it fixed when the same instrument goes
+quiet.
+
 `Player` exposes most state publicly (`Pos`, `Speed`, `Ducking`, `Dashes`, `Stamina`,
 `onGround`); read the few private timers with reflection rather than widening the API for
 a test.

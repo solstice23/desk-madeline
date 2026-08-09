@@ -87,6 +87,45 @@ without its engine context silently changes input windows.
   is impossible if dash aim is gated at the 0.7 movement threshold.
 - Port vanilla's default bindings, including the ones deliberately left unbound.
 
+## Read all of the reference; omission is the expensive bug
+
+Most of a fresh port's round trips are not subtle mismatches — they are parts of the
+reference that were never read, or were read and silently set aside. The pufferfish took
+four rounds of fixes, and the first and largest existed only because `Render` had not
+been ported at all: the black outline, the arc of marks that watches the player, and the
+one-pixel eye are most of what a puffer looks like, and none of them live in `Update`.
+Reading the whole class before writing anything is cheaper than debugging the missing
+parts in afterwards, one user report at a time.
+
+- Before porting an entity, read its reference class end to end and write out its member
+  list: the constructor and every component it `Add`s, every override — `Added`,
+  `Update`, `Render`, `OnSquish`, the colliders and their callbacks — plus the
+  sprite-bank entry, the sounds and the particles. Port from that list and tick items
+  off. Anything left out is a decision that gets written down with its reason ("the
+  desktop has no TouchSwitch to turn on"), never a silence. "It's only drawing" is not
+  a reason; there is no *only drawing*. Wigglers, sine offsets, outlines and per-frame
+  render math are behavior, and the reference draws much of an entity's character in
+  `Render`.
+- The same thoroughness applies one level down: when entity code calls the engine, read
+  the engine method and port its semantics, not a from-memory paraphrase. Monocle's
+  `Move*` measures against `ExactPosition` — position *plus* the pending sub-pixel
+  counter. A paraphrase that measured against position alone re-integrated the same
+  half-pixel error every frame and vibrated the whole sprite at frame rate; it passed
+  every numeric check, and cost a round trip that reading `Actor.cs` would have spared.
+  Prefer the port's existing, already-verified helpers over writing new copies.
+- Rounding happens once, in one space. Anything that lands on the world grid is floored
+  in world coordinates and then offset by the same rounded anchor its stamp hangs on;
+  flooring against a fractional position puts that fraction into the sum twice with two
+  different roundings, and the result crawls. Relatedly, a GDI+ transform resamples even
+  at rotation zero and scale one — draw plain unless actually turned or squashed.
+- What does slip through shows up on screen, not in the checks, so the backstop is
+  instrumented looking: burst-capture the entity and diff consecutive frames, on a stage
+  with nothing live behind it. Reproduce a reported bug with such an instrument *before*
+  changing code, and call it fixed when the same instrument goes quiet — a plausible fix
+  shipped unmeasured is how one report becomes four.
+- Env-gated spawn and trace hooks are fine while hunting and come back out before the
+  commit. The code and the checks carry the lesson afterwards, not the scaffolding.
+
 ## Verifying movement
 
 - Prefer a headless harness that drives `Player.Update` at a fixed 60Hz over synthetic
