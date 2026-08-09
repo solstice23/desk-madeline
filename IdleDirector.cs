@@ -705,8 +705,11 @@ namespace DeskMadeline
         {
             Player p = ctx.Player;
             if (!wantTop) return Math.Abs(p.Pos.X - target.X) <= 3f && p.onGround;
+            // Live window rects jitter a few pixels between polls; standing on the top,
+            // or a hair above it, is standing on it -- demanding the stored pixel had her
+            // working a wall she was already on top of.
             return p.onGround && p.Pos.X > targetRect.Left + 2f && p.Pos.X < targetRect.Right - 2f &&
-                Math.Abs(p.Pos.Y - targetRect.Top) <= 2f;
+                p.Pos.Y <= targetRect.Top + 6f && p.Pos.Y >= targetRect.Top - 10f;
         }
 
         // ===== the jellyfish errand =====
@@ -786,7 +789,7 @@ namespace DeskMadeline
             NavStep step = route[routeAt];
             if (step.Seg >= navSegs.Count) { Abandon(ctx); return; }
             NavSeg seg = navSegs[step.Seg];
-            if (p.onGround && Math.Abs(p.Pos.Y - seg.Y) <= 3f &&
+            if (p.onGround && p.Pos.Y <= seg.Y + 6f && p.Pos.Y >= seg.Y - 10f &&
                 p.Pos.X >= seg.L - 3f && p.Pos.X <= seg.R + 3f)
             {
                 routeAt++;
@@ -1048,9 +1051,20 @@ namespace DeskMadeline
                 // Between wall jumps. The jump itself is taken neutral so it stays a plain
                 // wall jump; then steer back into the wall, regrabbing if the tank allows,
                 // and jump again the moment the wall is in reach and the rise has stopped.
+                // Unless a second wall stands within a jump on the other side: then this is
+                // a chimney, and the way up it is back and forth between the two.
                 else if (jumpHoldFrames == 0 && neutralFrames == 0 && p.Speed.Y >= -10f &&
                     WallWithin(ctx, p, wallSide, 0f, 5f, out _))
-                { p.BufferJump(); jumpHoldFrames = 12; neutralFrames = 2; }
+                {
+                    p.BufferJump();
+                    jumpHoldFrames = 12;
+                    if (WallWithin(ctx, p, -wallSide, 6f, 45f, out _))
+                    {
+                        wallSide = -wallSide;
+                        neutralFrames = 0;
+                    }
+                    else neutralFrames = 2;
+                }
                 if (leapCatchFrames > 0) leapCatchFrames--;
                 if (neutralFrames > 0) { neutralFrames--; input.MoveX = 0; }
                 else

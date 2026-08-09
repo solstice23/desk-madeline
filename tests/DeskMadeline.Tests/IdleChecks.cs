@@ -461,6 +461,63 @@ static class IdleChecks
         Check("two walled legs in a row read as a hole, and she climbs out", escaped);
 
         Console.WriteLine();
+        Console.WriteLine("  Two close walls are a chimney, hopped between");
+        var chimneyL = new Solid { Id = new IntPtr(8), L = 0f, T = -300f, R = 20f, B = 40f };
+        var chimneyR = new Solid { Id = new IntPtr(8), L = 50f, T = -300f, R = 70f, B = 40f };
+        var sweep = OnFloor(35f, chimneyL, chimneyR);
+        var sweepDirector = new IdleDirector(new Random(7));
+        sweepDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
+            new RectangleF(0f, -300f, 20f, 340f));
+        var sweepCtx = Context(sweep);
+        float chimneyMinX = 999f, chimneyMaxX = -999f;
+        bool toppedChimney = false;
+        for (frames = 0; frames < (int)(30f / Dt); frames++)
+        {
+            Step(sweepDirector, sweep, sweepCtx);
+            if (!sweep.onGround && sweep.Pos.Y < -80f && sweep.Pos.Y > -280f)
+            {
+                chimneyMinX = Math.Min(chimneyMinX, sweep.Pos.X);
+                chimneyMaxX = Math.Max(chimneyMaxX, sweep.Pos.X);
+            }
+            if (sweep.onGround && Math.Abs(sweep.Pos.Y + 300f) <= 6f) { toppedChimney = true; break; }
+        }
+        Console.WriteLine($"      three hundred pixels between walls thirty apart: topped"
+            + $" {toppedChimney} in {frames * Dt:F1}s, swinging x {chimneyMinX:F0}..{chimneyMaxX:F0}");
+        Check("she reaches the top of the chimney", toppedChimney);
+        Check("and does it bouncing between both walls, not riding one",
+            chimneyMaxX - chimneyMinX > 14f);
+
+        Console.WriteLine();
+        Console.WriteLine("  Already standing on the destination");
+        var plinth = new Solid { Id = new IntPtr(9), L = 60f, T = -50f, R = 160f, B = 0f };
+        var settled = new Player
+        {
+            Solids = new List<Solid> { Floor(), plinth },
+            MinX = -100000f,
+            MaxX = 100000f,
+            FreezeFramesEnabled = false,
+            Dashes = 1,
+            Facing = 1,
+            Pos = new PointF(110f, -50f)
+        };
+        for (int i = 0; i < 5; i++) settled.Update(Dt, new PetInput());
+        var settledDirector = new IdleDirector(new Random(7));
+        settledDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
+            new RectangleF(60f, -52f, 100f, 52f));      // stored top two pixels stale
+        var settledCtx = Context(settled);
+        bool everJumped = false;
+        for (frames = 0; frames < (int)(3f / Dt); frames++)
+        {
+            Step(settledDirector, settled, settledCtx);
+            if (settled.Speed.Y < -60f) everJumped = true;
+        }
+        Console.WriteLine($"      forced to climb the window she is standing on, its stored"
+            + $" top two pixels stale: jumped {everJumped}, at"
+            + $" {settled.Pos.X:F0},{settled.Pos.Y:F0}");
+        Check("standing on the top already counts as being there, jitter and all",
+            !everJumped && settled.onGround && Math.Abs(settled.Pos.Y + 50f) <= 2f);
+
+        Console.WriteLine();
         Console.WriteLine("  What she never does uninvited");
         Check("not one dash was pressed in any of the above", !dashedEver);
 
