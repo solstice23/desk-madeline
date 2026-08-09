@@ -7,8 +7,9 @@ using DeskMadeline;
 //
 // Its only output is the same PetInput the keyboard fills, so the whole thing runs headless:
 // build a world of solids, let the director drive the real Player, and watch where she ends
-// up. The structural promise checked throughout is that she never dashes on her own -- in
-// kevin mode an autonomous dash would fling the user's windows about.
+// up. The structural promise checked throughout: a dash is never pressed uninvited -- only a
+// wander leg that rolled one and proved its corridor clear may dash, and in kevin mode,
+// where a dash flings the user's windows, never at all.
 static class IdleChecks
 {
     const float Dt = 1f / 60f;
@@ -123,20 +124,41 @@ static class IdleChecks
             climber.onGround && Math.Abs(climber.Pos.Y + 50f) <= 2f);
 
         Console.WriteLine();
-        Console.WriteLine("  Giving up gracefully");
+        Console.WriteLine("  Scaling a wall taller than the tank");
         var tall = new Solid { Id = new IntPtr(9), L = 60f, T = -400f, R = 160f, B = 0f };
-        var stuck = OnFloor(0f, tall);
-        var stuckDirector = new IdleDirector(new Random(7));
-        stuckDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
+        var scaler = OnFloor(0f, tall);
+        var scaleDirector = new IdleDirector(new Random(7));
+        scaleDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
             new RectangleF(60f, -400f, 100f, 400f));
-        var stuckCtx = Context(stuck);
+        var scaleCtx = Context(scaler);
+        for (frames = 0; frames < (int)(60f / Dt); frames++)
+        {
+            Step(scaleDirector, scaler, scaleCtx);
+            if (scaleDirector.Current != IdleDirector.Activity.ClimbWindow) break;
+            if (scaler.onGround && Math.Abs(scaler.Pos.Y + 400f) <= 2f &&
+                scaler.Pos.X > 62f && scaler.Pos.X < 158f) break;
+        }
+        Console.WriteLine($"      four hundred pixels on a 110 tank: she is at"
+            + $" {scaler.Pos.X:F0},{scaler.Pos.Y:F0} after {frames * Dt:F1}s");
+        Check("wall jumps cost nothing, so she neutral-jumps past the stamina to the top",
+            scaler.onGround && Math.Abs(scaler.Pos.Y + 400f) <= 2f);
+
+        Console.WriteLine();
+        Console.WriteLine("  Giving up gracefully");
+        var stuck = OnFloor(0f);
+        var floatingJelly = new Glider(new PointF(100f, -200f));
+        stuck.Holdables = new List<IPetHoldable> { floatingJelly };
+        var stuckDirector = new IdleDirector(new Random(7));
+        stuckDirector.ForceActivityForCheck(IdleDirector.Activity.CarryJelly,
+            floatingJelly.Pos, jelly: floatingJelly);
+        var stuckCtx = Context(stuck, gliders: new List<Glider> { floatingJelly });
         int abandoned = -1;
         for (frames = 0; frames < (int)(15f / Dt); frames++)
         {
             Step(stuckDirector, stuck, stuckCtx);
-            if (stuckDirector.Current != IdleDirector.Activity.ClimbWindow) { abandoned = frames; break; }
+            if (stuckDirector.Current != IdleDirector.Activity.CarryJelly) { abandoned = frames; break; }
         }
-        Console.WriteLine($"      a four-hundred-pixel window, more than her stamina:"
+        Console.WriteLine($"      a jellyfish two hundred pixels overhead:"
             + $" gave up after {(abandoned < 0 ? -1f : abandoned * Dt):F1}s");
         Check("the watchdog abandons what is not working", abandoned >= 0 && abandoned * Dt < 10f);
         Console.WriteLine();
@@ -196,8 +218,108 @@ static class IdleChecks
             !carrier.IsHoldingGlider && Math.Abs(jelly.Pos.X - 60f) > 15f);
 
         Console.WriteLine();
-        Console.WriteLine("  What she never does on her own");
-        Check("not one dash was pressed in any of it", !dashedEver);
+        Console.WriteLine("  Hanging off the side of the screen");
+        var edgeWall = new Solid { Id = new IntPtr(1), L = -260f, T = -2000f, R = -200f, B = 40f };
+        var hanger = OnFloor(0f, edgeWall);
+        var hangDirector = new IdleDirector(new Random(7));
+        hangDirector.ForceActivityForCheck(IdleDirector.Activity.HangOnEdge,
+            new PointF(-202f, 0f), new RectangleF(-202f, -60f, 4f, 4f));
+        var hangCtx = Context(hanger);
+        hangCtx.EdgesClimbable = true;
+        hangCtx.EdgeLeft = -200f;
+        hangCtx.EdgeRight = 400f;
+        float highest = 0f;
+        bool hung = false, backDown = false;
+        for (frames = 0; frames < (int)(25f / Dt); frames++)
+        {
+            Step(hangDirector, hanger, hangCtx);
+            if (hanger.State == Player.StClimb)
+            {
+                highest = Math.Min(highest, hanger.Pos.Y);
+                if (hanger.Pos.Y <= -50f) hung = true;
+            }
+            if (hung && hanger.onGround && hanger.Pos.Y >= -2f) { backDown = true; break; }
+        }
+        Console.WriteLine($"      she climbed the edge wall to y={highest:F0}"
+            + $" (asked: -60), and is {(backDown ? "back on the ground" : "not down")}");
+        Check("she climbs the screen edge, hangs, and drops back off", hung && backDown);
+
+        Console.WriteLine();
+        Console.WriteLine("  Crossing the canyon between two monitors");
+        var floorA = new Solid { Id = new IntPtr(1), L = -500f, T = 0f, R = 0f, B = 40f };
+        var seam = new Solid { Id = new IntPtr(1), L = 0f, T = -160f, R = 100f, B = 40f };
+        var floorB = new Solid { Id = new IntPtr(1), L = 100f, T = 0f, R = 600f, B = 40f };
+        var crosser = new Player
+        {
+            Solids = new List<Solid> { floorA, seam, floorB },
+            MinX = -100000f,
+            MaxX = 100000f,
+            FreezeFramesEnabled = false,
+            Dashes = 1,
+            Facing = 1,
+            Pos = new PointF(-200f, 0f)
+        };
+        for (int i = 0; i < 5; i++) crosser.Update(Dt, new PetInput());
+        var crossDirector = new IdleDirector(new Random(7));
+        crossDirector.ForceActivityForCheck(IdleDirector.Activity.Wander, new PointF(300f, 0f));
+        var crossCtx = Context(crosser);
+        crossCtx.Monitors = new List<RectangleF>
+        {
+            new RectangleF(-400f, -300f, 400f, 340f),      // this monitor ends at x=0
+            new RectangleF(100f, -300f, 500f, 340f),       // the other begins at x=100
+        };
+        for (frames = 0; frames < (int)(35f / Dt); frames++)
+        {
+            Step(crossDirector, crosser, crossCtx);
+            if (Math.Abs(crosser.Pos.X - 300f) <= 3f && crosser.onGround) break;
+        }
+        Console.WriteLine($"      a 160px seam wall between the displays: she is at"
+            + $" {crosser.Pos.X:F0},{crosser.Pos.Y:F0} after {frames * Dt:F1}s");
+        Check("she scales the seam, walks its top, and drops onto the other monitor",
+            Math.Abs(crosser.Pos.X - 300f) <= 3f && crosser.onGround);
+
+        Console.WriteLine();
+        Console.WriteLine("  What she never does uninvited");
+        Check("not one dash was pressed in any of the above", !dashedEver);
+
+        Console.WriteLine();
+        Console.WriteLine("  The dash, where a dash can hit nothing");
+        var open = OnFloor(-350f);
+        var dashDirector = new IdleDirector(new Random(7));
+        dashDirector.ForceActivityForCheck(IdleDirector.Activity.Wander, new PointF(300f, 0f));
+        dashDirector.ForceLegDashForCheck(-250f);
+        var dashCtx = Context(open);
+        bool sawDash = false;
+        for (frames = 0; frames < (int)(15f / Dt); frames++)
+        {
+            Step(dashDirector, open, dashCtx);
+            if (open.State == Player.StDash) sawDash = true;
+            if (Math.Abs(open.Pos.X - 300f) <= 3f && open.onGround) break;
+        }
+        Console.WriteLine($"      a long empty leg: dashed {sawDash}, and reached"
+            + $" x={open.Pos.X:F0} in {frames * Dt:F1}s");
+        Check("a long clear wander leg gets its dash", sawDash);
+        Check("and the stroll still arrives", Math.Abs(open.Pos.X - 300f) <= 3f);
+
+        Console.WriteLine();
+        Console.WriteLine("  And never in kevin mode");
+        var kevinWalker = OnFloor(-350f);
+        var kevinDirector = new IdleDirector(new Random(7));
+        kevinDirector.ForceActivityForCheck(IdleDirector.Activity.Wander, new PointF(300f, 0f));
+        kevinDirector.ForceLegDashForCheck(-250f);
+        var kevinCtx = Context(kevinWalker);
+        kevinCtx.WindowsAreKevin = true;
+        bool kevinDashed = false;
+        for (frames = 0; frames < (int)(15f / Dt); frames++)
+        {
+            Step(kevinDirector, kevinWalker, kevinCtx);
+            if (kevinWalker.State == Player.StDash) kevinDashed = true;
+            if (Math.Abs(kevinWalker.Pos.X - 300f) <= 3f && kevinWalker.onGround) break;
+        }
+        Console.WriteLine($"      the same rolled dash with windows as kevin blocks:"
+            + $" dashed {kevinDashed}");
+        Check("the very same rolled dash is refused when a dash could throw a window",
+            !kevinDashed);
 
         return failed;
     }
