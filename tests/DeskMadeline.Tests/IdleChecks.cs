@@ -370,6 +370,47 @@ static class IdleChecks
             freed >= 0 && freed * Dt < 12f);
 
         Console.WriteLine();
+        Console.WriteLine("  The terrain is the destination pool");
+        var mesa = new Solid { Id = new IntPtr(9), L = 100f, T = -60f, R = 260f, B = 0f };
+        var scout = OnFloor(-200f, mesa);
+        var scoutDirector = new IdleDirector(new Random(7));
+        var scoutCtx = Context(scout);
+        scoutCtx.Windows = new List<KeyValuePair<IntPtr, RectangleF>>
+        { new KeyValuePair<IntPtr, RectangleF>(new IntPtr(9), new RectangleF(100f, -60f, 160f, 60f)) };
+        int floorSpots = 0, mesaSpots = 0;
+        for (int i = 0; i < 80; i++)
+        {
+            PointF spot = scoutDirector.ProbeExploreForCheck(scoutCtx, out _, out bool up);
+            if (Math.Abs(spot.Y) < 2f) floorSpots++;
+            if (Math.Abs(spot.Y + 60f) < 2f && up) mesaSpots++;
+        }
+        Console.WriteLine($"      eighty draws over a floor and a window: floor {floorSpots},"
+            + $" window top {mesaSpots}");
+        Check("both the floor and the window's top come up as destinations",
+            floorSpots > 0 && mesaSpots > 0);
+
+        Console.WriteLine();
+        Console.WriteLine("  A stroll leg that goes up");
+        var upLeg = OnFloor(-200f, mesa);
+        var upDirector = new IdleDirector(new Random(7));
+        upDirector.ForceActivityForCheck(IdleDirector.Activity.Wander, new PointF(180f, -60f),
+            new RectangleF(100f, -60f, 160f, 60f));
+        upDirector.ForceClimbPlanForCheck(0, 0f, 0);
+        var upCtx = Context(upLeg);
+        bool toppedOut = false;
+        for (frames = 0; frames < (int)(20f / Dt); frames++)
+        {
+            Step(upDirector, upLeg, upCtx);
+            if (upDirector.Current != IdleDirector.Activity.Wander) break;
+            if (upLeg.onGround && Math.Abs(upLeg.Pos.Y + 60f) <= 2f) { toppedOut = true; break; }
+        }
+        Console.WriteLine($"      a wander leg aimed at a sixty-pixel top: she is at"
+            + $" {upLeg.Pos.X:F0},{upLeg.Pos.Y:F0} after {frames * Dt:F1}s, still wandering:"
+            + $" {upDirector.Current == IdleDirector.Activity.Wander}");
+        Check("a stroll climbs to an elevated spot and stays a stroll",
+            toppedOut && upDirector.Current == IdleDirector.Activity.Wander);
+
+        Console.WriteLine();
         Console.WriteLine("  A monitor seam one pixel tall");
         var floorLow = new Solid { Id = new IntPtr(1), L = -500f, T = 0f, R = 0f, B = 400f };
         var floorHigh = new Solid { Id = new IntPtr(1), L = 0f, T = -1f, R = 500f, B = 399f };

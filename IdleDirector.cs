@@ -101,6 +101,7 @@ namespace DeskMadeline
         bool crossingBudgeted;
         int walledLegs;
         bool trappedLeg;
+        bool legElevated;
         int dashAimFrames;
         int leapCatchFrames;
         readonly Dictionary<Activity, float> lastPicked = new Dictionary<Activity, float>();
@@ -329,6 +330,7 @@ namespace DeskMadeline
             legLedgeJump = false;
             walledLegs = 0;
             trappedLeg = false;
+            legElevated = false;
             pendingLeap = false;
             dashAimFrames = 0;
             leapCatchFrames = 0;
@@ -348,9 +350,8 @@ namespace DeskMadeline
                     activityBudget = 5f + (float)rng.NextDouble() * 5f;
                     break;
                 case Activity.Wander:
-                    activityBudget = 20f;
-                    target = WanderPoint(ctx);
-                    RollLegSpice(ctx);
+                    activityBudget = 25f;
+                    NewWanderLeg(ctx);
                     break;
                 case Activity.ClimbWindow:
                 case Activity.Inspect:
@@ -498,15 +499,9 @@ namespace DeskMadeline
                     if (phaseTime > 1f + (float)rng.NextDouble() * 2f)
                     {
                         if (activityTime > activityBudget - 4f) { Finish(ctx); return; }
-                        target = WanderPoint(ctx);
-                        RollLegSpice(ctx);
-                        trappedLeg = walledLegs >= 2;
+                        NewWanderLeg(ctx);
                         phase = Phase.Go;
                         phaseTime = 0f;
-                        bestDist = float.MaxValue;
-                        bestClimbY = float.MaxValue;
-                        crossingBudgeted = false;
-                        stall = 0f;
                     }
                     return;
                 }
@@ -517,18 +512,24 @@ namespace DeskMadeline
                 return;
             }
 
-            bool wantTop = Current != Activity.Wander;
+            bool wantTop = Current != Activity.Wander || legElevated;
             if (Arrived(ctx, wantTop))
             {
                 phase = Phase.Do;
                 phaseTime = 0f;
                 walledLegs = 0;
                 trappedLeg = false;
-                if (wantTop) BeginTopSit(ctx);
+                if (wantTop && Current != Activity.Wander) BeginTopSit(ctx);
                 return;
             }
             bool crossing = false;
-            if (Current == Activity.Wander)
+            if (Current == Activity.Wander && legElevated && !crossingBudgeted)
+            {
+                // An elevated leg is a longer one; the extension is granted once.
+                crossingBudgeted = true;
+                activityBudget = Math.Max(activityBudget, activityTime + 30f);
+            }
+            if (Current == Activity.Wander && !legElevated)
             {
                 int dir = target.X > ctx.Player.Pos.X ? 1 : -1;
                 // A leg that leaves this monitor has the seam wall in its way -- the gap
@@ -1176,7 +1177,111 @@ namespace DeskMadeline
             faceTapCooldown = .6f;
         }
 
+        /// <summary>
+        /// A new stroll leg: a spot sampled from the terrain itself. A flat one is walked;
+        /// an elevated one is routed with the same plans a window climb uses, because on
+        /// this desk they are the same problem.
+        /// </summary>
+        void NewWanderLeg(in IdleContext ctx)
+        {
+            target = ExplorePoint(ctx, out RectangleF route, out legElevated);
+            if (legElevated)
+            {
+                targetRect = route;
+                if (!ClassifyReach(ctx, route))
+                {
+                    legElevated = false;
+                    target = WanderPoint(ctx);
+                    climbPlan = 0;
+                }
+            }
+            else climbPlan = 0;
+            RollLegSpice(ctx);
+            trappedLeg = walledLegs >= 2;
+            bestDist = float.MaxValue;
+            bestClimbY = float.MaxValue;
+            crossingBudgeted = false;
+            stall = 0f;
+        }
+
         // ===== places =====
+
+        internal PointF ProbeExploreForCheck(in IdleContext ctx, out RectangleF route,
+            out bool elevated) => ExplorePoint(ctx, out route, out elevated);
+
+        /// <summary>
+        /// Somewhere to go, sampled from the terrain itself: the exposed top of any solid
+        /// is a place. Window tops weigh more, a window that just appeared much more, and
+        /// higher ground appeals in proportion to her energy -- but the floor is terrain
+        /// too, so plain strolls remain in the lottery.
+        /// </summary>
+        PointF ExplorePoint(in IdleContext ctx, out RectangleF route, out bool elevated)
+        {
+            route = RectangleF.Empty;
+            elevated = false;
+            if (ctx.Monitors.Count > 1 && rng.NextDouble() < .25)
+            {
+                // A stroll to some other monitor stays on the ground; the seams and steps
+                // on the way are the pilot's problem.
+                RectangleF other = ctx.Monitors[rng.Next(ctx.Monitors.Count)];
+                float ox = other.Left + 20f + (float)rng.NextDouble() * Math.Max(1f, other.Width - 40f);
+                return new PointF(ox, ctx.Player.Pos.Y);
+            }
+            RectangleF room = RoomAround(ctx);
+            float totalWeight = 0f;
+            PointF pick = default;
+            RectangleF pickRoute = default;
+            bool pickUp = false, any = false;
+            foreach (Solid s in ctx.Solids)
+            {
+                // On the screen, and not its very top edge -- standing above the monitor
+                // is standing nowhere.
+                if (s.T <= room.Top + 8f || s.T > room.Bottom) continue;
+                float lo = Math.Max(s.L + 4f, room.Left + 10f);
+                float hi = Math.Min(s.R - 4f, room.Right - 10f);
+                if (hi - lo < 8f) continue;
+                float x = lo + (float)rng.NextDouble() * (hi - lo);
+                var spot = new PointF(x, s.T);
+                if (NearAPuffer(ctx, spot)) continue;
+                if (!Headroom(ctx, s, x)) continue;
+                float weight = 1f;
+                RectangleF routeRect = RectangleF.FromLTRB(s.L, s.T, s.R, s.B);
+                foreach (var win in ctx.Windows)
+                {
+                    RectangleF wr = win.Value;
+                    if (Math.Abs(s.T - wr.Top) < 3f && x > wr.Left && x < wr.Right)
+                    {
+                        // The spot is a window's top: route by the whole window, whose
+                        // side walls are where the plans start.
+                        routeRect = wr;
+                        weight += 1.5f;
+                        if (freshAge < 30f && Math.Abs(wr.Top - freshWindow.Top) < 3f &&
+                            Math.Abs(wr.Left - freshWindow.Left) < 3f) weight += 3f;
+                        break;
+                    }
+                }
+                bool up = s.T < ctx.Player.Pos.Y - 16f;
+                if (up) weight += energy;
+                totalWeight += weight;
+                if (rng.NextDouble() * totalWeight < weight)
+                { pick = spot; pickRoute = routeRect; pickUp = up; any = true; }
+            }
+            if (!any) return WanderPoint(ctx);
+            route = pickRoute;
+            elevated = pickUp;
+            return pick;
+        }
+
+        /// <summary>Nothing hangs low enough over this spot to keep her from standing there.</summary>
+        static bool Headroom(in IdleContext ctx, Solid on, float x)
+        {
+            foreach (Solid s in ctx.Solids)
+            {
+                if (s.L > x + 5f || s.R < x - 5f) continue;
+                if (s.B > on.T - 24f && s.B <= on.T && s.T < on.T - 1f) return false;
+            }
+            return true;
+        }
 
         PointF WanderPoint(in IdleContext ctx)
         {
@@ -1385,6 +1490,7 @@ namespace DeskMadeline
             legLedgeJump = true;
             walledLegs = 0;
             trappedLeg = false;
+            legElevated = what == Activity.Wander && rect.Width > 0f;
             pendingLeap = false;
             dashAimFrames = 0;
             leapCatchFrames = 0;
