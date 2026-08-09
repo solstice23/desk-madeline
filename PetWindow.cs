@@ -80,6 +80,17 @@ namespace DeskMadeline
 
         // Input state
         PadState prevPad;
+        // Idle autonomy: the director plays her through the same PetInput the keyboard fills.
+        readonly IdleDirector idleDirector = new IdleDirector(new Random());
+        IdleDebugWindow idleDebugWindow;
+        public volatile bool IdleDebugWanted;
+        public volatile string IdleDebugText = "";
+        public bool IdleAutonomyEnabled;
+        bool realInputThisFrame;
+        bool wakeUpPending;
+        bool foregroundFullscreen;
+        readonly List<KeyValuePair<IntPtr, RectangleF>> idleWindowsScratch
+            = new List<KeyValuePair<IntPtr, RectangleF>>();
         // Celeste's MoveX, MoveY, GliderMoveY, Aim and Feather, each its own virtual input.
         readonly IntegerAxis moveX = new IntegerAxis(), moveY = new IntegerAxis();
         readonly IntegerAxis gliderMoveY = new IntegerAxis();
@@ -261,6 +272,7 @@ namespace DeskMadeline
             InputEnabled = settings.InputEnabled;
             PadInputEnabled = settings.PadInputEnabled;
             InputWhenUnfocused = settings.InputWhenUnfocused;
+            IdleAutonomyEnabled = settings.IdleAutonomy;
             AlwaysOnTop = settings.AlwaysOnTop;
             ParticlesEnabled = settings.ParticlesEnabled;
             catTailEnabled = settings.CatTailEnabled;
@@ -563,6 +575,12 @@ namespace DeskMadeline
             for (int i = 0; i < 10 && Sprites.Has("wakeUp05"); i++) wakeUp.Add("wakeUp05");
             wakeUp.AddRange(Sprites.Seq("wakeUp", 6, 14));
             Add("wakeUp", wakeUp.ToArray(), 0.1f, false); // Sprites.xml: 0-4, 5*10, 6-14
+            var sleep = new List<string>(Sprites.Seq("sleep", 0, 10));
+            for (int i = 0; i < 5 && Sprites.Has("sleep10"); i++) sleep.Add("sleep10");
+            sleep.AddRange(Sprites.Seq("sleep", 11, 23));
+            Add("sleep", sleep.ToArray(), 0.1f, false);  // Sprites.xml: 0-10, 10*5, 11-23
+            if (d.TryGetValue("sleep", out var sleepAnim)) sleepAnim.Goto = "asleep";
+            Add("asleep", new[] { "wakeUp00" }, 0.1f, true);  // Sprites.xml: wakeUp frame 0
             Add("idleA", Sprites.Seq("idleA", 0, 30), 0.12f, false);
             Add("idleB", Sprites.Seq("idleB", 0, 30), 0.16f, false);
             Add("idleC", Sprites.Seq("idleC", 0, 30), 0.05f, false);
@@ -891,6 +909,16 @@ namespace DeskMadeline
 
             // Input
             var input = SampleInput();
+            if (wakeUpPending)
+            {
+                // Deferred to the top of a frame on purpose: set mid-frame, introWakeUp's
+                // animation would be replaced by the state machine's before the frame ended,
+                // and the wake would never finish.
+                wakeUpPending = false;
+                introWakeUp = true;
+                animator.Play("wakeUp", true);
+                return;
+            }
 
             bool frozenAtStart = player.FreezeFramesEnabled && player.IsHitStopped;
             if (!frozenAtStart)
@@ -932,8 +960,9 @@ namespace DeskMadeline
                     seeker.ResetForRoomReload(player.Center);
             }
             observedPlayerRespawning = playerRespawningNow;
-            bool anyInput = input.MoveX != 0 || input.MoveY != 0 || input.JumpHeld ||
-                input.GrabHeld || input.DashPressed || input.ElytraHeld || dragging;
+            // Real hands only: the director walking her about must not count, or she
+            // would stroll back over and wake the seeker that just killed her.
+            bool anyInput = realInputThisFrame || dragging;
             if (seekerRespawnDormant && !playerRespawningNow && anyInput)
                 seekerRespawnDormant = false;
 
@@ -946,7 +975,15 @@ namespace DeskMadeline
 
             // UpdateSprite selects animations after component advancement. A newly
             // selected animation stays on frame zero until the next game frame.
-            animator.Play(player.AnimId);
+            // Napping is the shell's animation, not the player's: the campfire lie-down,
+            // then the held sleeping frame, while the physics stand perfectly still.
+            if (idleDirector.Napping && player.State == Player.StNormal && player.onGround &&
+                Math.Abs(player.Speed.X) < 1f && !player.Ducking)
+            {
+                if (animator.CurrentId != "sleep" && animator.CurrentId != "asleep")
+                    animator.Play("sleep", true);
+            }
+            else animator.Play(player.AnimId);
             if (player.State == Player.StElytra) animator.Frame = player.ElytraAnimationFrame;
             EmitAnimationSounds();
             bool restartSweat = player.SweatAnimSequenceCount != observedSweatAnimSequenceCount;
@@ -1745,7 +1782,9 @@ namespace DeskMadeline
             PadState pad = PadInputEnabled ? XInputPad.Poll() : default;
             PadState padBefore = prevPad;
             prevPad = pad;
-            if (!useKeys && !usePad) return input;
+            realInputThisFrame = dragging || draggedGlider != null || draggedTheo != null ||
+                draggedSeeker != null || draggedBumper != null || draggedPuffer != null;
+            if (!useKeys && !usePad) return AutonomyOr(input);
             // Keyboard bindings are digital, so the threshold only ever affects the controller;
             // it reproduces Celeste's per-virtual-input deadzones.
             bool Held(PetAction action, float threshold)
@@ -1797,7 +1836,64 @@ namespace DeskMadeline
 
             input.JumpPressed = player.HasJumpBuffer;
             input.DashPressed = player.HasDashBuffer;
-            return input;
+            realInputThisFrame |= left || right || up || down || jump || dash || grab ||
+                crouchDash || elytra;
+            return AutonomyOr(input);
+        }
+
+        /// <summary>
+        /// Real input keeps the frame; a quiet one may go to the idle director, which plays
+        /// her through this same PetInput seam -- the ported physics cannot tell the two
+        /// apart, which is the point.
+        /// </summary>
+        PetInput AutonomyOr(PetInput real)
+        {
+            if (realInputThisFrame)
+            {
+                if (IdleDebugWanted) IdleDebugText = "the player is at the keys";
+                idleDirector.NoteRealInput();
+                // Interrupted mid-nap: she wakes up first, with the same animation the tray's
+                // Wake up plays, and hears the keys once she is on her feet.
+                if (idleDirector.ConsumeWakeRequest()) wakeUpPending = true;
+                return real;
+            }
+            if (!IdleAutonomyEnabled)
+            {
+                if (IdleDebugWanted) IdleDebugText = "autonomy is off (tray menu)";
+                return real;
+            }
+            idleDirector.DebugEnabled = IdleDebugWanted;
+            PetInput auto = idleDirector.Drive(1f / 60f, BuildIdleContext());
+            if (IdleDebugWanted) IdleDebugText = idleDirector.DebugText;
+            // Waking on her own -- the nap ran out -- gets the stretch too.
+            if (idleDirector.ConsumeWakeRequest()) wakeUpPending = true;
+            return auto;
+        }
+
+        IdleContext BuildIdleContext()
+        {
+            float s = GameScale;
+            idleWindowsScratch.Clear();
+            foreach (PolledWindow window in polledWindows)
+                if (window.IsPlatform)
+                    idleWindowsScratch.Add(new KeyValuePair<IntPtr, RectangleF>(window.Handle,
+                        new RectangleF(window.Rect.Left / s, window.Rect.Top / s,
+                            (window.Rect.Right - window.Rect.Left) / s,
+                            (window.Rect.Bottom - window.Rect.Top) / s)));
+            Point cursor = Cursor.Position;
+            return new IdleContext
+            {
+                Player = player,
+                Solids = player.Solids,
+                Monitors = monitorGameBounds,
+                Cursor = new PointF(cursor.X / s, cursor.Y / s),
+                ForegroundFullscreen = foregroundFullscreen,
+                SeekersDormant = seekerRespawnDormant,
+                Gliders = gliders,
+                Seekers = seekers,
+                Puffers = puffers,
+                Windows = idleWindowsScratch,
+            };
         }
 
         bool IsPetInputWindow(IntPtr hwnd)
@@ -2483,6 +2579,15 @@ namespace DeskMadeline
                 return true;
             }, IntPtr.Zero);
             polledWindows = zorder;
+            // Whether the user is watching something: a foreground window covering its whole
+            // monitor, taskbar and all, which a maximized window does not.
+            IntPtr foreground = Win32.GetForegroundWindow();
+            string foregroundClass = foreground == IntPtr.Zero ? ""
+                : Win32.GetClassNameString(foreground);
+            foregroundFullscreen = foreground != IntPtr.Zero && foreground != Handle &&
+                foregroundClass != "Progman" && foregroundClass != "WorkerW" &&
+                Win32.TryGetWindowRect(foreground, out Win32.RECT fgRect) &&
+                CoversWholeMonitor(foreground, fgRect);
             // Which windows there are, and in what order they stack, has just been decided
             // afresh. Neither shows up as a rectangle moving -- bringing a window to the front
             // changes what occludes what while every rectangle stays exactly where it was --
@@ -2737,6 +2842,13 @@ namespace DeskMadeline
             player.WrapBy(offsetX, offsetY);
         }
 
+        static bool CoversWholeMonitor(IntPtr hwnd, in Win32.RECT r)
+        {
+            Rectangle monitor = Screen.FromHandle(hwnd).Bounds;
+            return r.Left <= monitor.Left && r.Top <= monitor.Top &&
+                   r.Right >= monitor.Right && r.Bottom >= monitor.Bottom;
+        }
+
         /// <summary>Maximized, or covering a whole monitor the way borderless fullscreen does.</summary>
         /// <remarks>
         /// A window this size offers nothing to stand on but its own outline around the screen,
@@ -2872,8 +2984,10 @@ namespace DeskMadeline
                 else
                 {
                     // Draw hair behind the body (hair first, body on top).
-                    // wakeUp frames already include full hair (curled sleep pose); do not overlay simulated hair
-                    if (animator.CurrentId != "wakeUp")
+                    // wakeUp frames already include full hair (curled sleep pose), and the
+                    // sleep sheet is hair="" in the game's own table: baked in, never overlaid.
+                    if (animator.CurrentId != "wakeUp" &&
+                        !HairMeta.IsHairless(animator.CurrentFrameId))
                     {
                         DrawCatTail(g, camX, camY);
                         DrawHair(g, camX, camY);
@@ -3973,6 +4087,7 @@ namespace DeskMadeline
             settings.InputEnabled = InputEnabled;
             settings.PadInputEnabled = PadInputEnabled;
             settings.InputWhenUnfocused = InputWhenUnfocused;
+            settings.IdleAutonomy = IdleAutonomyEnabled;
             settings.AlwaysOnTop = AlwaysOnTop;
             settings.ParticlesEnabled = ParticlesEnabled;
             settings.FreezeFramesEnabled = player.FreezeFramesEnabled;
@@ -4816,6 +4931,29 @@ namespace DeskMadeline
                 introWakeUp = true;
                 animator.Play("wakeUp", true);
             });
+            var autonomyItem = new ToolStripMenuItem(Loc.T("Menu.Autonomy"))
+            { CheckOnClick = true, Checked = IdleAutonomyEnabled };
+            autonomyItem.CheckedChanged += (_, __) =>
+            {
+                IdleAutonomyEnabled = autonomyItem.Checked;
+                SaveSettings();
+            };
+            var autonomyDebugItem = new ToolStripMenuItem(Loc.T("Menu.AutonomyDebug"))
+            { CheckOnClick = true };
+            autonomyDebugItem.CheckedChanged += (_, __) =>
+            {
+                IdleDebugWanted = autonomyDebugItem.Checked;
+                if (autonomyDebugItem.Checked)
+                {
+                    if (idleDebugWindow == null || idleDebugWindow.IsDisposed)
+                    {
+                        idleDebugWindow = new IdleDebugWindow();
+                        idleDebugWindow.Hidden = () => autonomyDebugItem.Checked = false;
+                    }
+                    idleDebugWindow.Show();
+                }
+                else idleDebugWindow?.Hide();
+            };
             var resetItem = new ToolStripMenuItem(Loc.T("Menu.ResetPosition"), null, (_, __) => ResetPosition());
             var spawnGliderItem = new ToolStripMenuItem(Loc.T("Menu.SpawnJellyfish"), null, (_, __) =>
                 Interlocked.Increment(ref pendingGliderSpawns));
@@ -4865,7 +5003,7 @@ namespace DeskMadeline
             // is further down. Flat: a submenu here would cost a hover on things that are one
             // click today, and the drop-down cannot do columns -- it scrolls instead.
             Section(menu, "Section.Madeline");
-            AddAll(menu, resetItem, wakeUpItem, spawnItem, removeEntitiesItem);
+            AddAll(menu, resetItem, wakeUpItem, autonomyItem, autonomyDebugItem, spawnItem, removeEntitiesItem);
             Section(menu, "Section.Input");
             AddAll(menu, inputItem, padInputItem, unfocusedInputItem,
                 BuildBindingsMenu(), BuildPadBindingsMenu(),

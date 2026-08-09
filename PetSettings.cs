@@ -12,6 +12,7 @@ namespace DeskMadeline
         public bool InputEnabled = true;
         public bool PadInputEnabled = true;
         public bool InputWhenUnfocused;
+        public bool IdleAutonomy;
         public bool AlwaysOnTop = true;
         public bool ParticlesEnabled = true;
         public bool FreezeFramesEnabled = true;
@@ -63,6 +64,7 @@ namespace DeskMadeline
                 ReadBool(values, "InputEnabled", ref result.InputEnabled);
                 ReadBool(values, "PadInputEnabled", ref result.PadInputEnabled);
                 ReadBool(values, "InputWhenUnfocused", ref result.InputWhenUnfocused);
+                ReadBool(values, "IdleAutonomy", ref result.IdleAutonomy);
                 ReadBool(values, "AlwaysOnTop", ref result.AlwaysOnTop);
                 ReadBool(values, "ParticlesEnabled", ref result.ParticlesEnabled);
                 ReadBool(values, "FreezeFramesEnabled", ref result.FreezeFramesEnabled);
@@ -138,6 +140,7 @@ namespace DeskMadeline
                     "InputEnabled=" + InputEnabled,
                     "PadInputEnabled=" + PadInputEnabled,
                     "InputWhenUnfocused=" + InputWhenUnfocused,
+                    "IdleAutonomy=" + IdleAutonomy,
                     "AlwaysOnTop=" + AlwaysOnTop,
                     "ParticlesEnabled=" + ParticlesEnabled,
                     "FreezeFramesEnabled=" + FreezeFramesEnabled,

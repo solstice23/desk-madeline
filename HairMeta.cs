@@ -266,9 +266,21 @@ namespace DeskMadeline
         /// Parse &lt;player&gt;'s metadata: one Frames element per animation sheet, holding a
         /// hair offset per frame as "x,y" with an optional ":bangs" after it.
         /// </summary>
+        static readonly System.Collections.Generic.HashSet<string> hairless
+            = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Whether the game draws no hair at all on this frame's sheet.</summary>
+        public static bool IsHairless(string frameId)
+        {
+            if (string.IsNullOrEmpty(frameId)) return false;
+            string sheet = frameId.TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9');
+            return hairless.Contains(sheet);
+        }
+
         public static void LoadVanilla(string spritesXmlPath)
         {
             Vanilla.Clear();
+            hairless.Clear();
             if (spritesXmlPath == null) { PetWindow.Log("hair: no Sprites.xml"); return; }
             try
             {
@@ -279,7 +291,15 @@ namespace DeskMadeline
                 {
                     string path = (string)frames.Attribute("path");
                     string hair = (string)frames.Attribute("hair");
-                    if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(hair)) continue;
+                    if (string.IsNullOrEmpty(path)) continue;
+                    // hair="" is vanilla for "no hair on these frames" -- she is lying down
+                    // asleep, and the bangs would float over her. Remember the sheet, so the
+                    // renderer can leave the hair off the way the game does.
+                    if (string.IsNullOrEmpty(hair))
+                    {
+                        if (hair != null) hairless.Add(path.TrimEnd('/'));
+                        continue;
+                    }
                     string[] perFrame = hair.Split('|');
                     for (int i = 0; i < perFrame.Length; i++)
                     {

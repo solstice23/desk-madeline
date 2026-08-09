@@ -32,6 +32,7 @@ adding an assertion, and what these need is a fixed timestep and vanilla's const
 | `MoonChecks.cs` | Windows as moon blocks: the drift, the sink under whoever rides one, the shove from a dash, a home that survives being dragged, and her standing on and hanging off one |
 | `KevinChecks.cs` | Windows as kevin blocks: the windup, the charge into another window or the desktop's edge, the crawl home along the return stack, the mid-flight turn, and the rebound she gets off an activated face |
 | `InputChecks.cs` | Three keys and three buttons to an action: any one of them going down is a press, held siblings or not |
+| `IdleChecks.cs` | Idle autonomy: the quiet spell before she takes over, walking and jumping to where she decided to go, climbing a window to sit on it, the watchdog giving up on one taller than her stamina, napping through something fullscreen, the jellyfish errand, and never once dashing |
 | `HairChecks.cs` | The hair table read out of the game's `Sprites.xml`, and which entries this port tunes away from it |
 | `UpdateChecks.cs` | Whether the build server's newest build is one this copy does not have, including a build made from work that was never pushed |
 | `SettingsChecks.cs` | Settings defaults on a fresh install, and an existing `settings.txt` still winning |
