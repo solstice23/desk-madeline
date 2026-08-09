@@ -88,7 +88,7 @@ namespace DeskMadeline
                 // turns back to ordinary windows on upgrade.
                 if (values.TryGetValue("WindowMode", out string windowMode) &&
                     int.TryParse(windowMode, out int windowModeValue))
-                    result.WindowMode = Math.Max(0, Math.Min(3, windowModeValue));
+                    result.WindowMode = Math.Max(0, Math.Min(4, windowModeValue));
                 else if (values.TryGetValue("DreamBlockMode", out string dreamBlocks) &&
                     bool.TryParse(dreamBlocks, out bool dreamBlocksValue) && dreamBlocksValue)
                     result.WindowMode = 1;

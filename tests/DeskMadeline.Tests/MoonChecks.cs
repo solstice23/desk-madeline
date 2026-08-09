@@ -322,6 +322,15 @@ static class MoonChecks
         int airborne = 0, lowest = 0, attacking = 0, dashAt = -1;
         var lastDashDir = System.Drawing.PointF.Empty;
         bool fellThrough = false, dashed = false;
+        // As PetWindow answers it: the window she dashed into takes its shove and she
+        // collides as normal, which is FloatySpaceBlock's NormalOverride.
+        player.OnDashCollide = (id, direction) =>
+        {
+            moon.Dashed(id, direction);
+            lastDashDir = direction;
+            dashed = true;
+            return DashCollisionResults.NormalOverride;
+        };
         for (int frame = 0; frame < 60 * 6 && !fellThrough; frame++)
         {
             var ridden = new HashSet<IntPtr>();
@@ -345,14 +354,6 @@ static class MoonChecks
             input.DashPressed = player.HasDashBuffer;
 
             if (player.IsDashAttacking) attacking++;
-            // What PetWindow does with them, and in its order: whatever she hit on the frame
-            // just gone gets shoved, and then every block takes its step.
-            foreach (DashCollision hit in player.DashCollisions)
-            {
-                moon.Dashed(hit.Id, hit.Direction);
-                lastDashDir = hit.Direction;
-                dashed = true;
-            }
             moon.Update(Dt, Scale, new List<PolledWindowInfo>
                 { new PolledWindowInfo(handle, rect, true) }, ridden);
 

@@ -109,6 +109,7 @@ namespace DeskMadeline
         readonly ParticleSystem particles = new ParticleSystem();
         readonly ParticleSystem seekerParticles = new ParticleSystem();
         PType bumperLaunch, bumperAmbience;
+        PType kevinActivate, kevinCrushing, kevinImpact;
         readonly Random bumperSparkle = new Random();
         readonly Random pufferSparkle = new Random();
         readonly Dictionary<int, Bitmap> seekerParticleBitmaps = new Dictionary<int, Bitmap>();
@@ -158,13 +159,16 @@ namespace DeskMadeline
         int speedometerMode;
         bool hitboxesEnabled;
         // What the windows are made of: solid ledges, dream blocks, or water.
-        const int WindowsSolid = 0, WindowsDream = 1, WindowsWater = 2, WindowsMoon = 3;
+        const int WindowsSolid = 0, WindowsDream = 1, WindowsWater = 2, WindowsMoon = 3,
+            WindowsKevin = 4;
         int windowMode;
         bool dreamBlockMode => windowMode == WindowsDream;
         bool waterMode => windowMode == WindowsWater;
         /// <summary>Moon blocks are ordinary window borders that will not hold still.</summary>
         bool moonMode => windowMode == WindowsMoon;
+        bool kevinMode => windowMode == WindowsKevin;
         readonly MoonWindows moonWindows = new MoonWindows();
+        readonly KevinWindows kevinWindows = new KevinWindows();
         volatile bool ignoreMaximizedWindows;   // read by the poll on the game-loop thread
         int edgeWrapMode;
         readonly List<RectangleF> monitorGameBounds = new List<RectangleF>();
@@ -237,6 +241,19 @@ namespace DeskMadeline
         public PetWindow()
         {
             Instance = this;
+            // Solid.OnDashCollide, answered by whichever window mode is on: a moon window
+            // takes its shove and collides as normal, a kevin window charges and throws her
+            // back, and any other window is just a wall.
+            player.OnDashCollide = (id, direction) =>
+            {
+                if (moonMode)
+                {
+                    moonWindows.Dashed(id, direction);
+                    return DashCollisionResults.NormalOverride;
+                }
+                if (kevinMode) return kevinWindows.Dashed(id, direction);
+                return DashCollisionResults.NormalCollision;
+            };
             settings = PetSettings.Load(System.IO.Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory, "settings.txt"));
             virtualDesktop = GetVirtualDesktopBounds();
@@ -413,6 +430,32 @@ namespace DeskMadeline
                 Color2 = Color.FromArgb(0xC4, 0xF4, 0xFF), BlinkColor = true,
                 LifeMin = .2f, LifeMax = .4f, Size = .5f, SizeRange = .2f,
                 SpeedMin = 10f, SpeedMax = 20f
+            };
+            // CrushBlock.P_Activate, P_Crushing and P_Impact. The first two are the same
+            // particles/rect the bumper's are; the impact is the dust smoke, slower and
+            // longer-lived than her footsteps kick it up.
+            kevinActivate = new PType
+            {
+                Tex = new[] { "rect" }, Color = Color.FromArgb(0x5F, 0xCD, 0xE4),
+                Color2 = Color.White, BlinkColor = true,
+                LifeMin = .5f, LifeMax = 1.1f, Size = .5f, SizeRange = .2f,
+                SpeedMin = 60f, SpeedMax = 100f, LateFade = true
+            };
+            kevinCrushing = new PType
+            {
+                Tex = new[] { "rect" }, Color = Color.FromArgb(0xFF, 0x66, 0xE2),
+                Color2 = Color.FromArgb(0x68, 0xFC, 0xFF), BlinkColor = true,
+                LifeMin = .5f, LifeMax = 1.2f, Size = .5f, SizeRange = .2f,
+                SpeedMin = 30f, SpeedMax = 50f, LateFade = true
+            };
+            kevinImpact = new PType
+            {
+                Tex = new[] { "smoke0", "smoke1", "smoke2", "smoke3" },
+                Color = Color.White, GravY = 4f,
+                LifeMin = .8f, LifeMax = 1.6f,
+                // The same x8 texture-scale conversion the footstep dust documents.
+                Size = 9.6f, SizeRange = 4f,
+                SpeedMin = 8f, SpeedMax = 12f, ScaleOut = true
             };
             seekerHitWall = new PType
             {
@@ -2312,12 +2355,6 @@ namespace DeskMadeline
                         ridden.Add(piece.Id);
             }
 
-            // FloatySpaceBlock.OnDash: the window she dashed into takes a shove along the way
-            // the blow came. Player collects these where Celeste calls Solid.OnDashCollide --
-            // on the collision itself, so a dash that stops short of a border never counts.
-            foreach (DashCollision hit in player.DashCollisions)
-                moonWindows.Dashed(hit.Id, hit.Direction);
-
             // Read fresh, and with GetWindowRect rather than the poll's DWM frame: this is the
             // one place the pet writes a window's position instead of reading it, and it has to
             // ask and answer in the same coordinates SetWindowPos uses. The poll is four times a
@@ -2330,6 +2367,57 @@ namespace DeskMadeline
                 info.Add(new PolledWindowInfo(window.Handle, raw, true));
             }
             moonWindows.Update(dt, GameScale, info, ridden);
+        }
+
+        /// <summary>
+        /// One frame of the kevin mode: windows read fresh in their own coordinates, the
+        /// desktop's edge for vanilla's level bounds, and the block's sounds, loops and
+        /// particles carried out on this side of the fence.
+        /// </summary>
+        void DriveKevinWindows(float dt, List<Solid> solids, List<PolledWindow> zorder)
+        {
+            var info = new List<PolledWindowInfo>(zorder.Count);
+            foreach (PolledWindow window in zorder)
+            {
+                if (!window.IsPlatform) continue;
+                if (!Win32.GetWindowRect(window.Handle, out Win32.RECT raw)) continue;
+                info.Add(new PolledWindowInfo(window.Handle, raw, true));
+            }
+            Rectangle desk = GetVirtualDesktopBounds();
+            var bounds = new Win32.RECT
+            { Left = desk.Left, Top = desk.Top, Right = desk.Right, Bottom = desk.Bottom };
+            kevinWindows.SetScale(GameScale);
+            kevinWindows.Update(dt, GameScale, info, solids, bounds);
+
+            while (kevinWindows.SoundEvents.Count > 0)
+            {
+                PlayerSoundEvent sound = kevinWindows.SoundEvents.Dequeue();
+                soundEffects.Play(sound.Path, sound.Parameter, sound.Value);
+            }
+            while (kevinWindows.LoopEvents.Count > 0)
+            {
+                KevinLoopEvent loop = kevinWindows.LoopEvents.Dequeue();
+                string key = "kevin:" + loop.Window.ToInt64() + ":" + loop.Path;
+                switch (loop.Command)
+                {
+                    case KevinLoopCommand.Start: soundEffects.StartLoop(key, loop.Path); break;
+                    // Vanilla winds the move loop down through its "end" parameter and lets
+                    // it fall silent on its own; the Stop arrives half a second later.
+                    case KevinLoopCommand.Ending: soundEffects.SetLoopParameter(key, "end", 1f); break;
+                    case KevinLoopCommand.Stop: soundEffects.StopLoop(key); break;
+                }
+            }
+            while (kevinWindows.ParticleEvents.Count > 0)
+            {
+                KevinParticleEvent burst = kevinWindows.ParticleEvents.Dequeue();
+                PType type = burst.Kind == KevinParticleKind.Activate ? kevinActivate
+                    : burst.Kind == KevinParticleKind.Crushing ? kevinCrushing : kevinImpact;
+                // pi/6 is P_Activate's and P_Crushing's own spread; the impact smoke keeps
+                // the dust family's half radian.
+                float spread = burst.Kind == KevinParticleKind.Impact ? .5f : .5235988f;
+                particles.Emit(type, burst.X, burst.Y, burst.Direction, spread, burst.Count,
+                    burst.RangeX, burst.RangeY);
+            }
         }
 
         /// <summary>A window the poll kept: its frame, and whether it may be stood on.</summary>
@@ -2438,6 +2526,7 @@ namespace DeskMadeline
                 // already moved would wind down and stop. The geometry is last frame's, which
                 // is exactly right: nothing moved.
                 if (moonMode) DriftMoonWindows(dt, player.Solids, zorder);
+                else if (kevinMode) DriveKevinWindows(dt, player.Solids, zorder);
                 return;
             }
             polledWindows = zorder;
@@ -2561,8 +2650,12 @@ namespace DeskMadeline
 
             PushOutOfMovedWindows(solids, cur, dt);
             if (moonMode) DriftMoonWindows(dt, solids, zorder);
-            else if (moonWindows.Active) moonWindows.Restore();
-
+            else if (kevinMode) DriveKevinWindows(dt, solids, zorder);
+            else
+            {
+                if (moonWindows.Active) moonWindows.Restore();
+                if (kevinWindows.Active) kevinWindows.Restore();
+            }
             lastRects.Clear();
             foreach (var kv in cur) lastRects[kv.Key] = kv.Value;
         }
@@ -4586,7 +4679,8 @@ namespace DeskMadeline
                 new KeyValuePair<int, string>(WindowsSolid, Loc.T("Windows.Solid")),
                 new KeyValuePair<int, string>(WindowsDream, Loc.T("Windows.DreamBlocks")),
                 new KeyValuePair<int, string>(WindowsWater, Loc.T("Windows.Water")),
-                new KeyValuePair<int, string>(WindowsMoon, Loc.T("Windows.MoonBlocks"))
+                new KeyValuePair<int, string>(WindowsMoon, Loc.T("Windows.MoonBlocks")),
+                new KeyValuePair<int, string>(WindowsKevin, Loc.T("Windows.KevinBlocks"))
             })
             {
                 int mode = option.Key;
@@ -4598,6 +4692,7 @@ namespace DeskMadeline
                 choice.Click += (_, __) =>
                 {
                     if (windowMode == WindowsMoon && mode != WindowsMoon) moonWindows.Restore();
+                    if (windowMode == WindowsKevin && mode != WindowsKevin) kevinWindows.Restore();
                     windowMode = mode;
                     pollCounter = 999;
                     SaveSettings();
@@ -4732,6 +4827,15 @@ namespace DeskMadeline
                 Interlocked.Increment(ref pendingPufferSpawns));
             var spawnTheoItem = new ToolStripMenuItem(Loc.T("Menu.SpawnTheo"), null, (_, __) =>
                 Interlocked.Increment(ref pendingTheoSpawns));
+            // The five spawns grouped under one entry: they are all the same gesture, they
+            // grew to outnumber everything else in the section, and unlike a setting a spawn
+            // is chosen from the list rather than toggled -- the same reasoning as Windows Are.
+            var spawnItem = new ToolStripMenuItem(Loc.T("Menu.Spawn"));
+            spawnItem.DropDownItems.Add(spawnGliderItem);
+            spawnItem.DropDownItems.Add(spawnSeekerItem);
+            spawnItem.DropDownItems.Add(spawnTheoItem);
+            spawnItem.DropDownItems.Add(spawnBumperItem);
+            spawnItem.DropDownItems.Add(spawnPufferItem);
             var removeEntitiesItem = new ToolStripMenuItem(Loc.T("Menu.RemoveEntities"));
             removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllJellyfish"), null,
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 1)));
@@ -4739,6 +4843,10 @@ namespace DeskMadeline
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 2)));
             removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllTheo"), null,
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 4)));
+            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllBumpers"), null,
+                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 8)));
+            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllPuffers"), null,
+                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 16)));
             removeEntitiesItem.DropDownItems.Add(new ToolStripSeparator());
             removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveEverything"), null,
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 31)));
@@ -4757,8 +4865,7 @@ namespace DeskMadeline
             // is further down. Flat: a submenu here would cost a hover on things that are one
             // click today, and the drop-down cannot do columns -- it scrolls instead.
             Section(menu, "Section.Madeline");
-            AddAll(menu, resetItem, wakeUpItem, spawnGliderItem, spawnSeekerItem, spawnTheoItem,
-                spawnBumperItem, spawnPufferItem, removeEntitiesItem);
+            AddAll(menu, resetItem, wakeUpItem, spawnItem, removeEntitiesItem);
             Section(menu, "Section.Input");
             AddAll(menu, inputItem, padInputItem, unfocusedInputItem,
                 BuildBindingsMenu(), BuildPadBindingsMenu(),
@@ -5055,6 +5162,7 @@ namespace DeskMadeline
             // Moon mode holds windows off their homes; leaving them there would be leaving the
             // desk untidied. After the join, so the loop cannot drift them again afterwards.
             moonWindows.Restore();
+            kevinWindows.Restore();
             soundEffects.Dispose();
             tray.Visible = false;
             tray.Dispose();

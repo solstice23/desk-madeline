@@ -30,6 +30,7 @@ adding an assertion, and what these need is a fixed timestep and vanilla's const
 | `PushChecks.cs` | A window edge arriving where she stands: the push, the crush at every drag speed, where a crush puts her back, and the same for the crystal, the jelly and the seeker |
 | `WaterChecks.cs` | Swimming, when the windows are water: the speeds, the surface, the dash refill, and what a held crystal does down there |
 | `MoonChecks.cs` | Windows as moon blocks: the drift, the sink under whoever rides one, the shove from a dash, a home that survives being dragged, and her standing on and hanging off one |
+| `KevinChecks.cs` | Windows as kevin blocks: the windup, the charge into another window or the desktop's edge, the crawl home along the return stack, the mid-flight turn, and the rebound she gets off an activated face |
 | `InputChecks.cs` | Three keys and three buttons to an action: any one of them going down is a press, held siblings or not |
 | `HairChecks.cs` | The hair table read out of the game's `Sprites.xml`, and which entries this port tunes away from it |
 | `UpdateChecks.cs` | Whether the build server's newest build is one this copy does not have, including a build made from work that was never pushed |

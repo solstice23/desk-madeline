@@ -37,20 +37,11 @@ namespace DeskMadeline
     }
 
     /// <summary>
-    /// A solid she hit while dashing into it, and which way the hit came from -- Celeste's
-    /// Solid.OnDashCollide, which the block on the other end answers however it likes.
+    /// The answers a solid can give to being dashed into -- vanilla's DashCollisionResults.
+    /// Bounce is vanilla's too, but nothing on the desktop returns it, so it stays unported
+    /// rather than half-wired.
     /// </summary>
-    /// <remarks>
-    /// The direction is the collision's own, one axis at a time, not the dash vector: a
-    /// diagonal dash into a wall reports the wall, sideways. It is what vanilla hands to
-    /// OnDashCollide, and what a floaty block shoves itself along.
-    /// </remarks>
-    public readonly struct DashCollision
-    {
-        public readonly IntPtr Id;
-        public readonly PointF Direction;
-        public DashCollision(IntPtr id, PointF direction) { Id = id; Direction = direction; }
-    }
+    public enum DashCollisionResults { NormalCollision, NormalOverride, Rebound, Ignore }
 
     public readonly struct PlayerSoundEvent
     {
@@ -162,8 +153,13 @@ namespace DeskMadeline
         public bool onGround;
         public IntPtr GroundId;
         public PointF DashDir;
-        /// <summary>What she dashed into this frame; read and emptied by whoever owns the solids.</summary>
-        public readonly List<DashCollision> DashCollisions = new List<DashCollision>();
+        /// <summary>
+        /// Solid.OnDashCollide, asked with the collision's own one-axis direction while she is
+        /// dash-attacking, and answered by whoever owns the solid -- a floaty block takes a
+        /// shove, a kevin block charges and throws her back. Every solid here is a window, so
+        /// the shell owns the one callback rather than each solid carrying its own.
+        /// </summary>
+        public Func<IntPtr, PointF, DashCollisionResults> OnDashCollide;
         public IList<IPetHoldable> Holdables;
         public IPetHoldable Holding { get; private set; }
         public bool IsHoldingGlider => Holding is Glider;
@@ -291,6 +287,27 @@ namespace DeskMadeline
         /// asks for that; a bumper does not, and takes her off the way she arrived.
         /// </param>
         /// <param name="sidesOnly">Flatten any launch with a sideways part into a level one.</param>
+        /// <summary>
+        /// Player.Rebound: thrown back off something a dash could not move, which on the
+        /// desktop is a kevin block's face as it activates. Vanilla also clears `launched`,
+        /// AutoJumpTimer and lowFrictionStopTimer; those belong to the speed-ring, feather and
+        /// icy-floor systems, none of which this port has.
+        /// </summary>
+        public void Rebound(int direction = 0)
+        {
+            Speed.X = direction * 120f;
+            Speed.Y = -120f;
+            varJumpSpeed = Speed.Y;
+            varJumpTimer = .15f;
+            autoJump = true;
+            dashAttackTimer = 0f;
+            gliderBoostTimer = 0f;
+            wallSlideTimer = WallSlideTime;
+            wallBoostTimer = 0f;
+            forceMoveXTimer = 0f;
+            State = StNormal;
+        }
+
         public PointF ExplodeLaunch(PointF from, bool snapUp = true, bool sidesOnly = false)
         {
             ApplyFreeze(.1f);
@@ -783,11 +800,24 @@ namespace DeskMadeline
                     // reporting one every frame she is in there would repeat its sound and its
                     // squash, and she is meant to simply sit in the block.  A dash reports as
                     // usual, because that is where the dream dash out of it begins.
-                    // Player.OnCollideH's first question, before anything of its own: was this a
-                    // dash into something that answers dashes, and along the dash. Whoever owns
-                    // the solid decides what that means; vanilla's floaty block takes a shove.
-                    if (DashAttacking && Math.Sign(DashDir.X) == sign && hit != IntPtr.Zero)
-                        DashCollisions.Add(new DashCollision(hit, new PointF(sign, 0f)));
+                    // Player.OnCollideH's first question, before anything of its own: was
+                    // this a dash into something that answers dashes, along the dash. The
+                    // solid's owner answers through OnDashCollide, and the answer decides
+                    // whether the ordinary collision still happens. NormalOverride means
+                    // "answered, but collide as usual", and skips the red-dash exemption the
+                    // way vanilla's does; StRedDash is unreachable here today, and the guard
+                    // is ported with the rest so that it stays true if that changes.
+                    if (DashAttacking && Math.Sign(DashDir.X) == sign && hit != IntPtr.Zero &&
+                        OnDashCollide != null)
+                    {
+                        DashCollisionResults result = OnDashCollide(hit, new PointF(sign, 0f));
+                        if (result == DashCollisionResults.NormalOverride)
+                            result = DashCollisionResults.NormalCollision;
+                        else if (State == StRedDash) result = DashCollisionResults.Ignore;
+                        if (result == DashCollisionResults.Rebound)
+                        { Rebound(-Math.Sign(Speed.X)); return; }
+                        if (result == DashCollisionResults.Ignore) return;
+                    }
                     if (held && !DashAttacking) Speed.X = 0f;
                     else OnCollideH(sign);
                     return; // Actor.MoveH discards the blocked movement remainder.
@@ -822,8 +852,16 @@ namespace DeskMadeline
                 {
                     counter.Y = 0;
                     if (!notifyCollision) return;
-                    if (DashAttacking && Math.Sign(DashDir.Y) == sign && hit != IntPtr.Zero)
-                        DashCollisions.Add(new DashCollision(hit, new PointF(0f, sign)));
+                    // The vertical half has no NormalOverride mapping in vanilla; a vertical
+                    // rebound is straight up, with no sideways part.
+                    if (DashAttacking && Math.Sign(DashDir.Y) == sign && hit != IntPtr.Zero &&
+                        OnDashCollide != null)
+                    {
+                        DashCollisionResults result = OnDashCollide(hit, new PointF(0f, sign));
+                        if (State == StRedDash) result = DashCollisionResults.Ignore;
+                        if (result == DashCollisionResults.Rebound) { Rebound(); return; }
+                        if (result == DashCollisionResults.Ignore) return;
+                    }
                     // Held, not hit: see MoveHExact.  Without this she lands on the block she
                     // is sitting in every single frame, footstep and all.
                     if (held && !DashAttacking) Speed.Y = 0f;
@@ -1193,7 +1231,6 @@ namespace DeskMadeline
         // ===== Main update =====
         public void Update(float dt, PetInput input)
         {
-            DashCollisions.Clear();
             if (IsDead)
             {
                 if (IsPreDeath)
