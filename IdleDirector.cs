@@ -332,10 +332,10 @@ namespace DeskMadeline
             trappedLeg = false;
             legElevated = false;
             pendingLeap = false;
-            pendingGoal = RectangleF.Empty;
+            route = null;
+            routeAt = 0;
             dashAimFrames = 0;
             leapCatchFrames = 0;
-            if (next != Activity.ClimbWindow && next != Activity.Inspect) climbPlan = 0;
             Napping = false;
             PetWindow.Log("idle: " + next);
 
@@ -357,9 +357,7 @@ namespace DeskMadeline
                 case Activity.ClimbWindow:
                 case Activity.Inspect:
                     targetRect = next == Activity.Inspect ? freshWindow : climbCandidate;
-                    if (next == Activity.Inspect && !ClassifyReach(ctx, targetRect)) climbPlan = 0;
                     target = new PointF(targetRect.Left + targetRect.Width / 2f, targetRect.Top);
-                    if (climbPlan == 3) StageThroughStone(ctx);
                     // A taller wall is a longer outing; the watchdog still ends a stalled one.
                     activityBudget = 30f +
                         Math.Max(0f, ctx.Player.Pos.Y - targetRect.Top) * .3f;
@@ -517,19 +515,6 @@ namespace DeskMadeline
             bool wantTop = Current != Activity.Wander || legElevated;
             if (Arrived(ctx, wantTop))
             {
-                if (pendingGoal.Width > 0f)
-                {
-                    // Standing on the stepping stone: the real goal is one hop away now.
-                    targetRect = pendingGoal;
-                    pendingGoal = RectangleF.Empty;
-                    target = new PointF(targetRect.Left + targetRect.Width / 2f, targetRect.Top);
-                    if (!ClassifyReach(ctx, targetRect)) { Abandon(ctx); return; }
-                    if (climbPlan == 3) climbPlan = 0;
-                    bestDist = float.MaxValue;
-                    bestClimbY = float.MaxValue;
-                    stall = 0f;
-                    return;
-                }
                 phase = Phase.Do;
                 phaseTime = 0f;
                 walledLegs = 0;
@@ -600,34 +585,38 @@ namespace DeskMadeline
                     if (DashPathClear(ctx, dir)) ctx.Player.BufferDash();
                 }
             }
-            if (wantTop && climbPlan == 1 && ctx.Player.State != Player.StClimb &&
-                ctx.Player.Pos.Y > targetRect.Bottom - 4f)
+            if (wantTop)
             {
-                RunDashUp(ref input, dt, ctx);
-                Drain(dt, moving: true);
-                Watchdog(dt, ctx, true, climbViaX, busyScaling: !ctx.Player.onGround);
-                return;
-            }
-            float aimX = target.X;
-            if (wantTop && climbPlan == 2 && Math.Abs(ctx.Player.Pos.X - climbViaX) < 14f)
-            {
-                aimX = climbViaX;
-                // High enough beside it: leap across, from the grab or from the ladder --
-                // but only off the face that looks at the target. On that face her Facing
-                // is opposite the leap; from the far face the same leap flies away from
-                // the window, so there she keeps climbing and comes over the top instead.
-                if (ctx.Player.Pos.Y <= targetRect.Bottom - 8f)
+                if (route == null && ctx.Player.onGround)
                 {
-                    if (ctx.Player.State == Player.StClimb &&
-                        ctx.Player.Facing == -climbViaDir)
-                    { climbIntent = ClimbIntent.LeapAcross; intentT = .4f; }
-                    else if (!ctx.Player.onGround && wallSide == -climbViaDir)
-                        pendingLeap = true;
+                    // Ask the terrain, not the window: the graph routes to any standable
+                    // spot or says plainly that there is no way.
+                    IdleNav.BuildSegs(ctx, navSegs);
+                    int from = IdleNav.SegUnder(navSegs, ctx.Player.Pos);
+                    int to = IdleNav.SegAt(navSegs, target);
+                    route = IdleNav.FindRoute(ctx, navSegs, from, to);
+                    routeAt = 0;
+                    if (route == null)
+                    {
+                        // No way there. A stroll simply goes somewhere else; a committed
+                        // outing gives the idea up.
+                        if (Current == Activity.Wander)
+                        {
+                            legElevated = false;
+                            target = WanderPoint(ctx);
+                            return;
+                        }
+                        Abandon(ctx);
+                        return;
+                    }
+                }
+                if (route != null && routeAt < route.Count)
+                {
+                    RunRouteStep(ref input, dt, ctx);
+                    return;
                 }
             }
-            else if (wantTop && climbPlan == 2 && ctx.Player.Pos.Y > targetRect.Bottom - 4f &&
-                ctx.Player.onGround)
-                aimX = climbViaX;
+            float aimX = target.X;
             // An outing that targets a top climbs whatever it takes; a stroll still climbs
             // what is modest -- a window in the way is half the fun of a desk -- and a
             // crossing leg climbs like an outing, because the seam demands it.
@@ -640,8 +629,7 @@ namespace DeskMadeline
             // poisons a straight-line best-distance; while she is on the wall or in the
             // air of that plan, progress is measured as new height instead.
             Watchdog(dt, ctx, wantTop, aimX, busyScaling:
-                (crossing || (wantTop && climbPlan == 2)) &&
-                (ctx.Player.State == Player.StClimb || !ctx.Player.onGround));
+                crossing && (ctx.Player.State == Player.StClimb || !ctx.Player.onGround));
         }
 
         void BeginTopSit(in IdleContext ctx)
@@ -788,6 +776,95 @@ namespace DeskMadeline
         }
 
         /// <summary>
+        /// One frame of the current route maneuver. Advances to the next step the moment
+        /// she stands on this step's segment, however she got there -- the executor is
+        /// reactive, so a fall into a chimney or a detour over a wall self-corrects.
+        /// </summary>
+        void RunRouteStep(ref PetInput input, float dt, in IdleContext ctx)
+        {
+            Player p = ctx.Player;
+            NavStep step = route[routeAt];
+            if (step.Seg >= navSegs.Count) { Abandon(ctx); return; }
+            NavSeg seg = navSegs[step.Seg];
+            if (p.onGround && Math.Abs(p.Pos.Y - seg.Y) <= 3f &&
+                p.Pos.X >= seg.L - 3f && p.Pos.X <= seg.R + 3f)
+            {
+                routeAt++;
+                wallSide = 0;
+                bestDist = float.MaxValue;
+                bestClimbY = float.MaxValue;
+                stall = 0f;
+                return;
+            }
+            float aim;
+            bool scaling = false;
+            switch (step.Move)
+            {
+                case IdleNav.MoveClimb:
+                    aim = step.X;
+                    scaling = true;
+                    Walk(ref input, dt, ctx, aim, climbUpTo: float.MaxValue, scaleWithJumps: true);
+                    break;
+                case IdleNav.MoveDash:
+                    aim = step.X;
+                    scaling = true;
+                    if (p.State == Player.StClimb ||
+                        (wallSide != 0 && !p.onGround && p.Dashes == 0 &&
+                         p.State != Player.StDash))
+                    {
+                        // Caught the face at least once: from here the ordinary climb
+                        // machinery -- grab, tank, neutral-jump ladder -- owns it. The
+                        // press-in below is only for the very first catch, or its
+                        // ungated grab chatters against the tank rule forever.
+                        Walk(ref input, dt, ctx, aim, climbUpTo: float.MaxValue,
+                            scaleWithJumps: true);
+                        break;
+                    }
+                    climbViaX = step.X;
+                    climbViaDir = step.Dir;
+                    RunDashUp(ref input, dt, ctx);
+                    break;
+                case IdleNav.MoveLeap:
+                {
+                    bool nearWall = Math.Abs(p.Pos.X - step.X) < 14f;
+                    // Below the leap height the wall is the errand; only once she is up
+                    // there -- flying or hanging past it -- is the segment the steer.
+                    aim = nearWall ? step.X
+                        : p.Pos.Y <= step.Arg ? Math.Clamp(p.Pos.X, seg.L + 6f, seg.R - 6f)
+                        : step.X;
+                    scaling = true;
+                    if (nearWall && p.onGround && p.Pos.Y <= step.Arg)
+                    {
+                        // Standing on the assist wall itself, above the leap height: step
+                        // off toward the target and take the face waiting in the chimney.
+                        aim = step.X + step.Dir * 25f;
+                    }
+                    else if (nearWall && p.Pos.Y <= step.Arg)
+                    {
+                        // Off the face that looks at the target only; from the far face
+                        // the same leap flies the wrong way, so there she climbs on and
+                        // comes over the top instead.
+                        if (p.State == Player.StClimb && p.Facing == -step.Dir)
+                        { climbIntent = ClimbIntent.LeapAcross; intentT = .4f; }
+                        else if (!p.onGround && wallSide == -step.Dir)
+                            pendingLeap = true;
+                    }
+                    Walk(ref input, dt, ctx, aim, climbUpTo: float.MaxValue, scaleWithJumps: true);
+                    break;
+                }
+                default:        // walk, hop, jump a gap, or walk off an end
+                    aim = step.X;
+                    legLedgeJump = true;
+                    Walk(ref input, dt, ctx, aim, climbUpTo: 60f);
+                    break;
+            }
+            input.DashPressed |= p.HasDashBuffer;
+            Drain(dt, moving: true);
+            Watchdog(dt, ctx, false, aim, busyScaling:
+                scaling && (p.State == Player.StClimb || !p.onGround), overrideY: seg.Y);
+        }
+
+        /// <summary>
         /// The jump-and-up-dash that reaches a window hanging above the floor: walk under
         /// its wall, jump, dash straight up beside the face, and put the grab out. Only
         /// offered where a dash cannot move the window.
@@ -826,6 +903,9 @@ namespace DeskMadeline
             else if (!p.onGround && p.Speed.Y > -10f && p.Dashes == 0)
             {
                 // Dash spent and past its rise: press into the face with the grab out.
+                // A fresh catch is a fresh climb: the intent rerolls, or a stale one
+                // chatters grab-and-release on the spot forever.
+                prevClimbing = false;
                 input.MoveX = climbViaDir;
                 input.GrabHeld = true;
             }
@@ -1043,6 +1123,14 @@ namespace DeskMadeline
         void RollClimbIntent(in IdleContext ctx, Player p, bool scaling)
         {
             double roll = rng.NextDouble();
+            if (route != null && routeAt < route.Count)
+            {
+                // Mid-route the wall is an errand, not a pastime: no hanging about, no
+                // sliding back, and above all no leaping off it on a whim.
+                climbIntent = roll < .6 ? ClimbIntent.Up : ClimbIntent.NeutralHop;
+                intentT = 1f + (float)rng.NextDouble();
+                return;
+            }
             if (!scaling)
             {
                 climbIntent = roll < .8 ? ClimbIntent.Up
@@ -1100,7 +1188,7 @@ namespace DeskMadeline
         }
 
         void Watchdog(float dt, in IdleContext ctx, bool wantTop, float? overrideX = null,
-            bool busyScaling = false)
+            bool busyScaling = false, float? overrideY = null)
         {
             // Progress is measured toward the plan's current waypoint, and the yardstick
             // starts over when the waypoint changes: a route that legitimately walks away
@@ -1113,7 +1201,8 @@ namespace DeskMadeline
                 bestDist = float.MaxValue;
             }
             float dx = Math.Abs(aim - ctx.Player.Pos.X);
-            float dy = wantTop ? Math.Abs(targetRect.Top - ctx.Player.Pos.Y) : 0f;
+            float dy = wantTop ? Math.Abs(targetRect.Top - ctx.Player.Pos.Y)
+                : overrideY.HasValue ? Math.Abs(overrideY.Value - ctx.Player.Pos.Y) : 0f;
             float dist = dx + dy;
             if (dist < bestDist - 1f) { bestDist = dist; stall = 0f; }
             // Scaling a seam is honest vertical work the horizontal distance cannot see --
@@ -1199,19 +1288,10 @@ namespace DeskMadeline
         /// </summary>
         void NewWanderLeg(in IdleContext ctx)
         {
-            target = ExplorePoint(ctx, out RectangleF route, out legElevated);
-            if (legElevated)
-            {
-                targetRect = route;
-                if (!ClassifyReach(ctx, route))
-                {
-                    legElevated = false;
-                    target = WanderPoint(ctx);
-                    climbPlan = 0;
-                }
-                else if (climbPlan == 3) StageThroughStone(ctx);
-            }
-            else climbPlan = 0;
+            target = ExplorePoint(ctx, out RectangleF surface, out legElevated);
+            if (legElevated) targetRect = surface;
+            route = null;
+            routeAt = 0;
             RollLegSpice(ctx);
             trappedLeg = walledLegs >= 2;
             bestDist = float.MaxValue;
@@ -1318,122 +1398,16 @@ namespace DeskMadeline
         }
 
         RectangleF climbCandidate;
-        RectangleF climbStone;
-        RectangleF pendingGoal;
-        // How the chosen window is reached: 0 walk to its wall, 1 jump-and-up-dash to grab
-        // it, 2 climb the screen edge beside it and leap across.
-        int climbPlan;
+        readonly List<NavSeg> navSegs = new List<NavSeg>();
+        List<NavStep> route;
+        int routeAt;
+        // Pilot scratch for the up-dash maneuver: where to leave the ground, and which
+        // side the face is on.
         float climbViaX;
         int climbViaDir;
 
-        internal void ForceClimbPlanForCheck(int plan, float viaX, int viaDir)
-        { climbPlan = plan; climbViaX = viaX; climbViaDir = viaDir; }
-
-        internal void ForceStagePlanForCheck(in IdleContext ctx)
-        {
-            if (ClassifyReach(ctx, targetRect) && climbPlan == 3) StageThroughStone(ctx);
-        }
-
-        /// <summary>
-        /// Whether and how she could get on top of this window from where she stands. A wall
-        /// reaching near her feet is walked to; a bottom within jump-plus-up-dash height is
-        /// dashed to, but never in kevin or moon mode, where a dash moves the window; one
-        /// hugging the screen edge is reached by climbing the edge and leaping across.
-        /// </summary>
-        bool ClassifyReach(in IdleContext ctx, RectangleF rect)
-        {
-            float bottomRise = ctx.Player.Pos.Y - rect.Bottom;
-            bool fromLeft = ctx.Player.Pos.X < rect.Left + rect.Width / 2f;
-            climbPlan = 0;
-            if (bottomRise <= 30f) return true;
-            if (!ctx.WindowsReactToDash && bottomRise <= 95f)
-            {
-                // The dash spot must exist: a window flush against the screen edge has no
-                // standing room on that side, so the approach comes from the other one.
-                RectangleF room = RoomAround(ctx);
-                float near = fromLeft ? rect.Left - 5f : rect.Right + 5f;
-                float far = fromLeft ? rect.Right + 5f : rect.Left - 5f;
-                float viaX = near > room.Left + 4f && near < room.Right - 4f ? near : far;
-                // And the face must be graspable where the dash tops out: dashing at a
-                // border whose lower half is occluded away is flailing, not a route.
-                float face = viaX < rect.Left + rect.Width / 2f ? rect.Left : rect.Right;
-                bool catchable = false;
-                foreach (Solid s in ctx.Solids)
-                    if (s.L < face + 5f && s.R > face - 5f &&
-                        s.T < rect.Bottom + 6f && s.B > rect.Bottom - 25f)
-                    { catchable = true; break; }
-                if (catchable)
-                {
-                    climbPlan = 1;
-                    climbViaX = viaX;
-                    climbViaDir = viaX < rect.Left + rect.Width / 2f ? 1 : -1;
-                    return true;
-                }
-            }
-            if (FindAssistWall(ctx, rect)) return true;
-            return FindSteppingStone(ctx, rect);
-        }
-
-        /// <summary>
-        /// No direct route, so look for somewhere to go via: a surface she can get on top
-        /// of -- another window, say -- from which the target's bottom is a jump or an
-        /// up-dash away, with the spot beside the face landing on that surface. One hop
-        /// only; the desk rarely needs more.
-        /// </summary>
-        bool FindSteppingStone(in IdleContext ctx, RectangleF rect)
-        {
-            float allowed = ctx.WindowsReactToDash ? 28f : 95f;
-            foreach (Solid s in ctx.Solids)
-            {
-                if (s.B < ctx.Player.Pos.Y - 30f) continue;     // not standing on her ground
-                if (s.T >= ctx.Player.Pos.Y - 16f) continue;    // not a step up at all
-                if (s.R - s.L < 24f) continue;
-                float stoneRise = s.T - rect.Bottom;            // target bottom above the stone
-                if (stoneRise < 8f || stoneRise > allowed) continue;
-                float spotLeft = rect.Left - 5f, spotRight = rect.Right + 5f;
-                if (!(spotLeft > s.L + 4f && spotLeft < s.R - 4f) &&
-                    !(spotRight > s.L + 4f && spotRight < s.R - 4f)) continue;
-                climbPlan = 3;
-                climbStone = RectangleF.FromLTRB(s.L, s.T, s.R, s.B);
-                return true;
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// A plan through a stone is two trips: aim at the stone first, remember the goal,
-        /// and when she stands on the stone the arrival re-plans the rest from up there.
-        /// </summary>
-        void StageThroughStone(in IdleContext ctx)
-        {
-            pendingGoal = targetRect;
-            targetRect = climbStone;
-            target = new PointF(climbStone.Left + climbStone.Width / 2f, climbStone.Top);
-            activityBudget += 15f;
-            if (!ClassifyReach(ctx, climbStone) || climbPlan == 3) climbPlan = 0;
-        }
-
-        /// <summary>
-        /// Any wall within a leap of the window's side that stands on her ground and rises
-        /// past the window's bottom -- a screen edge and another window's border serve
-        /// equally. The gap must fit her: a chimney narrower than her body is a wall, not
-        /// a route.
-        /// </summary>
-        bool FindAssistWall(in IdleContext ctx, RectangleF rect)
-        {
-            foreach (Solid s in ctx.Solids)
-            {
-                if (s.B < ctx.Player.Pos.Y - 30f) continue;     // does not come down to her
-                if (s.T > rect.Bottom - 8f) continue;           // does not rise past the bottom
-                float gapLeft = rect.Left - s.R;                // wall to the window's left
-                if (gapLeft >= 12f && gapLeft <= 55f)
-                { climbPlan = 2; climbViaX = s.R - 2f; climbViaDir = 1; return true; }
-                float gapRight = s.L - rect.Right;              // wall to the window's right
-                if (gapRight >= 12f && gapRight <= 55f)
-                { climbPlan = 2; climbViaX = s.L + 2f; climbViaDir = -1; return true; }
-            }
-            return false;
-        }
+        // (the reach planning that lived here is IdleNav now: routes over the terrain
+        // graph, found by search rather than per-window cases)
 
         /// <summary>
         /// A window she can actually get on top of from where she stands: its wall must come
@@ -1441,15 +1415,15 @@ namespace DeskMadeline
         /// bar -- past the tank she rides the neutral-jump ladder.
         /// </summary>
         internal RectangleF ProbeClimbForCheck(in IdleContext ctx) => FindClimbable(ctx);
-        internal int ClimbPlanForCheck => climbPlan;
-        internal float ClimbViaXForCheck => climbViaX;
-        internal int ClimbViaDirForCheck => climbViaDir;
 
         RectangleF FindClimbable(in IdleContext ctx)
         {
             if (ctx.Windows.Count == 0) return RectangleF.Empty;
+            IdleNav.BuildSegs(ctx, navSegs);
+            int from = IdleNav.SegUnder(navSegs, ctx.Player.Pos);
+            if (from < 0) return RectangleF.Empty;
             RectangleF room = RoomAround(ctx);
-            int under = 0, occluded = 0, unreachable = 0;
+            int noTop = 0, noRoute = 0;
             for (int attempt = 0; attempt < 8; attempt++)
             {
                 var window = ctx.Windows[rng.Next(ctx.Windows.Count)];
@@ -1457,30 +1431,19 @@ namespace DeskMadeline
                 if (!room.IntersectsWith(rect)) continue;
                 if (rect.Width < 24f) continue;
                 if (ctx.Player.Pos.Y - rect.Top < 16f) continue;        // hardly a climb
-                // From underneath, a window is hollow: its borders are around her, not
-                // ahead of her, and there is no wall to walk into. Only from outside.
-                if (ctx.Player.Pos.X > rect.Left - 4f && ctx.Player.Pos.X < rect.Right + 4f)
-                { under++; continue; }
                 if (NearAPuffer(ctx, new PointF(rect.Left + rect.Width / 2f, rect.Top))) continue;
-                if (!ClassifyReach(ctx, rect)) { unreachable++; continue; }
-                // The border the plan would grab must actually be solid -- occlusion
-                // subtracts hidden border pieces out of the world. Which side that is
-                // depends on the route: a leap lands on the side facing the assist wall.
-                float wallX = climbPlan == 2
-                    ? (climbViaDir > 0 ? rect.Left : rect.Right)
-                    : (ctx.Player.Pos.X < rect.Left + rect.Width / 2f ? rect.Left : rect.Right);
-                bool wallThere = false;
-                foreach (Solid s in ctx.Solids)
-                    if (s.L < wallX + 5f && s.R > wallX - 5f &&
-                        s.T < rect.Bottom - 2f && s.B > rect.Top + 2f)
-                    { wallThere = true; break; }
-                if (!wallThere) { occluded++; continue; }
+                int to = -1;
+                for (int i = 0; i < navSegs.Count && to < 0; i++)
+                    if (Math.Abs(navSegs[i].Y - rect.Top) <= 4f &&
+                        navSegs[i].R > rect.Left && navSegs[i].L < rect.Right) to = i;
+                if (to < 0) { noTop++; continue; }
+                if (IdleNav.FindRoute(ctx, navSegs, from, to) == null) { noRoute++; continue; }
                 return rect;
             }
             // The scan came up dry: say why, so the diary answers what a shrug cannot.
-            if (under + occluded + unreachable > 0)
-                PetWindow.Log($"idle: climb scan empty: under {under},"
-                    + $" occluded {occluded}, unreachable {unreachable}");
+            if (noTop + noRoute > 0)
+                PetWindow.Log($"idle: climb scan empty: no standable top {noTop},"
+                    + $" no route {noRoute}");
             return RectangleF.Empty;
         }
 
@@ -1565,12 +1528,12 @@ namespace DeskMadeline
             legLedgeJump = true;
             walledLegs = 0;
             trappedLeg = false;
-            pendingGoal = RectangleF.Empty;
+            route = null;
+            routeAt = 0;
             legElevated = what == Activity.Wander && rect.Width > 0f;
             pendingLeap = false;
             dashAimFrames = 0;
             leapCatchFrames = 0;
-            climbPlan = 0;
             sitStage = 0;
             sitT = 0f;
             sitPause = 1.5f;

@@ -44,7 +44,7 @@ static class IdleChecks
     }
 
     static readonly List<RectangleF> OneMonitor = new List<RectangleF>
-    { new RectangleF(-400f, -300f, 800f, 340f) };
+    { new RectangleF(-400f, -500f, 800f, 540f) };
 
     static IdleContext Context(Player player, bool fullscreen = false,
         List<Glider> gliders = null, List<Seeker> seekers = null)
@@ -395,7 +395,6 @@ static class IdleChecks
         var upDirector = new IdleDirector(new Random(7));
         upDirector.ForceActivityForCheck(IdleDirector.Activity.Wander, new PointF(180f, -60f),
             new RectangleF(100f, -60f, 160f, 60f));
-        upDirector.ForceClimbPlanForCheck(0, 0f, 0);
         var upCtx = Context(upLeg);
         bool toppedOut = false;
         for (frames = 0; frames < (int)(20f / Dt); frames++)
@@ -511,7 +510,6 @@ static class IdleChecks
         var floatDirector = new IdleDirector(new Random(7));
         floatDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
             new RectangleF(60f, -150f, 140f, 70f));
-        floatDirector.ForceClimbPlanForCheck(1, 55f, 1);
         var floatCtx = Context(dasher);
         bool upDashed = false;
         for (frames = 0; frames < (int)(25f / Dt); frames++)
@@ -532,7 +530,6 @@ static class IdleChecks
         var underDirector = new IdleDirector(new Random(7));
         underDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
             new RectangleF(60f, -150f, 140f, 70f));
-        underDirector.ForceClimbPlanForCheck(1, 205f, -1);
         var underCtx = Context(under);
         for (frames = 0; frames < (int)(25f / Dt); frames++)
         {
@@ -551,19 +548,17 @@ static class IdleChecks
         Console.WriteLine("  The same window when a dash would move it");
         var mover = OnFloor(0f, floater);
         var moonDirector = new IdleDirector(new Random(7));
-        moonDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
-            new RectangleF(60f, -150f, 140f, 70f));
-        moonDirector.ForceClimbPlanForCheck(1, 55f, 1);
         var moonCtx = Context(mover);
         moonCtx.WindowsReactToDash = true;
-        bool moonDashed = false;
-        for (frames = 0; frames < (int)(10f / Dt); frames++)
-        {
-            Step(moonDirector, mover, moonCtx);
-            if (mover.State == Player.StDash) moonDashed = true;
-        }
-        Console.WriteLine($"      windows as moon or kevin blocks: dashed {moonDashed}");
-        Check("no up-dash where the dash itself would move the window", !moonDashed);
+        moonCtx.Windows = new List<KeyValuePair<IntPtr, RectangleF>>
+        { new KeyValuePair<IntPtr, RectangleF>(new IntPtr(9), new RectangleF(60f, -150f, 140f, 70f)) };
+        RectangleF moonGot = default;
+        for (int i = 0; i < 20 && moonGot.Width == 0f; i++)
+            moonGot = moonDirector.ProbeClimbForCheck(moonCtx);
+        Console.WriteLine($"      windows as moon or kevin blocks, dash edges off the"
+            + $" graph: offered {moonGot.Width > 0f}");
+        Check("no route is offered where the only way up is a dash that would move it",
+            moonGot.Width == 0f);
 
         Console.WriteLine();
         Console.WriteLine("  Detecting a floating window beside another window's wall");
@@ -578,18 +573,13 @@ static class IdleChecks
         for (int i = 0; i < 20 && spotted.Width == 0f; i++)
             spotted = spotDirector.ProbeClimbForCheck(spotCtx);
         Console.WriteLine($"      the floater's bottom is 80 up and dashes are off:"
-            + $" found {spotted.Width > 0f}, plan {spotDirector.ClimbPlanForCheck}"
-            + $" via x={spotDirector.ClimbViaXForCheck:F0}");
+            + $" found {spotted.Width > 0f}");
         Check("a neighbouring window's wall makes the floater a candidate, dashlessly",
-            spotted.Width > 0f && spotDirector.ClimbPlanForCheck == 2);
+            spotted.Width > 0f);
         bool climbedIt = false;
         if (spotted.Width > 0f)
         {
-            int plan = spotDirector.ClimbPlanForCheck;
-            float viaX = spotDirector.ClimbViaXForCheck;
-            int viaDir = spotDirector.ClimbViaDirForCheck;
             spotDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default, spotted);
-            spotDirector.ForceClimbPlanForCheck(plan, viaX, viaDir);
             for (frames = 0; frames < (int)(35f / Dt); frames++)
             {
                 Step(spotDirector, spotter, spotCtx);
@@ -614,15 +604,13 @@ static class IdleChecks
         for (int i = 0; i < 20 && staged.Width == 0f; i++)
             staged = stageDirector.ProbeClimbForCheck(stageCtx);
         Console.WriteLine($"      its bottom is 180 up -- past any dash from the floor --"
-            + $" but a 100-tall window stands under it: found {staged.Width > 0f},"
-            + $" plan {stageDirector.ClimbPlanForCheck}");
+            + $" but a 100-tall window stands under it: found {staged.Width > 0f}");
         Check("the route through the neighbour's top is seen from the ground",
-            staged.Width > 0f && stageDirector.ClimbPlanForCheck == 3);
+            staged.Width > 0f);
         bool viaStone = false;
         if (staged.Width > 0f)
         {
             stageDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default, staged);
-            stageDirector.ForceStagePlanForCheck(stageCtx);
             for (frames = 0; frames < (int)(40f / Dt); frames++)
             {
                 Step(stageDirector, stager, stageCtx);
@@ -634,6 +622,63 @@ static class IdleChecks
                 + $" {stager.Pos.X:F0},{stager.Pos.Y:F0} after {frames * Dt:F1}s");
         }
         Check("she climbs the neighbour, then dashes up from its top", viaStone);
+
+        Console.WriteLine();
+        Console.WriteLine("  A side blocked by another window's bottom");
+        var goal = new Solid { Id = new IntPtr(9), L = 60f, T = -120f, R = 200f, B = 0f };
+        var blockerBottom = new Solid { Id = new IntPtr(8), L = 150f, T = -60f, R = 320f, B = -58f };
+        var blockerTop = new Solid { Id = new IntPtr(8), L = 150f, T = -200f, R = 320f, B = -198f };
+        var blockerLeft = new Solid { Id = new IntPtr(8), L = 150f, T = -200f, R = 152f, B = -60f };
+        var blockerRight = new Solid { Id = new IntPtr(8), L = 318f, T = -200f, R = 320f, B = -60f };
+        var router = OnFloor(420f, goal, blockerBottom, blockerTop, blockerLeft, blockerRight);
+        var routeDirector = new IdleDirector(new Random(7));
+        var routeCtx = Context(router);
+        routeCtx.Windows = new List<KeyValuePair<IntPtr, RectangleF>>
+        {
+            new KeyValuePair<IntPtr, RectangleF>(new IntPtr(9), new RectangleF(60f, -120f, 140f, 120f)),
+            new KeyValuePair<IntPtr, RectangleF>(new IntPtr(8), new RectangleF(150f, -200f, 170f, 140f)),
+        };
+        RectangleF routed = default;
+        for (int i = 0; i < 40; i++)
+        {
+            RectangleF got = routeDirector.ProbeClimbForCheck(routeCtx);
+            if (got.Width > 0f && Math.Abs(got.Left - 60f) < 1f) { routed = got; break; }
+        }
+        Console.WriteLine($"      the goal's climbable side runs under another window's"
+            + $" bottom: offered {routed.Width > 0f}");
+        Check("the blocked window is reached by a route over the blocker",
+            routed.Width > 0f);
+        bool overTheTop = false;
+        if (routed.Width > 0f)
+        {
+            routeDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default, routed);
+            for (frames = 0; frames < (int)(45f / Dt); frames++)
+            {
+                Step(routeDirector, router, routeCtx);
+                if (routeDirector.Current != IdleDirector.Activity.ClimbWindow) break;
+                if (router.onGround && Math.Abs(router.Pos.Y + 120f) <= 2f &&
+                    router.Pos.X > 62f && router.Pos.X < 198f) { overTheTop = true; break; }
+            }
+            Console.WriteLine($"      climbed the blocker, walked off, dropped on the goal:"
+                + $" {overTheTop}, at {router.Pos.X:F0},{router.Pos.Y:F0} after {frames * Dt:F1}s");
+        }
+        Check("she climbs the blocker and drops onto the goal from above", overTheTop);
+
+        Console.WriteLine();
+        Console.WriteLine("  A lid right above a window's top means nowhere to stand");
+        var lid = new Solid { Id = new IntPtr(8), L = 40f, T = -140f, R = 220f, B = -136f };
+        var lone = OnFloor(420f, goal, lid);
+        var loneDirector = new IdleDirector(new Random(7));
+        var loneCtx = Context(lone);
+        loneCtx.Windows = new List<KeyValuePair<IntPtr, RectangleF>>
+        { new KeyValuePair<IntPtr, RectangleF>(new IntPtr(9), new RectangleF(60f, -120f, 140f, 120f)) };
+        RectangleF loneGot = default;
+        for (int i = 0; i < 20 && loneGot.Width == 0f; i++)
+            loneGot = loneDirector.ProbeClimbForCheck(loneCtx);
+        Console.WriteLine($"      sixteen pixels of air under the lid: offered"
+            + $" {loneGot.Width > 0f}");
+        Check("a top she could not stand on is never a destination",
+            loneGot.Width == 0f);
 
         Console.WriteLine();
         Console.WriteLine("  No dashing at a face that cannot be caught");
@@ -659,7 +704,6 @@ static class IdleChecks
         var viaDirector = new IdleDirector(new Random(7));
         viaDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default,
             new RectangleF(-160f, -200f, 120f, 80f));
-        viaDirector.ForceClimbPlanForCheck(2, -202f, 1);
         var viaCtx = Context(leaperUp);
         viaCtx.EdgesClimbable = true;
         viaCtx.EdgeLeft = -200f;
