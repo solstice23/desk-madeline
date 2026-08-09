@@ -108,6 +108,21 @@ namespace DeskMadeline
 
         public void Carry(PointF position) { Pos = position; counter = PointF.Empty; }
 
+        /// <summary>
+        /// TheoCrystal.ExplodeLaunch: thrown away from a puffer that has gone off beside it, at
+        /// a hundred and twenty. One being carried is not thrown -- she is holding on to it.
+        /// </summary>
+        public void ExplodeLaunch(PointF from)
+        {
+            if (IsHeld) return;
+            float dx = Pos.X - from.X, dy = Pos.Y - ColliderHeight / 2f - from.Y;
+            float length = (float)Math.Sqrt(dx * dx + dy * dy);
+            // SafeNormalize(120f): a crystal exactly on top of it is given nothing rather than
+            // a direction divided by zero.
+            if (length <= .0001f) { Speed = PointF.Empty; return; }
+            Speed = new PointF(dx / length * 120f, dy / length * 120f);
+        }
+
         public void Release(PointF force, IList<Solid> solids = null)
         {
             solids ??= lastSolids;

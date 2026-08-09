@@ -19,7 +19,8 @@ static class Program
         failed += GridChecks.Run();       // whole-pixel grid: climbing, borders, landing, respawn
         failed += DreamChecks.Run();      // dream blocks: death position, display edge, being held
         failed += MoonChecks.Run();      // windows as FloatySpaceBlocks
-        failed += BumperChecks.Run();    // the pinball bumper, and what it ignores
+        failed += BumperChecks.Run();
+        failed += PufferChecks.Run();    // the pufferfish, and the crystal it throws    // the pinball bumper, and what it ignores
         failed += PushChecks.Run();      // what a window moving into her does
         failed += WaterChecks.Run();     // swimming, when the windows are water
         failed += SoundChecks.Run();      // super and hyper, at the timings people play them

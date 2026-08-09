@@ -26,6 +26,7 @@ adding an assertion, and what these need is a fixed timestep and vanilla's const
 | `TheoChecks.cs` | How the Theo crystal breaks: the death sound, the forest-green burst, and being gone once it finishes |
 | `DreamHyperChecks.cs` | The dream hyper, and the crouch on the way in that decides whether it lands as a hyper or a super |
 | `BumperChecks.cs` | The pinball bumper: the launch it throws her into, the six tenths it then sits out, its reach, and everything else going straight through it |
+| `PufferChecks.cs` | The pufferfish: bounced off the top, set off from below, the Theo crystal its blast throws, and its swim back to where it was left |
 | `PushChecks.cs` | A window edge arriving where she stands: the push, the crush at every drag speed, where a crush puts her back, and the same for the crystal, the jelly and the seeker |
 | `WaterChecks.cs` | Swimming, when the windows are water: the speeds, the surface, the dash refill, and what a held crystal does down there |
 | `MoonChecks.cs` | Windows as moon blocks: the drift, the sink under whoever rides one, the shove from a dash, a home that survives being dragged, and her standing on and hanging off one |

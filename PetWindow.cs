@@ -57,11 +57,13 @@ namespace DeskMadeline
         int pendingTheoSpawns;
         int pendingSeekerSpawns;
         int pendingBumperSpawns;
+        int pendingPufferSpawns;
         int pendingRemoveAllEntities;
         readonly Queue<Glider> pendingGliderRemovals = new Queue<Glider>();
         readonly Queue<TheoCrystal> pendingTheoRemovals = new Queue<TheoCrystal>();
         readonly Queue<Seeker> pendingSeekerRemovals = new Queue<Seeker>();
         readonly Queue<Bumper> pendingBumperRemovals = new Queue<Bumper>();
+        readonly Queue<Puffer> pendingPufferRemovals = new Queue<Puffer>();
         bool introWakeUp = true;   // On startup play the wake-up animation (wakeUp 00-14), then switch to idle
 
         // Rendering
@@ -108,6 +110,7 @@ namespace DeskMadeline
         readonly ParticleSystem seekerParticles = new ParticleSystem();
         PType bumperLaunch, bumperAmbience;
         readonly Random bumperSparkle = new Random();
+        readonly Random pufferSparkle = new Random();
         readonly Dictionary<int, Bitmap> seekerParticleBitmaps = new Dictionary<int, Bitmap>();
         Bitmap gliderDebugStamp, theoDebugStamp;
         readonly Bitmap[] seekerDebugStamps = new Bitmap[3];
@@ -182,6 +185,10 @@ namespace DeskMadeline
         readonly object bumperWindowLock = new object();
         readonly Dictionary<Bumper, BumperInputWindow> bumperWindows = new Dictionary<Bumper, BumperInputWindow>();
         readonly Dictionary<Bumper, GliderStampCache> bumperStampCache = new Dictionary<Bumper, GliderStampCache>();
+        readonly List<Puffer> puffers = new List<Puffer>();
+        readonly object pufferWindowLock = new object();
+        readonly Dictionary<Puffer, PufferInputWindow> pufferWindows = new Dictionary<Puffer, PufferInputWindow>();
+        readonly Dictionary<Puffer, GliderStampCache> pufferStampCache = new Dictionary<Puffer, GliderStampCache>();
         Glider draggedGlider;
         PointF gliderDragOffset, gliderCursorVelocity;
         Point lastGliderCursor;
@@ -194,6 +201,8 @@ namespace DeskMadeline
         // A bumper is put somewhere rather than thrown, so the drag keeps no speed for it.
         Bumper draggedBumper;
         PointF bumperDragOffset;
+        Puffer draggedPuffer;
+        PointF pufferDragOffset;
         bool seekerRespawnDormant, observedPlayerRespawning;
 
         sealed class GliderStampCache
@@ -681,6 +690,14 @@ namespace DeskMadeline
             if (bumperSpawnCount > 0 && IsHandleCreated)
                 BeginInvoke(new Action(EnsureBumperWindows));
 
+            int pufferSpawnCount = Interlocked.Exchange(ref pendingPufferSpawns, 0);
+            for (int i = 0; i < pufferSpawnCount; i++)
+                puffers.Add(new Puffer(new PointF(
+                    player.Pos.X + player.Facing * (40f + i * 30f), player.Pos.Y - 20f),
+                    player.Facing > 0));
+            if (pufferSpawnCount > 0 && IsHandleCreated)
+                BeginInvoke(new Action(EnsurePufferWindows));
+
             int theoSpawnCount = Interlocked.Exchange(ref pendingTheoSpawns, 0);
             for (int i = 0; i < theoSpawnCount; i++)
             {
@@ -705,6 +722,9 @@ namespace DeskMadeline
             if ((removeFlags & 8) != 0)
                 lock (pendingBumperRemovals)
                     foreach (Bumper bumper in bumpers) pendingBumperRemovals.Enqueue(bumper);
+            if ((removeFlags & 16) != 0)
+                lock (pendingPufferRemovals)
+                    foreach (Puffer puffer in puffers) pendingPufferRemovals.Enqueue(puffer);
 
             lock (pendingGliderRemovals)
             {
@@ -736,6 +756,22 @@ namespace DeskMadeline
                     if (draggedTheo == theo) draggedTheo = null;
                     soundEffects.StopLoop(theo);
                     if (IsHandleCreated) BeginInvoke(new Action(() => CloseTheoWindow(theo)));
+                }
+            }
+
+            lock (pendingPufferRemovals)
+            {
+                while (pendingPufferRemovals.Count > 0)
+                {
+                    Puffer puffer = pendingPufferRemovals.Dequeue();
+                    if (!puffers.Remove(puffer)) continue;
+                    if (draggedPuffer == puffer) draggedPuffer = null;
+                    if (pufferStampCache.TryGetValue(puffer, out GliderStampCache pufferCache))
+                    {
+                        pufferCache.Bitmap?.Dispose();
+                        pufferStampCache.Remove(puffer);
+                    }
+                    if (IsHandleCreated) BeginInvoke(new Action(() => ClosePufferWindow(puffer)));
                 }
             }
 
@@ -970,6 +1006,26 @@ namespace DeskMadeline
                         bumper.Pos.Y + (float)Math.Sin(angle) * 8f,
                         angle, .5235988f, 1, 2f, 2f);
                 }
+            }
+            foreach (Puffer puffer in puffers)
+            {
+                if (puffer.Removed) { RequestPufferRemoval(puffer); continue; }
+                puffer.Update(dt, player, player.Solids, theos);
+                while (puffer.SoundEvents.Count > 0)
+                {
+                    PlayerSoundEvent sound = puffer.SoundEvents.Dequeue();
+                    soundEffects.Play(sound.Path, sound.Parameter, sound.Value);
+                }
+                // Puffer.Explode throws Seeker.P_Regen in a ring around itself -- the
+                // seeker's particle, borrowed by the game itself rather than by this.
+                for (int burst = 0; burst < puffer.Explosions; burst++)
+                    for (float angle = 0f; angle < (float)(Math.PI * 2.0); angle += .17453292f)
+                    {
+                        float away = 12f + (float)pufferSparkle.NextDouble() * 6f;
+                        particles.Emit(seekerRegen,
+                            puffer.Pos.X + (float)Math.Cos(angle) * away,
+                            puffer.Pos.Y + (float)Math.Sin(angle) * away, angle, .03490659f, 1);
+                    }
             }
 
             var seekerCamera = new RectangleF(player.Pos.X - 160f, player.Pos.Y - 90f, 320f, 180f);
@@ -1634,7 +1690,7 @@ namespace DeskMadeline
             // this pet's focus; the explicit menu opt-in permits reading them while
             // unfocused. No hook is installed and keys are never swallowed from other apps.
             bool blocked = dragging || draggedGlider != null || draggedTheo != null ||
-                draggedSeeker != null || draggedBumper != null ||
+                draggedSeeker != null || draggedBumper != null || draggedPuffer != null ||
                 (!InputWhenUnfocused && !IsPetInputWindow(Win32.GetForegroundWindow()));
             bool useKeys = InputEnabled && !blocked;
             bool usePad = PadInputEnabled && !blocked;
@@ -1712,7 +1768,10 @@ namespace DeskMadeline
                 if (seekerWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd))
                     return true;
             lock (bumperWindowLock)
-                return bumperWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd);
+                if (bumperWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd))
+                    return true;
+            lock (pufferWindowLock)
+                return pufferWindows.Values.Any(window => window.IsHandleCreated && window.Handle == hwnd);
         }
 
         void EnsureTheoWindows()
@@ -1777,6 +1836,61 @@ namespace DeskMadeline
             if (length < 30f) vx = vy = 0f;
             theo.EndDrag(new PointF(vx, vy));
             draggedTheo = null;
+        }
+
+        void EnsurePufferWindows()
+        {
+            lock (pufferWindowLock)
+            {
+                foreach (Puffer puffer in puffers)
+                {
+                    if (pufferWindows.ContainsKey(puffer)) continue;
+                    var window = new PufferInputWindow(this, puffer);
+                    pufferWindows[puffer] = window;
+                    window.Show();
+                }
+            }
+        }
+
+        internal void RequestPufferRemoval(Puffer puffer)
+        {
+            lock (pendingPufferRemovals) pendingPufferRemovals.Enqueue(puffer);
+            BeginInvoke(new Action(() => ClosePufferWindow(puffer)));
+        }
+
+        void ClosePufferWindow(Puffer puffer)
+        {
+            lock (pufferWindowLock)
+            {
+                if (!pufferWindows.TryGetValue(puffer, out PufferInputWindow window)) return;
+                pufferWindows.Remove(puffer);
+                window.Close();
+                window.Dispose();
+            }
+        }
+
+        internal void BeginPufferDrag(Puffer puffer)
+        {
+            Point cursor = Cursor.Position;
+            puffer.BeginDrag();
+            draggedPuffer = puffer;
+            pufferDragOffset = new PointF(cursor.X / (float)GameScale - puffer.Pos.X,
+                cursor.Y / (float)GameScale - puffer.Pos.Y);
+        }
+
+        internal void ContinuePufferDrag(Puffer puffer)
+        {
+            if (draggedPuffer != puffer) return;
+            Point cursor = Cursor.Position;
+            puffer.DragTo(new PointF(cursor.X / (float)GameScale - pufferDragOffset.X,
+                cursor.Y / (float)GameScale - pufferDragOffset.Y));
+        }
+
+        internal void EndPufferDrag(Puffer puffer)
+        {
+            if (draggedPuffer != puffer) return;
+            puffer.EndDrag();
+            draggedPuffer = null;
         }
 
         void EnsureBumperWindows()
@@ -2762,6 +2876,14 @@ namespace DeskMadeline
                         seeker.Pos.X + seeker.Shake.X, seeker.Pos.Y + seeker.Shake.Y);
                 }
             }
+            foreach (Puffer puffer in puffers)
+            {
+                if (trailCount >= trailStamps.Length) break;
+                Bitmap pufferStamp = GetPufferStamp(puffer);
+                if (pufferStamp == null) continue;
+                trailStamps[trailCount++] = new TrailStamp(pufferStamp, puffer.Pos.X, puffer.Pos.Y, 1f);
+                entityStamps[puffer] = (pufferStamp, puffer.Pos.X, puffer.Pos.Y);
+            }
             foreach (Bumper bumper in bumpers)
             {
                 if (trailCount >= trailStamps.Length) break;
@@ -2772,6 +2894,7 @@ namespace DeskMadeline
             }
             seekerParticles.AppendPointStamps(trailStamps, ref trailCount, seekerParticleBitmaps);
             burstScratch.Clear();
+            AppendPufferOverlays(trailStamps, ref trailCount, burstScratch);
             AppendDeathBursts(1f / 60f, trailStamps, ref trailCount, burstScratch);
             if (hitboxesEnabled) AppendActorDebugStamps(ref trailCount);
             presenter.Present(small, left, top, trailStamps, trailCount, foregroundStart);
@@ -2806,6 +2929,19 @@ namespace DeskMadeline
                         32 * s, 32 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
                     pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
                         seekerLeft, seekerTop, 32, 32, s, pair.Value.HitMask);
+                }
+            }
+            lock (pufferWindowLock)
+            {
+                foreach (var pair in pufferWindows)
+                {
+                    if (!pair.Value.IsHandleCreated) continue;
+                    int pufferLeft = ((int)Math.Round(pair.Key.Pos.X) - 12) * s;
+                    int pufferTop = ((int)Math.Round(pair.Key.Pos.Y) - 12) * s;
+                    Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, pufferLeft, pufferTop,
+                        24 * s, 24 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                    pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
+                        pufferLeft, pufferTop, 24, 24, s, pair.Value.HitMask);
                 }
             }
             lock (bumperWindowLock)
@@ -3075,6 +3211,134 @@ namespace DeskMadeline
             cached.ScaleX = scaleX;
             cached.ScaleY = scaleY;
             cached.Bitmap = bitmap;
+            return bitmap;
+        }
+
+        /// <summary>Everything above the sprite an alerted puffer draws: its arc, and its eye.</summary>
+        /// <remarks>
+        /// Not part of the stamp above, and not cached: the arc shimmers, bends towards her and
+        /// fades with how near she is, so it is different on every frame there is. It is built
+        /// and thrown away like a death burst, which is drawn the same way for the same reason.
+        /// </remarks>
+        void AppendPufferOverlays(TrailStamp[] stamps, ref int count, List<Bitmap> scratch)
+        {
+            foreach (Puffer puffer in puffers)
+            {
+                if (count >= stamps.Length) break;
+                int marks = puffer.AggroArc(pufferArcAt, pufferArcIn, pufferArcAlpha);
+                bool eye = puffer.HasEye;
+                if (marks == 0 && !eye) continue;
+
+                var bitmap = new Bitmap(128, 128, PixelFormat.Format32bppPArgb);
+                // Everything lands on the world's own pixel grid, the way the game's
+                // rasterizer lands it: floored in world space, and only then moved into the
+                // stamp by the same rounded anchor the presenter hangs the stamp on. Flooring
+                // against the fractional position instead put that fraction into the sum twice
+                // with different roundings, and every mark slid a pixel to and fro as the fish
+                // wandered -- a boil of white specks where the game shows a nearly still arc.
+                int anchorX = (int)Math.Round(puffer.Pos.X), anchorY = (int)Math.Round(puffer.Pos.Y);
+                using (var g = Graphics.FromImage(bitmap))
+                {
+                    g.SmoothingMode = SmoothingMode.None;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    for (int i = 0; i < marks; i++)
+                    {
+                        float x = (float)Math.Floor(pufferArcAt[i].X) - anchorX + 64f;
+                        float y = (float)Math.Floor(pufferArcAt[i].Y) - anchorY + 64f;
+                        int alpha = (int)Math.Round(Math.Clamp(pufferArcAlpha[i], 0f, 1f) * 255f);
+                        if (alpha <= 0) continue;
+                        using var brush = new SolidBrush(Color.FromArgb(alpha, Color.White));
+                        if (pufferArcIn[i].IsEmpty) g.FillRectangle(brush, x, y, 1f, 1f);
+                        else
+                        {
+                            using var pen = new Pen(brush.Color);
+                            g.DrawLine(pen, x, y, x - pufferArcIn[i].X, y - pufferArcIn[i].Y);
+                        }
+                    }
+                    if (eye)
+                    {
+                        PointF at = puffer.Eye;
+                        using var black = new SolidBrush(Color.Black);
+                        g.FillRectangle(black,
+                            (float)Math.Floor(at.X) - anchorX + 64f,
+                            (float)Math.Floor(at.Y) - anchorY + 64f, 1f, 1f);
+                    }
+                }
+                stamps[count++] = new TrailStamp(bitmap, puffer.Pos.X, puffer.Pos.Y, 1f);
+                scratch.Add(bitmap);
+            }
+        }
+
+        readonly PointF[] pufferArcAt = new PointF[28];
+        readonly PointF[] pufferArcIn = new PointF[28];
+        readonly float[] pufferArcAlpha = new float[28];
+
+        /// <summary>The four ways an outline is offset, and the matrix that blacks a sprite out.</summary>
+        static readonly Point[] OutlineSteps =
+            { new Point(-1, 0), new Point(0, -1), new Point(1, 0), new Point(0, 1) };
+
+        static readonly ColorMatrix BlackenSprite = new ColorMatrix(new[]
+        {
+            new[] { 0f, 0f, 0f, 0f, 0f },
+            new[] { 0f, 0f, 0f, 0f, 0f },
+            new[] { 0f, 0f, 0f, 0f, 0f },
+            new[] { 0f, 0f, 0f, 1f, 0f },
+            new[] { 0f, 0f, 0f, 0f, 1f },
+        });
+
+        /// <summary>
+        /// The puffer's frame: centred, and carrying the squash of a bounce and the turn
+        /// of its wobble, which are Sprite.Scale and Sprite.Rotation in the game.
+        /// </summary>
+        Bitmap GetPufferStamp(Puffer puffer)
+        {
+            string frameId = puffer.FrameId;
+            PointF scale = puffer.Scale;
+            int sx = (int)Math.Round(scale.X * puffer.Facing * 100f);
+            int sy = (int)Math.Round(scale.Y * 100f);
+            int turn = (int)Math.Round(puffer.Rotation * 180f / Math.PI);
+            bool outlined = puffer.Outlined;
+            string key = frameId + (outlined ? "+" : "");
+            if (pufferStampCache.TryGetValue(puffer, out GliderStampCache cached) &&
+                cached.FrameId == key && cached.ScaleX == sx && cached.ScaleY == sy &&
+                cached.Rotation == turn) return cached.Bitmap;
+            Bitmap frame = Sprites.Get(frameId, puffer.Facing < 0);
+            Bitmap bitmap = null;
+            if (frame != null)
+            {
+                bitmap = new Bitmap(128, 128, PixelFormat.Format32bppPArgb);
+                using var g = Graphics.FromImage(bitmap);
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                bool plain = turn == 0 && sx == 100 * (puffer.Facing < 0 ? -1 : 1) && sy == 100;
+                if (plain) g.TranslateTransform(64f, 64f);
+                else
+                {
+                    g.TranslateTransform(64f, 64f);
+                    g.RotateTransform(turn);
+                    g.ScaleTransform(Math.Abs(scale.X), Math.Abs(scale.Y));
+                }
+                float ox = -frame.Width / 2f, oy = -frame.Height / 2f;
+                // GraphicsComponent.DrawSimpleOutline: the same sprite in black, a pixel
+                // out in each of the four directions, and then the sprite over the top.
+                if (outlined)
+                {
+                    using var black = new ImageAttributes();
+                    black.SetColorMatrix(BlackenSprite);
+                    var whole = new Rectangle(0, 0, frame.Width, frame.Height);
+                    foreach (Point step in OutlineSteps)
+                        g.DrawImage(frame,
+                            new Rectangle((int)ox + step.X, (int)oy + step.Y,
+                                frame.Width, frame.Height),
+                            0, 0, frame.Width, frame.Height, GraphicsUnit.Pixel, black);
+                }
+                g.DrawImage(frame, ox, oy, frame.Width, frame.Height);
+            }
+            cached ??= new GliderStampCache();
+            cached.Bitmap?.Dispose();
+            cached.FrameId = key; cached.ScaleX = sx; cached.ScaleY = sy;
+            cached.Rotation = turn; cached.Bitmap = bitmap;
+            pufferStampCache[puffer] = cached;
             return bitmap;
         }
 
@@ -4464,6 +4728,8 @@ namespace DeskMadeline
                 Interlocked.Increment(ref pendingSeekerSpawns));
             var spawnBumperItem = new ToolStripMenuItem(Loc.T("Menu.SpawnBumper"), null, (_, __) =>
                 Interlocked.Increment(ref pendingBumperSpawns));
+            var spawnPufferItem = new ToolStripMenuItem(Loc.T("Menu.SpawnPuffer"), null, (_, __) =>
+                Interlocked.Increment(ref pendingPufferSpawns));
             var spawnTheoItem = new ToolStripMenuItem(Loc.T("Menu.SpawnTheo"), null, (_, __) =>
                 Interlocked.Increment(ref pendingTheoSpawns));
             var removeEntitiesItem = new ToolStripMenuItem(Loc.T("Menu.RemoveEntities"));
@@ -4475,7 +4741,7 @@ namespace DeskMadeline
                 (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 4)));
             removeEntitiesItem.DropDownItems.Add(new ToolStripSeparator());
             removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveEverything"), null,
-                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 15)));
+                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 31)));
             var helpItem = new ToolStripMenuItem(Loc.T("Menu.Controls"), null, (_, __) =>
                 MessageBox.Show(
                     Loc.T("Help.ControlsBody"),
@@ -4492,7 +4758,7 @@ namespace DeskMadeline
             // click today, and the drop-down cannot do columns -- it scrolls instead.
             Section(menu, "Section.Madeline");
             AddAll(menu, resetItem, wakeUpItem, spawnGliderItem, spawnSeekerItem, spawnTheoItem,
-                spawnBumperItem, removeEntitiesItem);
+                spawnBumperItem, spawnPufferItem, removeEntitiesItem);
             Section(menu, "Section.Input");
             AddAll(menu, inputItem, padInputItem, unfocusedInputItem,
                 BuildBindingsMenu(), BuildPadBindingsMenu(),
@@ -4819,6 +5085,13 @@ namespace DeskMadeline
                 foreach (var window in bumperWindows.Values) window.Dispose();
                 bumperWindows.Clear();
             }
+            lock (pufferWindowLock)
+            {
+                foreach (var window in pufferWindows.Values) window.Dispose();
+                pufferWindows.Clear();
+            }
+            foreach (var cached in pufferStampCache.Values) cached.Bitmap?.Dispose();
+            pufferStampCache.Clear();
             foreach (var cached in bumperStampCache.Values) cached.Bitmap?.Dispose();
             bumperStampCache.Clear();
             foreach (var cached in seekerStampCache.Values) cached.Bitmap?.Dispose();

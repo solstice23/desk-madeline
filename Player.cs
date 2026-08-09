@@ -2339,6 +2339,16 @@ namespace DeskMadeline
         }
 
         /// <summary>
+        /// Whether her hitbox reaches a box -- a PlayerCollider carrying a Hitbox of its own,
+        /// which is how a puffer is touched rather than by its own collider.
+        /// </summary>
+        public bool OverlapsBox(float left, float top, float right, float bottom)
+        {
+            HitboxAt(Pos.X, Pos.Y, out float l, out float t, out float r, out float b);
+            return l < right && r > left && t < bottom && b > top;
+        }
+
+        /// <summary>
         /// Whether her hitbox reaches a circle -- what Monocle's Collide.RectToCircle answers
         /// for a Circle collider against hers, which is what a bumper carries.
         /// </summary>
