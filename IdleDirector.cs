@@ -332,6 +332,7 @@ namespace DeskMadeline
             trappedLeg = false;
             legElevated = false;
             pendingLeap = false;
+            pendingGoal = RectangleF.Empty;
             dashAimFrames = 0;
             leapCatchFrames = 0;
             if (next != Activity.ClimbWindow && next != Activity.Inspect) climbPlan = 0;
@@ -358,6 +359,7 @@ namespace DeskMadeline
                     targetRect = next == Activity.Inspect ? freshWindow : climbCandidate;
                     if (next == Activity.Inspect && !ClassifyReach(ctx, targetRect)) climbPlan = 0;
                     target = new PointF(targetRect.Left + targetRect.Width / 2f, targetRect.Top);
+                    if (climbPlan == 3) StageThroughStone(ctx);
                     // A taller wall is a longer outing; the watchdog still ends a stalled one.
                     activityBudget = 30f +
                         Math.Max(0f, ctx.Player.Pos.Y - targetRect.Top) * .3f;
@@ -515,6 +517,19 @@ namespace DeskMadeline
             bool wantTop = Current != Activity.Wander || legElevated;
             if (Arrived(ctx, wantTop))
             {
+                if (pendingGoal.Width > 0f)
+                {
+                    // Standing on the stepping stone: the real goal is one hop away now.
+                    targetRect = pendingGoal;
+                    pendingGoal = RectangleF.Empty;
+                    target = new PointF(targetRect.Left + targetRect.Width / 2f, targetRect.Top);
+                    if (!ClassifyReach(ctx, targetRect)) { Abandon(ctx); return; }
+                    if (climbPlan == 3) climbPlan = 0;
+                    bestDist = float.MaxValue;
+                    bestClimbY = float.MaxValue;
+                    stall = 0f;
+                    return;
+                }
                 phase = Phase.Do;
                 phaseTime = 0f;
                 walledLegs = 0;
@@ -1194,6 +1209,7 @@ namespace DeskMadeline
                     target = WanderPoint(ctx);
                     climbPlan = 0;
                 }
+                else if (climbPlan == 3) StageThroughStone(ctx);
             }
             else climbPlan = 0;
             RollLegSpice(ctx);
@@ -1302,6 +1318,8 @@ namespace DeskMadeline
         }
 
         RectangleF climbCandidate;
+        RectangleF climbStone;
+        RectangleF pendingGoal;
         // How the chosen window is reached: 0 walk to its wall, 1 jump-and-up-dash to grab
         // it, 2 climb the screen edge beside it and leap across.
         int climbPlan;
@@ -1310,6 +1328,11 @@ namespace DeskMadeline
 
         internal void ForceClimbPlanForCheck(int plan, float viaX, int viaDir)
         { climbPlan = plan; climbViaX = viaX; climbViaDir = viaDir; }
+
+        internal void ForceStagePlanForCheck(in IdleContext ctx)
+        {
+            if (ClassifyReach(ctx, targetRect) && climbPlan == 3) StageThroughStone(ctx);
+        }
 
         /// <summary>
         /// Whether and how she could get on top of this window from where she stands. A wall
@@ -1325,17 +1348,69 @@ namespace DeskMadeline
             if (bottomRise <= 30f) return true;
             if (!ctx.WindowsReactToDash && bottomRise <= 95f)
             {
-                climbPlan = 1;
                 // The dash spot must exist: a window flush against the screen edge has no
                 // standing room on that side, so the approach comes from the other one.
                 RectangleF room = RoomAround(ctx);
                 float near = fromLeft ? rect.Left - 5f : rect.Right + 5f;
                 float far = fromLeft ? rect.Right + 5f : rect.Left - 5f;
-                climbViaX = near > room.Left + 4f && near < room.Right - 4f ? near : far;
-                climbViaDir = climbViaX < rect.Left + rect.Width / 2f ? 1 : -1;
+                float viaX = near > room.Left + 4f && near < room.Right - 4f ? near : far;
+                // And the face must be graspable where the dash tops out: dashing at a
+                // border whose lower half is occluded away is flailing, not a route.
+                float face = viaX < rect.Left + rect.Width / 2f ? rect.Left : rect.Right;
+                bool catchable = false;
+                foreach (Solid s in ctx.Solids)
+                    if (s.L < face + 5f && s.R > face - 5f &&
+                        s.T < rect.Bottom + 6f && s.B > rect.Bottom - 25f)
+                    { catchable = true; break; }
+                if (catchable)
+                {
+                    climbPlan = 1;
+                    climbViaX = viaX;
+                    climbViaDir = viaX < rect.Left + rect.Width / 2f ? 1 : -1;
+                    return true;
+                }
+            }
+            if (FindAssistWall(ctx, rect)) return true;
+            return FindSteppingStone(ctx, rect);
+        }
+
+        /// <summary>
+        /// No direct route, so look for somewhere to go via: a surface she can get on top
+        /// of -- another window, say -- from which the target's bottom is a jump or an
+        /// up-dash away, with the spot beside the face landing on that surface. One hop
+        /// only; the desk rarely needs more.
+        /// </summary>
+        bool FindSteppingStone(in IdleContext ctx, RectangleF rect)
+        {
+            float allowed = ctx.WindowsReactToDash ? 28f : 95f;
+            foreach (Solid s in ctx.Solids)
+            {
+                if (s.B < ctx.Player.Pos.Y - 30f) continue;     // not standing on her ground
+                if (s.T >= ctx.Player.Pos.Y - 16f) continue;    // not a step up at all
+                if (s.R - s.L < 24f) continue;
+                float stoneRise = s.T - rect.Bottom;            // target bottom above the stone
+                if (stoneRise < 8f || stoneRise > allowed) continue;
+                float spotLeft = rect.Left - 5f, spotRight = rect.Right + 5f;
+                if (!(spotLeft > s.L + 4f && spotLeft < s.R - 4f) &&
+                    !(spotRight > s.L + 4f && spotRight < s.R - 4f)) continue;
+                climbPlan = 3;
+                climbStone = RectangleF.FromLTRB(s.L, s.T, s.R, s.B);
                 return true;
             }
-            return FindAssistWall(ctx, rect);
+            return false;
+        }
+
+        /// <summary>
+        /// A plan through a stone is two trips: aim at the stone first, remember the goal,
+        /// and when she stands on the stone the arrival re-plans the rest from up there.
+        /// </summary>
+        void StageThroughStone(in IdleContext ctx)
+        {
+            pendingGoal = targetRect;
+            targetRect = climbStone;
+            target = new PointF(climbStone.Left + climbStone.Width / 2f, climbStone.Top);
+            activityBudget += 15f;
+            if (!ClassifyReach(ctx, climbStone) || climbPlan == 3) climbPlan = 0;
         }
 
         /// <summary>
@@ -1490,6 +1565,7 @@ namespace DeskMadeline
             legLedgeJump = true;
             walledLegs = 0;
             trappedLeg = false;
+            pendingGoal = RectangleF.Empty;
             legElevated = what == Activity.Wander && rect.Width > 0f;
             pendingLeap = false;
             dashAimFrames = 0;

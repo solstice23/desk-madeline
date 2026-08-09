@@ -602,6 +602,56 @@ static class IdleChecks
         Check("she climbs the neighbour and leaps back onto the floater", climbedIt);
 
         Console.WriteLine();
+        Console.WriteLine("  Too high from the floor, one dash from a neighbour's top");
+        var terminal = new Solid { Id = new IntPtr(7), L = 240f, T = -100f, R = 400f, B = 0f };
+        var filePilot = new Solid { Id = new IntPtr(9), L = 200f, T = -260f, R = 340f, B = -180f };
+        var stager = OnFloor(500f, terminal, filePilot);
+        var stageDirector = new IdleDirector(new Random(7));
+        var stageCtx = Context(stager);
+        stageCtx.Windows = new List<KeyValuePair<IntPtr, RectangleF>>
+        { new KeyValuePair<IntPtr, RectangleF>(new IntPtr(9), new RectangleF(200f, -260f, 140f, 80f)) };
+        RectangleF staged = default;
+        for (int i = 0; i < 20 && staged.Width == 0f; i++)
+            staged = stageDirector.ProbeClimbForCheck(stageCtx);
+        Console.WriteLine($"      its bottom is 180 up -- past any dash from the floor --"
+            + $" but a 100-tall window stands under it: found {staged.Width > 0f},"
+            + $" plan {stageDirector.ClimbPlanForCheck}");
+        Check("the route through the neighbour's top is seen from the ground",
+            staged.Width > 0f && stageDirector.ClimbPlanForCheck == 3);
+        bool viaStone = false;
+        if (staged.Width > 0f)
+        {
+            stageDirector.ForceActivityForCheck(IdleDirector.Activity.ClimbWindow, default, staged);
+            stageDirector.ForceStagePlanForCheck(stageCtx);
+            for (frames = 0; frames < (int)(40f / Dt); frames++)
+            {
+                Step(stageDirector, stager, stageCtx);
+                if (stageDirector.Current != IdleDirector.Activity.ClimbWindow) break;
+                if (stager.onGround && Math.Abs(stager.Pos.Y + 260f) <= 2f &&
+                    stager.Pos.X > 202f && stager.Pos.X < 338f) { viaStone = true; break; }
+            }
+            Console.WriteLine($"      and she made it: {viaStone}, at"
+                + $" {stager.Pos.X:F0},{stager.Pos.Y:F0} after {frames * Dt:F1}s");
+        }
+        Check("she climbs the neighbour, then dashes up from its top", viaStone);
+
+        Console.WriteLine();
+        Console.WriteLine("  No dashing at a face that cannot be caught");
+        var ghostFace = new Solid { Id = new IntPtr(9), L = 198f, T = -150f, R = 200f, B = -120f };
+        var wary = OnFloor(300f, ghostFace);
+        var waryDirector = new IdleDirector(new Random(7));
+        var waryCtx = Context(wary);
+        waryCtx.Windows = new List<KeyValuePair<IntPtr, RectangleF>>
+        { new KeyValuePair<IntPtr, RectangleF>(new IntPtr(9), new RectangleF(60f, -150f, 140f, 70f)) };
+        RectangleF ghost = default;
+        for (int i = 0; i < 20 && ghost.Width == 0f; i++)
+            ghost = waryDirector.ProbeClimbForCheck(waryCtx);
+        Console.WriteLine($"      only the upper half of its border is solid --"
+            + $" the catch zone is occluded away: offered {ghost.Width > 0f}");
+        Check("a window whose catch zone is missing is not offered as a dash target",
+            ghost.Width == 0f);
+
+        Console.WriteLine();
         Console.WriteLine("  A high window beside the screen edge, reached by leaping across");
         var assistWall = new Solid { Id = new IntPtr(1), L = -260f, T = -2000f, R = -200f, B = 40f };
         var highWin = new Solid { Id = new IntPtr(9), L = -160f, T = -200f, R = -40f, B = -120f };
