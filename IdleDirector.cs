@@ -1221,8 +1221,13 @@ namespace DeskMadeline
             if (!ctx.WindowsReactToDash && bottomRise <= 95f)
             {
                 climbPlan = 1;
-                climbViaX = fromLeft ? rect.Left - 5f : rect.Right + 5f;
-                climbViaDir = fromLeft ? 1 : -1;
+                // The dash spot must exist: a window flush against the screen edge has no
+                // standing room on that side, so the approach comes from the other one.
+                RectangleF room = RoomAround(ctx);
+                float near = fromLeft ? rect.Left - 5f : rect.Right + 5f;
+                float far = fromLeft ? rect.Right + 5f : rect.Left - 5f;
+                climbViaX = near > room.Left + 4f && near < room.Right - 4f ? near : far;
+                climbViaDir = climbViaX < rect.Left + rect.Width / 2f ? 1 : -1;
                 return true;
             }
             return FindAssistWall(ctx, rect);
