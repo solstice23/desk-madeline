@@ -71,6 +71,10 @@ namespace DeskMadeline
                     // A walk hops what a walk can hop: a seam, a step, a lip.
                     if (dir != 0 && p.onGround && StepAhead(p, dir, out float rise) && rise <= 14f)
                         p.BufferJump();
+                    // Pressing with intent and not moving is being blocked, and standing
+                    // against a wall doing nothing is the one thing she must never do.
+                    if (dir != 0 && p.onGround && Math.Abs(p.Speed.X) < 5f) run.MarkF++;
+                    else run.MarkF = 0;
                     break;
                 }
 
@@ -228,7 +232,7 @@ namespace DeskMadeline
             {
                 case MoveKind.WalkTo:
                     return (Math.Abs(p.Pos.X - m.X) <= 2f && p.onGround &&
-                        Math.Abs(p.Speed.X) < 40f) || f >= 900;
+                        Math.Abs(p.Speed.X) < 40f) || run.MarkF > 45 || f >= 900;
                 case MoveKind.RunningJump:
                     return (run.Acted && f > 10 && (p.onGround || p.State == Player.StClimb))
                         || f >= 90;
