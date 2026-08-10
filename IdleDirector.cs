@@ -883,7 +883,8 @@ namespace DeskMadeline
                     if (routeNullFor > .6f)
                     {
                         PetWindow.Log($"idle: no plan survived for step kind {step.Move}"
-                            + $" to y={seg.Y:F0}");
+                            + $" to y={seg.Y:F0} from"
+                            + $" {ctx.Player.Pos.X:F0},{ctx.Player.Pos.Y:F0}");
                         // A stroll shrugs and tries another idea -- an elevated one for
                         // a while, then a flat one -- without noting anything: a cheap
                         // re-roll is not a verdict. Only committed outings record the
