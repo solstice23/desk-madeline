@@ -38,7 +38,9 @@ namespace DeskMadeline
         const float StepGap = 30f;      // a gap a moving jump clears
         const float GrabStart = 36f;    // a jump-and-grab truly reaches a face starting this
                                         // high: jump rise ~25 plus her collider, no folklore
-        const float DashReach = 95f;    // jump plus up-dash, measured generously
+        const float DashReach = 88f;    // jump plus up-dash: feet peak at 78, collider
+                                        // adds the rest -- measured, and the terminal''s
+                                        // 91-pixel underside sat exactly in the lie
         const float ChimneyMin = 12f, ChimneyMax = 55f;
 
         /// <summary>The exposed, standable tops of every solid on the screen.</summary>
@@ -234,10 +236,10 @@ namespace DeskMadeline
                 {
                     if (w.B < a.Y - GrabStart) continue;        // wall must start at her level
                     if (w.T > sol.Bottom - 8f) continue;        // and rise past b's underside
-                    // And the leap must arrive with grip in the tank: the climb from a to
-                    // the leap height has to fit what stamina affords past the jump start,
-                    // or she leaps dry, cannot catch, and rides the cycle to the floor.
-                    if (a.Y - 28f - (sol.Bottom - 8f) > 100f) continue;
+                    // No stamina budget here anymore: the wall ladder climbs any height
+                    // for free, and the kick's catch holds at a nearly dry tank long
+                    // enough to become a ladder again -- the terminal bisect proved a
+                    // 250-pixel via-edge leap performable that the old budget refused.
                     RectangleF wr = RectangleF.FromLTRB(w.L, w.T, w.R, w.B);
                     float gapL = sol.Left - w.R;                // wall left of b's solid
                     if (gapL >= ChimneyMin && gapL <= ChimneyMax &&
