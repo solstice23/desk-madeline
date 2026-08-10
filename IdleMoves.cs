@@ -20,6 +20,8 @@ namespace DeskMadeline
         Wavedash,       // hop, diagonal-down dash, jump the instant of landing
         DropOff,        // walk off an edge and fall to whatever is below
         Settle,         // stand still until the speed dies
+        WallLadder,     // climb while the tank lasts, then wall-jump cadence to a height:
+                        // the ladder ends by jumping over the lip, which costs nothing
     }
 
     /// <summary>One move with its parameters. A plan is a list of these.</summary>
@@ -175,6 +177,29 @@ namespace DeskMadeline
                     if (!p.onGround) run.Acted = true;
                     break;
 
+                case MoveKind.WallLadder:
+                    if (p.State == Player.StClimb)
+                    {
+                        run.Acted = true;                       // has held the wall at least once
+                        if (p.Stamina >= 30f)
+                        {
+                            input.GrabHeld = true;
+                            input.MoveY = -1;
+                            input.MoveX = m.Dir;
+                        }
+                        // else release: the airborne cadence below is free
+                    }
+                    else if (!p.onGround)
+                    {
+                        if (p.Speed.Y >= -10f && f - run.MarkF > 4 && NearWall(p, m.Dir, 5f))
+                        { p.BufferJump(); run.MarkF = f; }
+                        input.MoveX = f - run.MarkF < 2 ? 0 : m.Dir;
+                        input.GrabHeld = p.Stamina > 35f;
+                        if (f - run.MarkF <= 12) input.JumpHeld = true;
+                    }
+                    else input.MoveX = m.Dir;                   // grounded: press back at the wall
+                    break;
+
                 case MoveKind.Settle:
                     break;
             }
@@ -221,6 +246,16 @@ namespace DeskMadeline
                     return (run.Acted && p.onGround) || f >= 150;
                 case MoveKind.Settle:
                     return (p.onGround && Math.Abs(p.Speed.X) < 15f) || f >= 40;
+                case MoveKind.WallLadder:
+                    // Done gripped at the asked height, or airborne there when the wall
+                    // demonstrably continues above -- a mid-wall stop before a kick -- or
+                    // landed: near a lip the cadence keeps jumping until a jump carries
+                    // her over and she stands on the top. High-but-airborne at a lip is
+                    // never done; that is a fall about to happen.
+                    return (p.Pos.Y <= m.X &&
+                            (p.State == Player.StClimb ||
+                             (!p.onGround && WallSpansAbove(p, m.Dir, m.X)))) ||
+                        (run.Acted && f > 20 && p.onGround) || f >= 900;
             }
             return true;
         }
@@ -259,6 +294,33 @@ namespace DeskMadeline
             }
             end = ghost.Pos;
             return accept(ghost);
+        }
+
+        /// <summary>The wall on that side continues well above the stop height.</summary>
+        static bool WallSpansAbove(Player p, int dir, float stopY)
+        {
+            float l = Math.Min(p.Pos.X, p.Pos.X + dir * 8f);
+            float r = Math.Max(p.Pos.X, p.Pos.X + dir * 8f);
+            foreach (Solid s in p.Solids)
+            {
+                if (s.R <= l || s.L >= r) continue;
+                if (s.T <= stopY - 25f && s.B >= stopY) return true;
+            }
+            return false;
+        }
+
+        /// <summary>A wall within reach on that side at her body height.</summary>
+        static bool NearWall(Player p, int dir, float within)
+        {
+            float l = Math.Min(p.Pos.X, p.Pos.X + dir * within);
+            float r = Math.Max(p.Pos.X, p.Pos.X + dir * within);
+            foreach (Solid s in p.Solids)
+            {
+                if (s.R <= l || s.L >= r) continue;
+                if (s.B <= p.Pos.Y - 10f || s.T >= p.Pos.Y - .25f) continue;
+                return true;
+            }
+            return false;
         }
 
         /// <summary>A rise just ahead of her feet: what the walking hop exists for.</summary>

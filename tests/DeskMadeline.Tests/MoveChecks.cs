@@ -143,6 +143,20 @@ static class MoveChecks
         Check("the chimney kick takes the far wall", crossed);
 
         Console.WriteLine();
+        Console.WriteLine("  The wall ladder");
+        var spire = new Solid { Id = new IntPtr(9), L = 60f, T = -400f, R = 100f, B = 40f };
+        var rung = OnFloor(20f, spire);
+        bool laddered = IdleMoves.Rehearse(rung,
+            Plan(IdleMoves.Of(MoveKind.WalkTo, x: 48f),
+                 IdleMoves.Of(MoveKind.RunningJump, dir: 1, hold: 10, grab: true),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: 1, x: -394f)),
+            p => p.onGround && Math.Abs(p.Pos.Y + 400f) <= 6f, 2600,
+            out PointF rungEnd, out _, out int rungFrames);
+        Console.WriteLine($"      four hundred pixels on one move: ended"
+            + $" {rungEnd.X:F0},{rungEnd.Y:F0} in {rungFrames} frames");
+        Check("climb while the tank lasts, wall-jump the rest, land over the lip", laddered);
+
+        Console.WriteLine();
         Console.WriteLine("  Over the lip");
         var block = new Solid { Id = new IntPtr(9), L = 60f, T = -50f, R = 160f, B = 0f };
         var popper = OnFloor(20f, block);

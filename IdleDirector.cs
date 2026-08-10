@@ -102,7 +102,6 @@ namespace DeskMadeline
         int walledLegs;
         bool trappedLeg;
         bool legElevated;
-        int dashAimFrames;
         int leapCatchFrames;
         readonly Dictionary<Activity, float> lastPicked = new Dictionary<Activity, float>();
         readonly Dictionary<Activity, float> shunnedUntil = new Dictionary<Activity, float>();
@@ -340,7 +339,7 @@ namespace DeskMadeline
             route = null;
             routeAt = 0;
             routeNullFor = 0f;
-            dashAimFrames = 0;
+            nextAuditionAt = 0f;
             leapCatchFrames = 0;
             Napping = false;
             PetWindow.Log("idle: " + next);
@@ -820,9 +819,13 @@ namespace DeskMadeline
         }
 
         /// <summary>
-        /// One frame of the current route maneuver. Advances to the next step the moment
-        /// she stands on this step's segment, however she got there -- the executor is
-        /// reactive, so a fall into a chimney or a detour over a wall self-corrects.
+        /// One frame of the current route step. A step is executed as a rehearsed plan of
+        /// named moves: the planner auditions candidates on a ghost and hands back one
+        /// that works, this plays it, and the moment she stands on the step's segment --
+        /// however she got there -- the step is done. A plan that finishes elsewhere gets
+        /// one fresh audition from where she actually is, and then the idea is given up
+        /// and remembered as failed. Nothing here flails: every move is bounded, every
+        /// plan is finite, and failure is an answer.
         /// </summary>
         void RunRouteStep(ref PetInput input, float dt, in IdleContext ctx)
         {
@@ -834,17 +837,14 @@ namespace DeskMadeline
                 p.Pos.X >= seg.L - 3f && p.Pos.X <= seg.R + 3f)
             {
                 routeAt++;
-                wallSide = 0;
+                movePlan = null;
+                replans = 0;
                 stepPeakY = p.Pos.Y;
                 stepFalls = 0;
-                bestDist = float.MaxValue;
-                bestClimbY = float.MaxValue;
-                stall = 0f;
                 return;
             }
-            // Falling eighty pixels back from a step's high point, twice, means the
-            // maneuver does not work here -- whatever the incremental watchdog thinks of
-            // the pixel-scale records each retry sets on the way up.
+            // Falling eighty pixels back from a step's high point, twice, still ends the
+            // idea -- the outer belt against anything the rehearsal could not foresee.
             if (p.Pos.Y < stepPeakY) stepPeakY = p.Pos.Y;
             if (p.onGround && p.Pos.Y - stepPeakY > 80f)
             {
@@ -856,122 +856,84 @@ namespace DeskMadeline
                     return;
                 }
             }
-            float aim;
-            bool scaling = false;
-            switch (step.Move)
+            if (movePlan == null)
             {
-                case IdleNav.MoveClimb:
-                    aim = step.X;
-                    scaling = true;
-                    Walk(ref input, dt, ctx, aim, climbUpTo: float.MaxValue, scaleWithJumps: true);
-                    break;
-                case IdleNav.MoveDash:
-                    aim = step.X;
-                    scaling = true;
-                    if (p.State == Player.StClimb ||
-                        (wallSide != 0 && !p.onGround && p.Dashes == 0 &&
-                         p.State != Player.StDash))
-                    {
-                        // Caught the face at least once: from here the ordinary climb
-                        // machinery -- grab, tank, neutral-jump ladder -- owns it. The
-                        // press-in below is only for the very first catch, or its
-                        // ungated grab chatters against the tank rule forever.
-                        Walk(ref input, dt, ctx, aim, climbUpTo: float.MaxValue,
-                            scaleWithJumps: true);
-                        break;
-                    }
-                    climbViaX = step.X;
-                    climbViaDir = step.Dir;
-                    RunDashUp(ref input, dt, ctx);
-                    break;
-                case IdleNav.MoveLeap:
+                // Audition from stable footing only; mid-air just rides out. Auditions
+                // that come back empty do not spend the retry allowance -- only plans
+                // that finished somewhere else do -- and they are throttled, because a
+                // full rehearsal every frame is a lot of ghosts.
+                if (!p.onGround && p.State != Player.StClimb) return;
+                if (routeNullFor < nextAuditionAt) { routeNullFor += dt; return; }
+                movePlan = IdlePlanner.PlanStep(ctx, navSegs, step, rng);
+                moveAt = 0;
+                moveRun = default;
+                if (movePlan == null)
                 {
-                    bool nearWall = Math.Abs(p.Pos.X - step.X) < 14f;
-                    // Below the leap height the wall is the errand; only once she is up
-                    // there -- flying or hanging past it -- is the segment the steer.
-                    aim = nearWall ? step.X
-                        : p.Pos.Y <= step.Arg ? Math.Clamp(p.Pos.X, seg.L + 6f, seg.R - 6f)
-                        : step.X;
-                    scaling = true;
-                    if (nearWall && p.onGround && p.Pos.Y <= step.Arg)
+                    routeNullFor += dt;
+                    nextAuditionAt = routeNullFor + .2f;
+                    if (routeNullFor > .6f)
                     {
-                        // Standing on the assist wall itself, above the leap height: step
-                        // off toward the target and take the face waiting in the chimney.
-                        aim = step.X + step.Dir * 25f;
+                        PetWindow.Log($"idle: no plan survived for step kind {step.Move}"
+                            + $" to y={seg.Y:F0}");
+                        // A stroll shrugs and goes somewhere else, without even noting
+                        // the spot -- a cheap re-roll is not a verdict. Only committed
+                        // outings record the failure and give the idea up.
+                        if (Current == Activity.Wander)
+                        {
+                            legElevated = false;
+                            route = null;
+                            target = WanderPoint(ctx);
+                            routeNullFor = 0f;
+                            nextAuditionAt = 0f;
+                            return;
+                        }
+                        NoteFailedSpot(target);
+                        Abandon(ctx);
                     }
-                    else if (nearWall && p.Pos.Y <= step.Arg)
-                    {
-                        // Off the face that looks at the target only; from the far face
-                        // the same leap flies the wrong way, so there she climbs on and
-                        // comes over the top instead.
-                        if (p.State == Player.StClimb && p.Facing == -step.Dir)
-                        { climbIntent = ClimbIntent.LeapAcross; intentT = .4f; }
-                        else if (!p.onGround && wallSide == -step.Dir)
-                            pendingLeap = true;
-                    }
-                    Walk(ref input, dt, ctx, aim, climbUpTo: float.MaxValue, scaleWithJumps: true);
-                    break;
+                    return;
                 }
-                default:        // walk, hop, jump a gap, or walk off an end
-                    aim = step.X;
-                    legLedgeJump = true;
-                    Walk(ref input, dt, ctx, aim, climbUpTo: 60f);
-                    break;
+                routeNullFor = 0f;
+                nextAuditionAt = 0f;
+                PetWindow.Log("idle: plan " + Describe(movePlan));
             }
-            input.DashPressed |= p.HasDashBuffer;
-            Drain(dt, moving: true);
-            Watchdog(dt, ctx, false, aim, busyScaling:
-                scaling && (p.State == Player.StClimb || !p.onGround), overrideY: seg.Y);
-        }
-
-        /// <summary>
-        /// The jump-and-up-dash that reaches a window hanging above the floor: walk under
-        /// its wall, jump, dash straight up beside the face, and put the grab out. Only
-        /// offered where a dash cannot move the window.
-        /// </summary>
-        void RunDashUp(ref PetInput input, float dt, in IdleContext ctx)
-        {
-            Player p = ctx.Player;
-            if (p.onGround && (Math.Abs(p.Pos.X - climbViaX) > 3f || Math.Abs(p.Speed.X) > 30f))
+            if (moveAt >= movePlan.Count)
             {
-                // Settle at the spot first: jumping with leftover run speed drifts her
-                // under the window during the rise, and the dash leaves from the wrong place.
-                Walk(ref input, dt, ctx, climbViaX, climbUpTo: 0f);
+                // The plan ran its course somewhere that is not the segment: one fresh
+                // audition from wherever she actually stands, and then the idea is done.
+                movePlan = null;
+                if (++replans >= 3)
+                {
+                    if (Current == Activity.Wander)
+                    {
+                        legElevated = false;
+                        route = null;
+                        replans = 0;
+                        target = WanderPoint(ctx);
+                        return;
+                    }
+                    NoteFailedSpot(target);
+                    Abandon(ctx);
+                }
                 return;
             }
-            if (p.onGround)
+            Move m = movePlan[moveAt];
+            if (moveRun.F > 0 && IdleMoves.Done(p, m, moveRun))
             {
-                if (jumpHoldFrames == 0) { p.BufferJump(); jumpHoldFrames = 12; }
+                moveAt++;
+                moveRun = default;
+                return;
             }
-            else if (dashAimFrames == 0 && p.State != Player.StDash &&
-                !ctx.WindowsReactToDash && p.Speed.Y > -25f && p.Dashes > 0)
-            {
-                // The top of the jump, where the dash buys the most height.
-                p.BufferDash();
-                dashAimFrames = 8;
-            }
-            if (dashAimFrames > 0 || p.State == Player.StDash)
-            {
-                // Straight up, held across every frame the dash could read its aim from,
-                // and no sideways drift until it is done. The dash aims from AimX/AimY --
-                // the port's Input.GetAimVector -- not from MoveX/MoveY.
-                if (dashAimFrames > 0) dashAimFrames--;
-                input.MoveY = -1;
-                input.AimY = -1;
-                input.AimX = 0;
-            }
-            else if (!p.onGround && p.Speed.Y > -10f && p.Dashes == 0)
-            {
-                // Dash spent and past its rise: press into the face with the grab out.
-                // A fresh catch is a fresh climb: the intent rerolls, or a stale one
-                // chatters grab-and-release on the spot forever.
-                prevClimbing = false;
-                input.MoveX = climbViaDir;
-                input.GrabHeld = true;
-            }
-            if (jumpHoldFrames > 0) { jumpHoldFrames--; input.JumpHeld = true; }
-            input.JumpPressed = p.HasJumpBuffer;
-            input.DashPressed = p.HasDashBuffer;
+            input = IdleMoves.Frame(p, m, ref moveRun);
+            Drain(dt, moving: true);
+        }
+
+        static string Describe(List<Move> plan)
+        {
+            var names = new List<string>();
+            foreach (Move m in plan)
+                if (names.Count == 0 || names[names.Count - 1] != m.Kind.ToString())
+                    names.Add(m.Kind.ToString());
+            return string.Join(" > ", names);
         }
 
         /// <summary>
@@ -1538,10 +1500,11 @@ namespace DeskMadeline
             }
             return near >= 3;
         }
-        // Pilot scratch for the up-dash maneuver: where to leave the ground, and which
-        // side the face is on.
-        float climbViaX;
-        int climbViaDir;
+        List<Move> movePlan;
+        int moveAt;
+        MoveRun moveRun;
+        int replans;
+        float nextAuditionAt;
 
         // (the reach planning that lived here is IdleNav now: routes over the terrain
         // graph, found by search rather than per-window cases)
@@ -1668,9 +1631,10 @@ namespace DeskMadeline
             trappedLeg = false;
             route = null;
             routeAt = 0;
+            routeNullFor = 0f;
+            nextAuditionAt = 0f;
             legElevated = what == Activity.Wander && rect.Width > 0f;
             pendingLeap = false;
-            dashAimFrames = 0;
             leapCatchFrames = 0;
             sitStage = 0;
             sitT = 0f;

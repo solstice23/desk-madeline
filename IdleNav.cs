@@ -140,11 +140,13 @@ namespace DeskMadeline
             step = default;
             float dy = a.Y - b.Y;       // positive: b is higher
 
-            // Walk, hop, or a running jump across a small gap or up a small rise.
+            // Walk, hop, or a running jump across a small gap or up a small rise --
+            // provided nothing tall stands in the doorway: two floors a pixel apart with
+            // a wall between them are rooms, not neighbours.
             if (dy <= StepUp && dy >= -StepDown)
             {
                 float gap = Math.Max(b.L - a.R, a.L - b.R);
-                if (gap <= StepGap)
+                if (gap <= StepGap && GapClear(ctx, a, b))
                 {
                     step = new NavStep
                     {
@@ -237,6 +239,22 @@ namespace DeskMadeline
                 }
             }
             return false;
+        }
+
+        /// <summary>Nothing rising past jump height stands between two step-neighbours.</summary>
+        static bool GapClear(in IdleContext ctx, NavSeg a, NavSeg b)
+        {
+            float zl, zr;
+            if (b.L >= a.R - 5f) { zl = a.R - 2f; zr = b.L + 2f; }
+            else if (a.L >= b.R - 5f) { zl = b.R - 2f; zr = a.L + 2f; }
+            else return true;                               // overlapping runs share the air
+            float floorY = Math.Min(a.Y, b.Y);
+            foreach (Solid s in ctx.Solids)
+            {
+                if (s.R <= zl || s.L >= zr) continue;
+                if (s.T < floorY - StepUp && s.B > floorY - 30f) return false;
+            }
+            return true;
         }
 
         static readonly int[] BothSides = { 1, -1 };
