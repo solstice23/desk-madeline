@@ -378,8 +378,12 @@ namespace DeskMadeline
                     // a hanging point forty to eighty pixels up the side of the screen.
                     float edgeX = hangEdgeDir > 0 ? ctx.EdgeRight : ctx.EdgeLeft;
                     target = new PointF(edgeX + hangEdgeDir * 2f, ctx.Player.Pos.Y);
-                    targetRect = new RectangleF(edgeX - 2f,
-                        ctx.Player.Pos.Y - 40f - (float)rng.NextDouble() * 40f, 4f, 4f);
+                    // Never into the ceiling: hanging began from wherever she stood, and
+                    // begun from a window top that aimed her five pixels under the screen's
+                    // lid, where the jump cycle flickers against it.
+                    float hangY = Math.Max(RoomAround(ctx).Top + 48f,
+                        ctx.Player.Pos.Y - 40f - (float)rng.NextDouble() * 40f);
+                    targetRect = new RectangleF(edgeX - 2f, hangY, 4f, 4f);
                     break;
                 }
             }
@@ -409,7 +413,8 @@ namespace DeskMadeline
                 + $" {ctx.Player.Pos.X:F0},{ctx.Player.Pos.Y:F0}");
             // Remember where the idea failed, so the next pick goes somewhere else
             // instead of returning to the same cursed lip every twenty seconds.
-            if (Current == Activity.ClimbWindow || Current == Activity.Inspect || legElevated)
+            if (Current == Activity.ClimbWindow || Current == Activity.Inspect ||
+                Current == Activity.HangOnEdge || legElevated)
                 NoteFailedSpot(target);
             // Say what was standing there, so a stuck spot can be diagnosed from the diary.
             int said = 0;
@@ -1086,7 +1091,8 @@ namespace DeskMadeline
                 // Unless a second wall stands within a jump on the other side: then this is
                 // a chimney, and the way up it is back and forth between the two.
                 else if (jumpHoldFrames == 0 && neutralFrames == 0 && p.Speed.Y >= -10f &&
-                    WallWithin(ctx, p, wallSide, 0f, 5f, out _))
+                    WallWithin(ctx, p, wallSide, 0f, 5f, out _) &&
+                    HeadroomAbove(ctx, p, 30f))
                 {
                     p.BufferJump();
                     jumpHoldFrames = 12;
@@ -1203,6 +1209,19 @@ namespace DeskMadeline
 
         static bool WallAhead(in IdleContext ctx, Player p, int dir, out float top)
             => WallWithin(ctx, p, dir, 5f, 8f, out top);
+
+        /// <summary>Nothing solid within reach above her head: a jump has somewhere to go.</summary>
+        static bool HeadroomAbove(in IdleContext ctx, Player p, float need)
+        {
+            foreach (Solid s in ctx.Solids)
+            {
+                // Her own head column only: the wall she is climbing stands flush at
+                // four pixels off centre and must not read as a ceiling.
+                if (s.R < p.Pos.X - 3.5f || s.L > p.Pos.X + 3.5f) continue;
+                if (s.B > p.Pos.Y - 11f - need && s.T < p.Pos.Y - 11f) return false;
+            }
+            return true;
+        }
 
         /// <summary>The wall on that side still stands thirty to forty pixels above her.</summary>
         static bool WallContinuesAbove(in IdleContext ctx, Player p, int dir)
@@ -1485,7 +1504,7 @@ namespace DeskMadeline
         {
             foreach ((PointF at, float until) in failedSpots)
                 if (until > clock && Math.Abs(spot.X - at.X) < 60f &&
-                    Math.Abs(spot.Y - at.Y) < 30f) return true;
+                    Math.Abs(spot.Y - at.Y) < 60f) return true;
             return false;
         }
         // Pilot scratch for the up-dash maneuver: where to leave the ground, and which
