@@ -27,9 +27,12 @@ namespace DeskMadeline
             bool dashOk = !ctx.WindowsReactToDash && !NearAPuffer(ctx, p.Pos, seg);
             bool flair = dashOk && rng.NextDouble() < .45;
 
+            // Arriving on an adjacent run at the same height counts: window chrome
+            // splits one top into segments a pixel apart, and a lip-pop lands where it
+            // lands -- the next step replans from there and crosses the divider.
             bool Accept(Player g) =>
                 g.onGround && g.Pos.Y <= seg.Y + 6f && g.Pos.Y >= seg.Y - 10f &&
-                g.Pos.X >= seg.L - 3f && g.Pos.X <= seg.R + 3f;
+                g.Pos.X >= seg.L - 45f && g.Pos.X <= seg.R + 45f;
 
             var candidates = new List<List<Move>>();
             switch (step.Move)

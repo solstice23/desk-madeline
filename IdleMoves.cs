@@ -197,7 +197,19 @@ namespace DeskMadeline
                         input.GrabHeld = p.Stamina > 35f;
                         if (f - run.MarkF <= 12) input.JumpHeld = true;
                     }
-                    else input.MoveX = m.Dir;                   // grounded: press back at the wall
+                    else
+                    {
+                        // Grounded beside the wall: the ladder starts itself -- jump with
+                        // the grab out, and retry each cycle until a catch lands.
+                        input.MoveX = m.Dir;
+                        if (f - run.MarkF > 10 && NearWall(p, m.Dir, 10f))
+                        { p.BufferJump(); run.MarkF = f; }
+                        if (f - run.MarkF <= 10)
+                        {
+                            input.JumpHeld = true;
+                            input.GrabHeld = true;
+                        }
+                    }
                     break;
 
                 case MoveKind.Settle:
@@ -251,11 +263,13 @@ namespace DeskMadeline
                     // demonstrably continues above -- a mid-wall stop before a kick -- or
                     // landed: near a lip the cadence keeps jumping until a jump carries
                     // her over and she stands on the top. High-but-airborne at a lip is
-                    // never done; that is a fall about to happen.
+                    // never done; that is a fall about to happen. And grounded with no
+                    // wall in reach is not a ladder at all: fail fast, do not wander off.
                     return (p.Pos.Y <= m.X &&
                             (p.State == Player.StClimb ||
                              (!p.onGround && WallSpansAbove(p, m.Dir, m.X)))) ||
-                        (run.Acted && f > 20 && p.onGround) || f >= 900;
+                        (run.Acted && f > 20 && p.onGround) ||
+                        (f > 60 && p.onGround && !NearWall(p, m.Dir, 12f)) || f >= 900;
             }
             return true;
         }

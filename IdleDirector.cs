@@ -843,7 +843,7 @@ namespace DeskMadeline
             if (step.Seg >= navSegs.Count) { Abandon(ctx); return; }
             NavSeg seg = navSegs[step.Seg];
             if (p.onGround && p.Pos.Y <= seg.Y + 6f && p.Pos.Y >= seg.Y - 10f &&
-                p.Pos.X >= seg.L - 3f && p.Pos.X <= seg.R + 3f)
+                p.Pos.X >= seg.L - 45f && p.Pos.X <= seg.R + 45f)
             {
                 routeAt++;
                 movePlan = null;

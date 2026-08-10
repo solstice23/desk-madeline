@@ -36,7 +36,8 @@ namespace DeskMadeline
         const float StepUp = 24f;       // a running jump's reliable rise
         const float StepDown = 14f;     // a hop down that still counts as walking
         const float StepGap = 30f;      // a gap a moving jump clears
-        const float GrabStart = 30f;    // a face starting within this of her feet is climbable
+        const float GrabStart = 36f;    // a jump-and-grab truly reaches a face starting this
+                                        // high: jump rise ~25 plus her collider, no folklore
         const float DashReach = 95f;    // jump plus up-dash, measured generously
         const float ChimneyMin = 12f, ChimneyMax = 55f;
 
@@ -200,7 +201,9 @@ namespace DeskMadeline
                             { Seg = bi, Move = MoveClimb, X = face + side * 2f, Dir = side };
                             return true;
                         }
-                        if (!ctx.WindowsReactToDash &&
+                        // A dash catch needs a face tall enough to actually catch: the
+                        // two-pixel side of a top border is a lip to jump-grab, not a wall.
+                        if (!ctx.WindowsReactToDash && f.B - f.T >= 20f &&
                             a.Y - f.B >= 25f && a.Y - f.B <= DashReach)
                         {
                             step = new NavStep { Seg = bi, Move = MoveDash, X = spot, Dir = side };
