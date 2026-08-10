@@ -229,7 +229,28 @@ namespace DeskMadeline
         }
 
         void PlaySound(string path, string parameter = null, float value = 0f)
-            => SoundEvents.Enqueue(new PlayerSoundEvent(path, parameter, value));
+        {
+            if (Ghost) return;      // a rehearsal has no voice
+            SoundEvents.Enqueue(new PlayerSoundEvent(path, parameter, value));
+        }
+
+        /// <summary>True on rehearsal copies: no voice, no hair, no reach into the world.</summary>
+        internal bool Ghost;
+
+        /// <summary>
+        /// A rehearsal copy for the idle planner: the same physics down to every private
+        /// timer, but mute, hairless, holding nothing, and unable to touch anything real --
+        /// a simulated dash must never move an actual window.
+        /// </summary>
+        internal Player CloneForSim()
+        {
+            var ghost = (Player)MemberwiseClone();
+            ghost.Ghost = true;
+            ghost.OnDashCollide = null;
+            ghost.Holdables = null;
+            ghost.FreezeFramesEnabled = false;
+            return ghost;
+        }
 
         public void SetFreezeFramesEnabled(bool enabled)
         {
@@ -1180,7 +1201,7 @@ namespace DeskMadeline
             RespawnPercent = 0f;
             RespawnEffectPosition = pos;
             counter.X = counter.Y = 0;
-            Hair.Reset(new PointF(Pos.X, Pos.Y - 9), Facing);
+            if (!Ghost) Hair.Reset(new PointF(Pos.X, Pos.Y - 9), Facing);
         }
 
         void BeginRespawn()
@@ -1212,7 +1233,7 @@ namespace DeskMadeline
         {
             if (x == 0f && y == 0f) return;
             Pos = new PointF(Pos.X + x, Pos.Y + y);
-            Hair.MoveBy(x, y);
+            if (!Ghost) Hair.MoveBy(x, y);
             if (Holding != null)
                 Holding.Carry(new PointF(Holding.Pos.X + x, Holding.Pos.Y + y));
         }
@@ -1283,7 +1304,7 @@ namespace DeskMadeline
                     SpriteScaleX = 1.5f;
                     SpriteScaleY = 0.5f;
                     RespawnPercent = 0f;
-                    Hair.Reset(new PointF(Pos.X, Pos.Y - 9f), Facing);
+                    if (!Ghost) Hair.Reset(new PointF(Pos.X, Pos.Y - 9f), Facing);
                 }
                 return;
             }

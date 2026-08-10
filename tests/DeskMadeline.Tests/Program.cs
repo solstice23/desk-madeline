@@ -29,6 +29,7 @@ static class Program
         failed += TheoChecks.Run();       // how the Theo crystal breaks
         failed += EntityDreamChecks.Run();// crystal, jelly and seeker dropped inside a block
         failed += InputChecks.Run();     // bindings: three keys on an action, and what a press is
+        failed += MoveChecks.Run();     // the move library, rehearsed on ghosts
         failed += IdleChecks.Run();     // the director that plays her when nobody is
         failed += UpdateChecks.Run();    // whether the build server has a newer build
         failed += SettingsChecks.Run();   // settings defaults, and snapping back onto the displays
