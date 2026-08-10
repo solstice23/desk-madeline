@@ -467,7 +467,9 @@ namespace DeskMadeline
                     : leftHere ? -1 : rightHere ? 1 : 0;
                 // Once a minute at most: with no climbable window about it was the only
                 // vertical thing on offer, and she hung off the screen four times a minute.
-                if (hangEdgeDir != 0 && Since(Activity.HangOnEdge) > 60f)
+                if (hangEdgeDir != 0 && Since(Activity.HangOnEdge) > 60f &&
+                    !RecentlyFailed(new PointF(
+                        hangEdgeDir > 0 ? ctx.EdgeRight : ctx.EdgeLeft, ctx.Player.Pos.Y)))
                     scores.Add((Activity.HangOnEdge, .35f + energy * .5f + Novelty(Activity.HangOnEdge)));
             }
             targetJelly = PickJelly(ctx);
@@ -1531,13 +1533,22 @@ namespace DeskMadeline
 
         internal void NoteFailedSpotForCheck(PointF at) => NoteFailedSpot(at);
 
-        /// <summary>A spot near one that recently defeated her.</summary>
+        /// <summary>
+        /// A spot near one that recently defeated her -- or in a neighbourhood that keeps
+        /// defeating her: three live failures nearby condemn the whole corner, because a
+        /// cluster of windows there hands out fresh disappointments one candidate at a time.
+        /// </summary>
         bool RecentlyFailed(PointF spot)
         {
+            int near = 0;
             foreach ((PointF at, float until) in failedSpots)
-                if (until > clock && Math.Abs(spot.X - at.X) < 60f &&
-                    Math.Abs(spot.Y - at.Y) < 60f) return true;
-            return false;
+            {
+                if (until <= clock) continue;
+                float dx = Math.Abs(spot.X - at.X), dy = Math.Abs(spot.Y - at.Y);
+                if (dx < 60f && dy < 60f) return true;
+                if (dx < 180f && dy < 180f) near++;
+            }
+            return near >= 3;
         }
         // Pilot scratch for the up-dash maneuver: where to leave the ground, and which
         // side the face is on.
