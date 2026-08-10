@@ -456,7 +456,7 @@ namespace DeskMadeline
                 scores.Add((Activity.Nap, (1f - energy) * 2f + Since(Activity.Nap) / 600f));
             climbCandidate = FindClimbable(ctx);
             if (climbCandidate.Width > 0f)
-                scores.Add((Activity.ClimbWindow, .5f + energy * .7f + Novelty(Activity.ClimbWindow)));
+                scores.Add((Activity.ClimbWindow, .8f + energy * .7f + Novelty(Activity.ClimbWindow)));
             if (freshAge < 30f)
                 scores.Add((Activity.Inspect, 2.5f));
             if (ctx.EdgesClimbable)
@@ -1449,7 +1449,9 @@ namespace DeskMadeline
                     }
                 }
                 bool up = s.T < ctx.Player.Pos.Y - 16f;
-                if (up) weight += energy;
+                // Up is the point: the floor wins the lottery by sheer area otherwise,
+                // and left-and-right along the ground is the monotony complained of.
+                if (up) weight += 2f + energy;
                 totalWeight += weight;
                 if (rng.NextDouble() * totalWeight < weight)
                 { pick = spot; pickRoute = routeRect; pickUp = up; any = true; }

@@ -119,13 +119,17 @@ namespace DeskMadeline
                         IdleMoves.Of(MoveKind.UpDashGrab, dir: side, at: 14),
                         IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f),
                     });
-                    if (flair)
-                        candidates.Insert(0, new List<Move>
-                        {
-                            IdleMoves.Of(MoveKind.WalkTo, x: face - side * 6f),
-                            IdleMoves.Of(MoveKind.Wallbounce, dir: side, at: 15),
-                            IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f),
-                        });
+                    // The wallbounce is not mere flair here: it reaches thirty pixels
+                    // past the up-dash, and half the desk''s hanging faces live in that
+                    // band. Flair only decides whether it auditions first or second.
+                    var bounce = new List<Move>
+                    {
+                        IdleMoves.Of(MoveKind.WalkTo, x: face - side * 6f),
+                        IdleMoves.Of(MoveKind.Wallbounce, dir: side, at: 15),
+                        IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f),
+                    };
+                    if (flair) candidates.Insert(0, bounce);
+                    else candidates.Add(bounce);
                     break;
                 }
 
