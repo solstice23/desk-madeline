@@ -126,6 +126,8 @@ namespace DeskMadeline
         int hangEdgeDir;
         float legHopX = float.NaN;
         float legDashX = float.NaN;
+        int superHopIn;
+        int shrugCount;
         bool legLedgeJump;
         int sitStage;
         float sitT, sitPause;
@@ -613,14 +615,21 @@ namespace DeskMadeline
                         ? ctx.Player.Pos.X + dir * (30f + (float)rng.NextDouble() * 60f)
                         : float.NaN;
                 }
-                // And a long one may have a dash, on ground checked clear first.
+                // And a long one may have a dash, on ground checked clear first --
+                // and half the dashes get their jump six frames later, which is a super.
                 if (!float.IsNaN(legDashX) && !ctx.WindowsAreKevin && ctx.Player.onGround &&
                     Math.Abs(ctx.Player.Speed.X) > 60f &&
                     Math.Abs(ctx.Player.Pos.X - legDashX) < 6f)
                 {
                     legDashX = float.NaN;
-                    if (DashPathClear(ctx, dir)) ctx.Player.BufferDash();
+                    if (DashPathClear(ctx, dir))
+                    {
+                        ctx.Player.BufferDash();
+                        if (rng.Next(2) == 0) superHopIn = 6;
+                    }
                 }
+                if (superHopIn > 0 && --superHopIn == 0)
+                { ctx.Player.BufferJump(); jumpHoldFrames = 14; }
             }
             if (wantTop)
             {
@@ -875,16 +884,13 @@ namespace DeskMadeline
                     {
                         PetWindow.Log($"idle: no plan survived for step kind {step.Move}"
                             + $" to y={seg.Y:F0}");
-                        // A stroll shrugs and goes somewhere else, without even noting
-                        // the spot -- a cheap re-roll is not a verdict. Only committed
-                        // outings record the failure and give the idea up.
+                        // A stroll shrugs and tries another idea -- an elevated one for
+                        // a while, then a flat one -- without noting anything: a cheap
+                        // re-roll is not a verdict. Only committed outings record the
+                        // failure and give the idea up.
                         if (Current == Activity.Wander)
                         {
-                            legElevated = false;
-                            route = null;
-                            target = WanderPoint(ctx);
-                            routeNullFor = 0f;
-                            nextAuditionAt = 0f;
+                            ShrugLeg(ctx);
                             return;
                         }
                         NoteFailedSpot(target);
@@ -905,10 +911,8 @@ namespace DeskMadeline
                 {
                     if (Current == Activity.Wander)
                     {
-                        legElevated = false;
-                        route = null;
                         replans = 0;
-                        target = WanderPoint(ctx);
+                        ShrugLeg(ctx);
                         return;
                     }
                     NoteFailedSpot(target);
@@ -1350,12 +1354,31 @@ namespace DeskMadeline
         /// an elevated one is routed with the same plans a window climb uses, because on
         /// this desk they are the same problem.
         /// </summary>
+        void ShrugLeg(in IdleContext ctx)
+        {
+            route = null;
+            routeNullFor = 0f;
+            nextAuditionAt = 0f;
+            if (++shrugCount <= 2)
+            {
+                target = ExplorePoint(ctx, out RectangleF surface, out legElevated);
+                if (legElevated) targetRect = surface;
+            }
+            else
+            {
+                legElevated = false;
+                target = WanderPoint(ctx);
+            }
+        }
+
         void NewWanderLeg(in IdleContext ctx)
         {
             target = ExplorePoint(ctx, out RectangleF surface, out legElevated);
             if (legElevated) targetRect = surface;
             route = null;
             routeAt = 0;
+            shrugCount = 0;
+            superHopIn = 0;
             RollLegSpice(ctx);
             trappedLeg = walledLegs >= 2;
             bestDist = float.MaxValue;
@@ -1478,7 +1501,7 @@ namespace DeskMadeline
         {
             failedSpots.RemoveAll(f => f.Until < clock);
             if (failedSpots.Count >= 16) failedSpots.RemoveAt(0);
-            failedSpots.Add((at, clock + 120f));
+            failedSpots.Add((at, clock + 90f));
         }
 
         internal void NoteFailedSpotForCheck(PointF at) => NoteFailedSpot(at);
@@ -1498,7 +1521,7 @@ namespace DeskMadeline
                 if (dx < 60f && dy < 60f) return true;
                 if (dx < 180f && dy < 180f) near++;
             }
-            return near >= 3;
+            return near >= 4;
         }
         List<Move> movePlan;
         int moveAt;

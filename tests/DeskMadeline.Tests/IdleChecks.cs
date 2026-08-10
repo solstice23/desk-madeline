@@ -67,9 +67,12 @@ static class IdleChecks
     static PetInput Step(IdleDirector director, Player player, IdleContext ctx)
     {
         PetInput input = director.Drive(Dt, ctx);
-        if (input.DashPressed) dashedEver = true;
+        // The inviolable rule is not "no dashes" -- rehearsed plans dash where dashing
+        // is safe -- it is "never where a dash could move a window".
+        bool dashForbidden = ctx.WindowsAreKevin || ctx.WindowsReactToDash;
+        if (dashForbidden && input.DashPressed) dashedEver = true;
         player.Update(Dt, input);
-        if (player.State == Player.StDash) dashedEver = true;
+        if (dashForbidden && player.State == Player.StDash) dashedEver = true;
         return input;
     }
 
@@ -538,7 +541,7 @@ static class IdleChecks
 
         Console.WriteLine();
         Console.WriteLine("  What she never does uninvited");
-        Check("not one dash was pressed in any of the above", !dashedEver);
+        Check("not one dash wherever a dash could move a window", !dashedEver);
 
         Console.WriteLine();
         Console.WriteLine("  The dash, where a dash can hit nothing");

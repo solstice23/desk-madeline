@@ -25,7 +25,7 @@ namespace DeskMadeline
             if (step.Seg >= segs.Count) return null;
             NavSeg seg = segs[step.Seg];
             bool dashOk = !ctx.WindowsReactToDash && !NearAPuffer(ctx, p.Pos, seg);
-            bool flair = dashOk && rng.NextDouble() < .2;
+            bool flair = dashOk && rng.NextDouble() < .45;
 
             bool Accept(Player g) =>
                 g.onGround && g.Pos.Y <= seg.Y + 6f && g.Pos.Y >= seg.Y - 10f &&
