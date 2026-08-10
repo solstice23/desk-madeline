@@ -1090,7 +1090,11 @@ namespace DeskMadeline
                 {
                     p.BufferJump();
                     jumpHoldFrames = 12;
-                    if (WallWithin(ctx, p, -wallSide, 6f, 45f, out _))
+                    // Hop to the far wall only if it keeps rising above her: a wall that
+                    // ends at her height is a lip to go over, not a rally partner -- taking
+                    // it anyway bounced her in the pocket beside her own destination.
+                    if (WallWithin(ctx, p, -wallSide, 6f, 45f, out _) &&
+                        WallContinuesAbove(ctx, p, -wallSide))
                     {
                         wallSide = -wallSide;
                         neutralFrames = 0;
@@ -1199,6 +1203,19 @@ namespace DeskMadeline
 
         static bool WallAhead(in IdleContext ctx, Player p, int dir, out float top)
             => WallWithin(ctx, p, dir, 5f, 8f, out top);
+
+        /// <summary>The wall on that side still stands thirty to forty pixels above her.</summary>
+        static bool WallContinuesAbove(in IdleContext ctx, Player p, int dir)
+        {
+            float l = Math.Min(p.Pos.X + dir * 6f, p.Pos.X + dir * 45f);
+            float r = Math.Max(p.Pos.X + dir * 6f, p.Pos.X + dir * 45f);
+            foreach (Solid s in ctx.Solids)
+            {
+                if (s.R <= l || s.L >= r) continue;
+                if (s.T <= p.Pos.Y - 40f && s.B >= p.Pos.Y - 30f) return true;
+            }
+            return false;
+        }
 
         /// <summary>The floor stops just ahead: nothing to stand on within a stride.</summary>
         static bool LedgeAhead(in IdleContext ctx, Player p, int dir)
