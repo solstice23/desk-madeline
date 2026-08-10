@@ -518,6 +518,25 @@ static class IdleChecks
             !everJumped && settled.onGround && Math.Abs(settled.Pos.Y + 50f) <= 2f);
 
         Console.WriteLine();
+        Console.WriteLine("  A spot that defeated her is left alone for a while");
+        var sour = OnFloor(0f, box);
+        var sourDirector = new IdleDirector(new Random(7));
+        var sourCtx = Context(sour);
+        sourCtx.Windows = new List<KeyValuePair<IntPtr, RectangleF>>
+        { new KeyValuePair<IntPtr, RectangleF>(new IntPtr(9), new RectangleF(60f, -50f, 100f, 50f)) };
+        RectangleF before = default;
+        for (int i = 0; i < 20 && before.Width == 0f; i++)
+            before = sourDirector.ProbeClimbForCheck(sourCtx);
+        sourDirector.NoteFailedSpotForCheck(new PointF(110f, -50f));
+        RectangleF after = default;
+        for (int i = 0; i < 20 && after.Width == 0f; i++)
+            after = sourDirector.ProbeClimbForCheck(sourCtx);
+        Console.WriteLine($"      offered before the failure: {before.Width > 0f};"
+            + $" offered again right after: {after.Width > 0f}");
+        Check("a reachable window is offered, but not again soon after failing there",
+            before.Width > 0f && after.Width == 0f);
+
+        Console.WriteLine();
         Console.WriteLine("  What she never does uninvited");
         Check("not one dash was pressed in any of the above", !dashedEver);
 

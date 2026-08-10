@@ -334,6 +334,7 @@ namespace DeskMadeline
             pendingLeap = false;
             route = null;
             routeAt = 0;
+            routeNullFor = 0f;
             dashAimFrames = 0;
             leapCatchFrames = 0;
             Napping = false;
@@ -403,6 +404,10 @@ namespace DeskMadeline
         {
             PetWindow.Log($"idle: gave up on {Current} at"
                 + $" {ctx.Player.Pos.X:F0},{ctx.Player.Pos.Y:F0}");
+            // Remember where the idea failed, so the next pick goes somewhere else
+            // instead of returning to the same cursed lip every twenty seconds.
+            if (Current == Activity.ClimbWindow || Current == Activity.Inspect || legElevated)
+                NoteFailedSpot(target);
             // Say what was standing there, so a stuck spot can be diagnosed from the diary.
             int said = 0;
             foreach (Solid s in ctx.Solids)
@@ -599,16 +604,19 @@ namespace DeskMadeline
                     if (route == null)
                     {
                         // No way there. A stroll simply goes somewhere else; a committed
-                        // outing gives the idea up.
+                        // outing waits half a second -- the live world jitters between
+                        // polls -- and then gives the idea up.
                         if (Current == Activity.Wander)
                         {
                             legElevated = false;
                             target = WanderPoint(ctx);
                             return;
                         }
-                        Abandon(ctx);
+                        routeNullFor += dt;
+                        if (routeNullFor > .5f) Abandon(ctx);
                         return;
                     }
+                    routeNullFor = 0f;
                 }
                 if (route != null && routeAt < route.Count)
                 {
@@ -1222,7 +1230,7 @@ namespace DeskMadeline
             // Scaling a seam is honest vertical work the horizontal distance cannot see --
             // but only while it keeps setting a new high-water mark. A ladder bouncing in a
             // pocket under an overhang gains nothing, and that is a stall like any other.
-            else if (busyScaling && ctx.Player.Pos.Y < bestClimbY - 1f)
+            else if (busyScaling && ctx.Player.Pos.Y < bestClimbY - 4f)
             { bestClimbY = ctx.Player.Pos.Y; stall = 0f; }
             else stall += dt;
             if (stall > 3f) Abandon(ctx);
@@ -1353,6 +1361,7 @@ namespace DeskMadeline
                 float x = lo + (float)rng.NextDouble() * (hi - lo);
                 var spot = new PointF(x, s.T);
                 if (NearAPuffer(ctx, spot)) continue;
+                if (RecentlyFailed(spot)) continue;
                 if (!Headroom(ctx, s, x)) continue;
                 float weight = 1f;
                 RectangleF routeRect = RectangleF.FromLTRB(s.L, s.T, s.R, s.B);
@@ -1415,6 +1424,26 @@ namespace DeskMadeline
         readonly List<NavSeg> navSegs = new List<NavSeg>();
         List<NavStep> route;
         int routeAt;
+        float routeNullFor;
+        readonly List<(PointF At, float Until)> failedSpots = new List<(PointF, float)>();
+
+        void NoteFailedSpot(PointF at)
+        {
+            failedSpots.RemoveAll(f => f.Until < clock);
+            if (failedSpots.Count >= 16) failedSpots.RemoveAt(0);
+            failedSpots.Add((at, clock + 120f));
+        }
+
+        internal void NoteFailedSpotForCheck(PointF at) => NoteFailedSpot(at);
+
+        /// <summary>A spot near one that recently defeated her.</summary>
+        bool RecentlyFailed(PointF spot)
+        {
+            foreach ((PointF at, float until) in failedSpots)
+                if (until > clock && Math.Abs(spot.X - at.X) < 60f &&
+                    Math.Abs(spot.Y - at.Y) < 30f) return true;
+            return false;
+        }
         // Pilot scratch for the up-dash maneuver: where to leave the ground, and which
         // side the face is on.
         float climbViaX;
@@ -1446,6 +1475,7 @@ namespace DeskMadeline
                 if (rect.Width < 24f) continue;
                 if (ctx.Player.Pos.Y - rect.Top < 16f) continue;        // hardly a climb
                 if (NearAPuffer(ctx, new PointF(rect.Left + rect.Width / 2f, rect.Top))) continue;
+                if (RecentlyFailed(new PointF(rect.Left + rect.Width / 2f, rect.Top))) continue;
                 int to = -1;
                 for (int i = 0; i < navSegs.Count && to < 0; i++)
                     if (Math.Abs(navSegs[i].Y - rect.Top) <= 4f &&
