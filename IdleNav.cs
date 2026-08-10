@@ -211,6 +211,10 @@ namespace DeskMadeline
                 {
                     if (w.B < a.Y - GrabStart) continue;        // wall must start at her level
                     if (w.T > sol.Bottom - 8f) continue;        // and rise past b's underside
+                    // And the leap must arrive with grip in the tank: the climb from a to
+                    // the leap height has to fit what stamina affords past the jump start,
+                    // or she leaps dry, cannot catch, and rides the cycle to the floor.
+                    if (a.Y - 28f - (sol.Bottom - 8f) > 100f) continue;
                     RectangleF wr = RectangleF.FromLTRB(w.L, w.T, w.R, w.B);
                     float gapL = sol.Left - w.R;                // wall left of b's solid
                     if (gapL >= ChimneyMin && gapL <= ChimneyMax &&

@@ -325,6 +325,8 @@ namespace DeskMadeline
             driftTime = 0f;
             driftAnchor = ctx.Player != null ? ctx.Player.Pos : default;
             driftStrikes = 0;
+            stepPeakY = ctx.Player != null ? ctx.Player.Pos.Y : 0f;
+            stepFalls = 0;
             carryStage = 0;
             hangFor = 0f;
             wallSide = 0;
@@ -831,10 +833,26 @@ namespace DeskMadeline
             {
                 routeAt++;
                 wallSide = 0;
+                stepPeakY = p.Pos.Y;
+                stepFalls = 0;
                 bestDist = float.MaxValue;
                 bestClimbY = float.MaxValue;
                 stall = 0f;
                 return;
+            }
+            // Falling eighty pixels back from a step's high point, twice, means the
+            // maneuver does not work here -- whatever the incremental watchdog thinks of
+            // the pixel-scale records each retry sets on the way up.
+            if (p.Pos.Y < stepPeakY) stepPeakY = p.Pos.Y;
+            if (p.onGround && p.Pos.Y - stepPeakY > 80f)
+            {
+                stepPeakY = p.Pos.Y;
+                if (++stepFalls >= 2)
+                {
+                    NoteFailedSpot(target);
+                    Abandon(ctx);
+                    return;
+                }
             }
             float aim;
             bool scaling = false;
@@ -1488,6 +1506,8 @@ namespace DeskMadeline
         float driftTime;
         PointF driftAnchor;
         int driftStrikes;
+        float stepPeakY;
+        int stepFalls;
         readonly List<(PointF At, float Until)> failedSpots = new List<(PointF, float)>();
 
         void NoteFailedSpot(PointF at)
