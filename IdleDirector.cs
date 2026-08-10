@@ -322,6 +322,9 @@ namespace DeskMadeline
             bestClimbY = float.MaxValue;
             crossingBudgeted = false;
             stall = 0f;
+            driftTime = 0f;
+            driftAnchor = ctx.Player != null ? ctx.Player.Pos : default;
+            driftStrikes = 0;
             carryStage = 0;
             hangFor = 0f;
             wallSide = 0;
@@ -517,6 +520,27 @@ namespace DeskMadeline
                 return;
             }
 
+            // The last line of defence against every shape of loop: a Go phase that has
+            // produced no real displacement for two four-second windows in a row is going
+            // nowhere, whichever sub-system is busy pretending otherwise -- micro-legs
+            // re-picking in a pocket reset the per-leg watchdogs, but they cannot fake
+            // net movement.
+            driftTime += dt;
+            if (driftTime >= 4f)
+            {
+                driftTime = 0f;
+                float moved = Math.Abs(ctx.Player.Pos.X - driftAnchor.X)
+                    + Math.Abs(ctx.Player.Pos.Y - driftAnchor.Y);
+                driftAnchor = ctx.Player.Pos;
+                if (moved >= 24f) driftStrikes = 0;
+                else if (++driftStrikes >= 2)
+                {
+                    NoteFailedSpot(ctx.Player.Pos);
+                    NoteFailedSpot(target);
+                    Abandon(ctx);
+                    return;
+                }
+            }
             bool wantTop = Current != Activity.Wander || legElevated;
             if (Arrived(ctx, wantTop))
             {
@@ -1425,6 +1449,9 @@ namespace DeskMadeline
         List<NavStep> route;
         int routeAt;
         float routeNullFor;
+        float driftTime;
+        PointF driftAnchor;
+        int driftStrikes;
         readonly List<(PointF At, float Until)> failedSpots = new List<(PointF, float)>();
 
         void NoteFailedSpot(PointF at)
