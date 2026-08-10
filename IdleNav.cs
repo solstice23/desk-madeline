@@ -200,6 +200,10 @@ namespace DeskMadeline
                         {
                             if (o.R <= lz || o.L >= rz) continue;
                             if (o.B <= f.T - 16f || o.T >= f.T - 1f) continue;
+                            // A piece whose top sits within a step of the lip IS the
+                            // landing -- a window''s own top border lies two pixels above
+                            // its side border and must not seal its own doorway.
+                            if (o.T >= f.T - 14f) continue;
                             lipBlocked = true;
                             break;
                         }
