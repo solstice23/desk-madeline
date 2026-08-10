@@ -1151,10 +1151,14 @@ namespace DeskMadeline
                     // Tall: grab it and climb. The jump start is free height, but only
                     // where there is air for the arc -- under another window's overhang
                     // the jump gets cut and she bounces in place, while a grab from
-                    // standing hugs the wall and works beneath any ceiling.
+                    // standing hugs the wall and works beneath any ceiling. The grab
+                    // itself has hysteresis: the climb releases below twenty-five, so
+                    // regrabbing at anything above zero flickered climb-and-fall at a
+                    // dry tank; a fresh grip asks for thirty.
                     if (headroom && p.onGround && jumpHoldFrames == 0)
                     { p.BufferJump(); jumpHoldFrames = 10; }
-                    input.GrabHeld = true;
+                    input.GrabHeld = p.State == Player.StClimb || p.Stamina > 30f ||
+                        p.onGround;
                     input.MoveY = -1;
                     if (scaleWithJumps) wallSide = dir;
                 }
@@ -1469,7 +1473,7 @@ namespace DeskMadeline
             foreach (Solid s in ctx.Solids)
             {
                 if (s.L > x + 5f || s.R < x - 5f) continue;
-                if (s.B > on.T - 24f && s.B <= on.T && s.T < on.T - 1f) return false;
+                if (s.B > on.T - 15f && s.B <= on.T && s.T < on.T - 1f) return false;
             }
             return true;
         }

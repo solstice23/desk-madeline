@@ -96,6 +96,17 @@ static class MoveChecks
         Check("she jumps, dashes up, and catches the face", caught);
 
         Console.WriteLine();
+        Console.WriteLine("  Diagonal dash grab");
+        var cornerBox = new Solid { Id = new IntPtr(9), L = 120f, T = -140f, R = 260f, B = -52f };
+        var cutter = OnFloor(76f, cornerBox);
+        bool cornered = IdleMoves.Rehearse(cutter,
+            Plan(IdleMoves.Of(MoveKind.DiagDashGrab, dir: 1, at: 12)),
+            p => p.State == Player.StClimb, 200, out PointF cutEnd, out _, out _);
+        Console.WriteLine($"      a face both up and across: caught {cornered} at"
+            + $" {cutEnd.X:F0},{cutEnd.Y:F0}");
+        Check("the up-diagonal cuts the corner onto the face", cornered);
+
+        Console.WriteLine();
         Console.WriteLine("  Wallbounce");
         var tallWall = new Solid { Id = new IntPtr(9), L = 100f, T = -400f, R = 140f, B = 40f };
         var bouncer = OnFloor(93f, tallWall);

@@ -112,11 +112,21 @@ namespace DeskMadeline
                     if (!dashOk) return null;
                     int side = step.Dir;
                     float face = step.X + side * 8f;
+                    // The same reach, several hands: dash timings and the diagonal are
+                    // separate auditions, and the roll at the end picks among survivors.
+                    foreach (int at in new[] { 14, 12, 17 })
+                        candidates.Add(new List<Move>
+                        {
+                            IdleMoves.Of(MoveKind.WalkTo, x: step.X),
+                            IdleMoves.Of(MoveKind.Settle),
+                            IdleMoves.Of(MoveKind.UpDashGrab, dir: side, at: at),
+                            IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f),
+                        });
                     candidates.Add(new List<Move>
                     {
-                        IdleMoves.Of(MoveKind.WalkTo, x: step.X),
+                        IdleMoves.Of(MoveKind.WalkTo, x: step.X - side * 14f),
                         IdleMoves.Of(MoveKind.Settle),
-                        IdleMoves.Of(MoveKind.UpDashGrab, dir: side, at: 14),
+                        IdleMoves.Of(MoveKind.DiagDashGrab, dir: side, at: 12),
                         IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f),
                     });
                     // The wallbounce is not mere flair here: it reaches thirty pixels
@@ -151,10 +161,14 @@ namespace DeskMadeline
                 }
             }
 
+            // Audition everything; roll among the survivors. First-survivor order made
+            // her reliable but repetitive -- the same wall got the same ascent forever.
+            var survivors = new List<List<Move>>();
             foreach (List<Move> plan in candidates)
                 if (IdleMoves.Rehearse(ctx.Player, plan, Accept, 2600, out _, out _, out _))
-                    return plan;
-            return null;
+                    survivors.Add(plan);
+            if (survivors.Count == 0) return null;
+            return survivors[rng.Next(survivors.Count)];
         }
 
         /// <summary>Alternating kicks up a chimney, ending over the target's lip.</summary>

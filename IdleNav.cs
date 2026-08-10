@@ -32,7 +32,8 @@ namespace DeskMadeline
     {
         public const byte MoveWalk = 0, MoveClimb = 1, MoveDash = 2, MoveDrop = 3, MoveLeap = 4;
 
-        const float Headroom = 24f;     // she needs this much air above a top to stand on it
+        const float Headroom = 15f;     // standing needs her eleven pixels plus a hair;
+                                        // jumps ask the rehearsal, which bonks honestly
         const float StepUp = 24f;       // a running jump's reliable rise
         const float StepDown = 14f;     // a hop down that still counts as walking
         const float StepGap = 30f;      // a gap a moving jump clears

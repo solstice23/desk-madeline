@@ -22,6 +22,8 @@ namespace DeskMadeline
         Settle,         // stand still until the speed dies
         WallLadder,     // climb while the tank lasts, then wall-jump cadence to a height:
                         // the ladder ends by jumping over the lip, which costs nothing
+        DiagDashGrab,   // jump, dash up-diagonally into a face, grab: cuts the corner
+                        // onto walls the vertical dash stands beside but cannot enter
     }
 
     /// <summary>One move with its parameters. A plan is a list of these.</summary>
@@ -128,6 +130,25 @@ namespace DeskMadeline
                     else if (run.Acted2)
                     {
                         input.MoveX = m.Dir;                    // press into the face
+                        input.GrabHeld = true;
+                    }
+                    break;
+
+                case MoveKind.DiagDashGrab:
+                    if (f == 0) p.BufferJump();
+                    if (f <= 8) input.JumpHeld = true;
+                    if (!run.Acted2 && f >= m.At && p.Dashes > 0)
+                    { p.BufferDash(); run.Acted2 = true; }
+                    if (run.Acted2 && f < m.At + 8)
+                    {
+                        input.AimX = m.Dir;
+                        input.AimY = -1;
+                        input.MoveY = -1;
+                        input.MoveX = m.Dir;
+                    }
+                    else if (run.Acted2)
+                    {
+                        input.MoveX = m.Dir;
                         input.GrabHeld = true;
                     }
                     break;
@@ -248,6 +269,7 @@ namespace DeskMadeline
                     return (f > 8 && p.State == Player.StClimb) || (f > 8 && p.onGround)
                         || f >= 50;
                 case MoveKind.UpDashGrab:
+                case MoveKind.DiagDashGrab:
                     return p.State == Player.StClimb || (f > m.At + 16 && p.onGround)
                         || f >= 100;
                 case MoveKind.Wallbounce:
