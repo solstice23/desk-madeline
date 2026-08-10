@@ -456,7 +456,10 @@ namespace DeskMadeline
                 scores.Add((Activity.Nap, (1f - energy) * 2f + Since(Activity.Nap) / 600f));
             climbCandidate = FindClimbable(ctx);
             if (climbCandidate.Width > 0f)
-                scores.Add((Activity.ClimbWindow, .8f + energy * .7f + Novelty(Activity.ClimbWindow)));
+            {
+                float climbBase = ctx.Player.Pos.Y > RoomAround(ctx).Bottom - 60f ? .8f : .35f;
+                scores.Add((Activity.ClimbWindow, climbBase + energy * .7f + Novelty(Activity.ClimbWindow)));
+            }
             if (freshAge < 30f)
                 scores.Add((Activity.Inspect, 2.5f));
             if (ctx.EdgesClimbable)
@@ -1454,9 +1457,12 @@ namespace DeskMadeline
                     }
                 }
                 bool up = s.T < ctx.Player.Pos.Y - 16f;
-                // Up is the point: the floor wins the lottery by sheer area otherwise,
-                // and left-and-right along the ground is the monotony complained of.
-                if (up) weight += 2f + energy;
+                // Up is the point -- from the ground. The floor wins the lottery by
+                // sheer area otherwise, and left-and-right along it is monotony. But
+                // already-up is a place to be, not a ladder to keep climbing: the
+                // appetite for height belongs to the taskbar, not the summit.
+                bool onFloor = ctx.Player.Pos.Y > room.Bottom - 60f;
+                if (up) weight += onFloor ? 2f + energy : .4f;
                 totalWeight += weight;
                 if (rng.NextDouble() * totalWeight < weight)
                 { pick = spot; pickRoute = routeRect; pickUp = up; any = true; }
