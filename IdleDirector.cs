@@ -101,6 +101,8 @@ namespace DeskMadeline
         bool crossingBudgeted;
         int walledLegs;
         bool trappedLeg;
+        int pushFrames;
+        int strollClimbFrames;
         bool legElevated;
         int leapCatchFrames;
         readonly Dictionary<Activity, float> lastPicked = new Dictionary<Activity, float>();
@@ -675,6 +677,22 @@ namespace DeskMadeline
             Walk(ref input, dt, ctx, aimX,
                 climbUpTo: wantTop || crossing ? float.MaxValue : 60f,
                 scaleWithJumps: wantTop || crossing);
+            // The hard rule: a stroll never bumps a wall for more than a tenth of a
+            // second. Pressing with intent at no speed and no maneuver answering means
+            // this leg is over, now -- not after a watchdog deliberates.
+            if (Current == Activity.Wander && !legElevated && ctx.Player.onGround &&
+                input.MoveX != 0 && Math.Abs(ctx.Player.Speed.X) < 5f)
+            {
+                if (++pushFrames > 6)
+                {
+                    walledLegs++;
+                    phase = Phase.Do;
+                    phaseTime = 0f;
+                    pushFrames = 0;
+                    return;
+                }
+            }
+            else pushFrames = 0;
             input.DashPressed = ctx.Player.HasDashBuffer;
             Drain(dt, moving: true);
             // The via-edge route walks past the target's x on the way to the edge, which
@@ -1152,6 +1170,7 @@ namespace DeskMadeline
                 else if ((rise <= climbUpTo && p.Stamina > rise + 25f) ||
                     climbUpTo == float.MaxValue)
                 {
+                    strollClimbFrames = 40;     // stay committed through the arc
                     // A stroll only starts climbs its tank can finish: grabbing a wall
                     // on a dry tank climbs two pixels, slides off, lands, and grabs
                     // again -- the slip-and-stick loop. Scaling outings are exempt;
@@ -1170,6 +1189,19 @@ namespace DeskMadeline
                     input.MoveY = -1;
                     if (scaleWithJumps) wallSide = dir;
                 }
+            }
+            // A stroll climb, once started, is committed: the wall probe loses the
+            // face mid-arc and the grab used to drop with it -- she jumped toward the
+            // wall and slipped off. The latch keeps grab-and-up held through the jump
+            // and over the lip.
+            if (strollClimbFrames > 0)
+            {
+                strollClimbFrames--;
+                if (p.State == Player.StClimb || p.Stamina > 30f || p.onGround)
+                    input.GrabHeld = true;
+                input.MoveY = -1;
+                if (p.onGround && Math.Abs(p.Speed.X) < 5f && strollClimbFrames < 30)
+                    strollClimbFrames = 0;      // landed going nowhere: release the idea
             }
             if (jumpHoldFrames > 0) { jumpHoldFrames--; input.JumpHeld = true; }
             input.JumpPressed = p.HasJumpBuffer;

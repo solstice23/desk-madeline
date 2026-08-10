@@ -642,7 +642,9 @@ static class IdleChecks
         Console.WriteLine();
         Console.WriteLine("  Detecting a floating window beside another window's wall");
         var neighborWall = new Solid { Id = new IntPtr(8), L = 220f, T = -140f, R = 224f, B = 40f };
-        var spotter = OnFloor(300f, floater, neighborWall);
+        // She starts in the chimney, where the leap plan is designed to run; the old
+        // far-side start passed only through a lucky over-the-top detour.
+        var spotter = OnFloor(210f, floater, neighborWall);
         var spotDirector = new IdleDirector(new Random(7));
         var spotCtx = Context(spotter);
         spotCtx.WindowsReactToDash = true;      // kevin or moon: the dash route is off the table
