@@ -858,18 +858,6 @@ namespace DeskMadeline
             }
             float aim;
             bool scaling = false;
-            // Risen above the destination surface mid-climb or mid-ladder: the wall work
-            // is done, and the only remaining job is to drift over and land on it --
-            // riding the wall any higher is how she sailed past her own lip to the lid.
-            if (!p.onGround && p.Pos.Y <= seg.Y - 2f &&
-                (step.Move == IdleNav.MoveClimb || step.Move == IdleNav.MoveDash))
-            {
-                aim = Math.Clamp(p.Pos.X, seg.L + 6f, seg.R - 6f);
-                Walk(ref input, dt, ctx, aim, climbUpTo: 60f);
-                Drain(dt, moving: true);
-                Watchdog(dt, ctx, false, aim, busyScaling: true, overrideY: seg.Y);
-                return;
-            }
             switch (step.Move)
             {
                 case IdleNav.MoveClimb:
