@@ -190,6 +190,20 @@ namespace DeskMadeline
                             ? b.L <= face + 2f && b.R >= face + 10f
                             : b.L <= face - 10f && b.R >= face - 2f;
                         if (!lipOnB) continue;
+                        // And the lip must be free: another window''s border sitting on it
+                        // means the climb tops out into a wall -- stacked chrome does this
+                        // constantly, and the ladder falls off exactly there.
+                        float lz = side > 0 ? face : face - 12f;
+                        float rz = side > 0 ? face + 12f : face;
+                        bool lipBlocked = false;
+                        foreach (Solid o in ctx.Solids)
+                        {
+                            if (o.R <= lz || o.L >= rz) continue;
+                            if (o.B <= f.T - 16f || o.T >= f.T - 1f) continue;
+                            lipBlocked = true;
+                            break;
+                        }
+                        if (lipBlocked) continue;
                         // The dash spot sits a full body off the face: rising with even a
                         // pixel of overlap into the border's corner wedges her mid-air.
                         float spot = face - side * 8f;
