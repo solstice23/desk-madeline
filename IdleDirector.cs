@@ -1149,8 +1149,13 @@ namespace DeskMadeline
                     // crosses a low window in the way.
                     if (p.onGround && jumpHoldFrames == 0) { p.BufferJump(); jumpHoldFrames = 12; }
                 }
-                else if (rise <= climbUpTo || climbUpTo == float.MaxValue)
+                else if ((rise <= climbUpTo && p.Stamina > rise + 25f) ||
+                    climbUpTo == float.MaxValue)
                 {
+                    // A stroll only starts climbs its tank can finish: grabbing a wall
+                    // on a dry tank climbs two pixels, slides off, lands, and grabs
+                    // again -- the slip-and-stick loop. Scaling outings are exempt;
+                    // their ladder is free.
                     // Tall: grab it and climb. The jump start is free height, but only
                     // where there is air for the arc -- under another window's overhang
                     // the jump gets cut and she bounces in place, while a grab from
