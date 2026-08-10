@@ -41,6 +41,15 @@ namespace DeskMadeline
                 {
                     float span = Math.Abs(step.X - p.Pos.X);
                     int dir = step.X > p.Pos.X ? 1 : -1;
+                    if (flair && span > 260f)
+                        // Ultra terrain: a long clear run from a standing start. The
+                        // rehearsal is the corridor check -- a ghost that bonks anything
+                        // simply fails the audition.
+                        candidates.Add(new List<Move>
+                        {
+                            IdleMoves.Of(MoveKind.Ultra, dir: dir),
+                            IdleMoves.Of(MoveKind.WalkTo, x: step.X),
+                        });
                     if (flair && span > 180f)
                     {
                         // The long flat stretch is what the tech is for.
@@ -53,6 +62,14 @@ namespace DeskMadeline
                         });
                     }
                     candidates.Add(new List<Move> { IdleMoves.Of(MoveKind.WalkTo, x: step.X) });
+                    // A step of fifteen to twenty-four pixels is past the walking hop:
+                    // the running-jump variant covers it, and the roll picks whichever
+                    // rehearses.
+                    candidates.Add(new List<Move>
+                    {
+                        IdleMoves.Of(MoveKind.RunningJump, dir: dir, hold: 12),
+                        IdleMoves.Of(MoveKind.WalkTo, x: step.X),
+                    });
                     break;
                 }
 

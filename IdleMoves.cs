@@ -24,6 +24,9 @@ namespace DeskMadeline
                         // the ladder ends by jumping over the lip, which costs nothing
         DiagDashGrab,   // jump, dash up-diagonally into a face, grab: cuts the corner
                         // onto walls the vertical dash stands beside but cannot enter
+        Ultra,          // the chain: hop, down-diagonal air dash, land during the dash
+                        // for the 1.2x boost, jump on contact, again -- accelerating
+                        // bounding leaps down a long clear floor
     }
 
     /// <summary>One move with its parameters. A plan is a list of these.</summary>
@@ -202,6 +205,26 @@ namespace DeskMadeline
                     if (!p.onGround) run.Acted = true;
                     break;
 
+                case MoveKind.Ultra:
+                {
+                    input.MoveX = m.Dir;
+                    bool dashing = p.HasDashBuffer || p.State == Player.StDash;
+                    if (dashing)
+                    {
+                        // Down-diagonal, held through the dash: landing mid-dash is
+                        // what earns the boost.
+                        input.AimX = m.Dir;
+                        input.AimY = 1;
+                        input.MoveY = 1;
+                    }
+                    if (p.onGround && f - run.MarkF > 5)
+                    { p.BufferJump(); run.MarkF = f; run.Acted = true; }
+                    if (run.Acted && f - run.MarkF <= 4) input.JumpHeld = true;
+                    if (!p.onGround && p.Dashes > 0 && p.Speed.Y > -30f && run.Acted)
+                        p.BufferDash();
+                    break;
+                }
+
                 case MoveKind.WallLadder:
                     if (p.State == Player.StClimb)
                     {
@@ -280,6 +303,10 @@ namespace DeskMadeline
                     return (f > 24 && p.onGround) || f >= 140;
                 case MoveKind.Wavedash:
                     return (run.Acted2 && f > 30 && p.onGround) || f >= 80;
+                case MoveKind.Ultra:
+                    // The chain ends when the speed does, or at the two-second cap.
+                    return f >= 120 ||
+                        (run.Acted && f > 40 && p.onGround && Math.Abs(p.Speed.X) < 60f);
                 case MoveKind.DropOff:
                     return (run.Acted && p.onGround) || f >= 150;
                 case MoveKind.Settle:

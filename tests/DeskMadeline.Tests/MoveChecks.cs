@@ -96,6 +96,18 @@ static class MoveChecks
         Check("she jumps, dashes up, and catches the face", caught);
 
         Console.WriteLine();
+        Console.WriteLine("  Ultra");
+        var sprinter = OnFloor(-500f);
+        bool ultraRan = IdleMoves.Rehearse(sprinter,
+            Plan(IdleMoves.Of(MoveKind.Ultra, dir: 1)),
+            p => p.Pos.X > -260f, 400,
+            out PointF ultraEnd, out _, out int ultraFrames);
+        Console.WriteLine($"      the chain carried her to x={ultraEnd.X:F0}"
+            + $" ({ultraEnd.X + 500f:F0}px) in {ultraFrames} frames");
+        Check("boosted landings chain into real distance",
+            ultraRan && ultraEnd.X + 500f > 240f);
+
+        Console.WriteLine();
         Console.WriteLine("  Diagonal dash grab");
         var cornerBox = new Solid { Id = new IntPtr(9), L = 120f, T = -140f, R = 260f, B = -52f };
         var cutter = OnFloor(76f, cornerBox);
