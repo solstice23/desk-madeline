@@ -1132,13 +1132,14 @@ namespace DeskMadeline
             if (WallAhead(ctx, p, dir, out float wallTop))
             {
                 float rise = p.Pos.Y - wallTop;      // how far above her feet it stands
+                bool headroom = HeadroomAbove(ctx, p, 30f);
                 if (rise <= 14f)
                 {
                     // A step: hop it -- barely, for a seam a pixel or two tall.
                     if (p.onGround && jumpHoldFrames == 0)
                     { p.BufferJump(); jumpHoldFrames = rise <= 4f ? 2 : 8; }
                 }
-                else if (rise <= 24f)
+                else if (rise <= 24f && headroom)
                 {
                     // Jump height: a full jump lands her on top, which is how a player
                     // crosses a low window in the way.
@@ -1146,9 +1147,12 @@ namespace DeskMadeline
                 }
                 else if (rise <= climbUpTo || climbUpTo == float.MaxValue)
                 {
-                    // Tall: jump first and grab the wall at the top of the arc -- the jump is
-                    // free height the stamina never pays for -- then climb.
-                    if (p.onGround && jumpHoldFrames == 0) { p.BufferJump(); jumpHoldFrames = 10; }
+                    // Tall: grab it and climb. The jump start is free height, but only
+                    // where there is air for the arc -- under another window's overhang
+                    // the jump gets cut and she bounces in place, while a grab from
+                    // standing hugs the wall and works beneath any ceiling.
+                    if (headroom && p.onGround && jumpHoldFrames == 0)
+                    { p.BufferJump(); jumpHoldFrames = 10; }
                     input.GrabHeld = true;
                     input.MoveY = -1;
                     if (scaleWithJumps) wallSide = dir;

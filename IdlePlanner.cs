@@ -91,6 +91,15 @@ namespace DeskMadeline
                             IdleMoves.Of(MoveKind.ClimbUp, dir: side, hold: climbFrames),
                             IdleMoves.Of(MoveKind.ClimbOverLip, dir: side),
                         });
+                    // And the humble version that works under an overhang: walk to the
+                    // face and grab it from standing, no jump arc to get cut.
+                    if (height <= 120f)
+                        candidates.Add(new List<Move>
+                        {
+                            IdleMoves.Of(MoveKind.WalkTo, x: face - side * 5f),
+                            IdleMoves.Of(MoveKind.ClimbUp, dir: side, hold: climbFrames + 20),
+                            IdleMoves.Of(MoveKind.ClimbOverLip, dir: side),
+                        });
                     // The wall ladder covers any height the tank cannot: climb while it
                     // lasts, then the free wall-jump cadence, ending by jumping the lip.
                     candidates.Add(new List<Move> { walk, jumpGrab,
