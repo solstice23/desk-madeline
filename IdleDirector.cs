@@ -129,6 +129,12 @@ namespace DeskMadeline
         int playAct;            // wall play: the act now running (0: pick one)
         int playActsLeft;       // wall play: acts before the dismount
         bool playJumpOff;       // wall play: leap off for the dismount, or just let go
+        bool playActFired;      // wall play: the current act's one-shot went off
+        bool playStarted;       // wall play: the first act has begun; the approach is over
+        int playBounce;         // wall play: 1 dropping for a wallbounce, 2 bouncing
+        float playGroundY;      // wall play: the ground the outing began from
+        Move playMove;          // wall play: the move the bounce interlude is driving
+        MoveRun playMoveRun;
         float restDuckAt = float.NaN;   // rest: when the crouch-bounce starts, if rolled
         float legHopX = float.NaN;
         float legDashX = float.NaN;
@@ -505,6 +511,8 @@ namespace DeskMadeline
             carryStage = 0;
             hangFor = 0f;
             playAct = 0;
+            playBounce = 0;
+            playStarted = false;
             wallSide = 0;
             legHopX = float.NaN;
             legDashX = float.NaN;
@@ -560,6 +568,7 @@ namespace DeskMadeline
                     activityBudget = 25f;
                     playActsLeft = 2 + rng.Next(3);
                     playJumpOff = rng.NextDouble() < .4;
+                    playGroundY = ctx.Player.Pos.Y;
                     // A window's wall or the screen's edge, whichever is about -- and a
                     // coin toss when both are.
                     bool windowFlavor = climbCandidate.Width > 0f &&
@@ -570,12 +579,25 @@ namespace DeskMadeline
                         RectangleF w = climbCandidate;
                         int side = ctx.Player.Pos.X < w.Left + w.Width / 2f ? 1 : -1;
                         float faceX = side > 0 ? w.Left : w.Right;
-                        target = new PointF(faceX + side * 2f, ctx.Player.Pos.Y);
-                        // Play just under the window's lip, a little way down its face.
+                        // The play climbs by grab from the ground; a routable window
+                        // whose walls hang past grab reach is a climb's business, not
+                        // a plaything's. Fall back to the screen edge if they do.
+                        bool graspable = false;
+                        foreach (Solid so in ctx.Solids)
+                            if (Math.Abs((side > 0 ? so.L : so.R) - faceX) < 3f &&
+                                so.B - so.T > 20f &&
+                                so.B >= ctx.Player.Pos.Y - 36f) graspable = true;
                         float wallY = w.Top + 26f + (float)rng.NextDouble() *
                             Math.Clamp(w.Height - 46f, 0f, 50f);
-                        targetRect = new RectangleF(faceX - 2f, wallY, 4f, 4f);
-                        break;
+                        // And the spot must be meaningfully above her: begun from a
+                        // summit, a play point at her own ankles is not a climb.
+                        if (graspable && wallY < ctx.Player.Pos.Y - 20f)
+                        {
+                            target = new PointF(faceX + side * 2f, ctx.Player.Pos.Y);
+                            targetRect = new RectangleF(faceX - 2f, wallY, 4f, 4f);
+                            break;
+                        }
+                        if (hangEdgeDir == 0) { Begin(Activity.Rest, ctx); return; }
                     }
                     // Aim a touch inside the wall so the walk keeps pressing at it, and pick
                     // a hanging point forty to eighty pixels up the side of the screen.
@@ -586,6 +608,10 @@ namespace DeskMadeline
                     // lid, where the jump cycle flickers against it.
                     float hangY = Math.Max(RoomAround(ctx).Top + 48f,
                         ctx.Player.Pos.Y - 40f - (float)rng.NextDouble() * 40f);
+                    // Begun near the ceiling, the clamp can land at or below her own
+                    // feet -- a play spot she would DESCEND to, which drained her at
+                    // the lid and started nothing. Let the pick move on instead.
+                    if (hangY > ctx.Player.Pos.Y - 20f) { Begin(Activity.Rest, ctx); return; }
                     targetRect = new RectangleF(edgeX - 2f, hangY, 4f, 4f);
                     break;
                 }
@@ -1213,6 +1239,34 @@ namespace DeskMadeline
                 if (p.onGround && phaseTime > 1.5f) Finish(ctx);
                 return;
             }
+            // The wallbounce interlude: she dropped off on purpose; when the ground
+            // takes her, the move library fires the bounce and carries her back up
+            // the wall, past where she hung.
+            if (playBounce == 1)
+            {
+                hangFor += dt;
+                if (p.onGround) { playBounce = 2; playMoveRun = default; }
+                else if (hangFor > 3f) playBounce = 0;      // never landed: let it go
+                return;
+            }
+            if (playBounce == 2)
+            {
+                if (playMoveRun.F > 0 && IdleMoves.Done(p, playMove, playMoveRun))
+                {
+                    playBounce = 0;
+                    playAct = 0;
+                    playActsLeft--;
+                    // The interlude went down on purpose; the watchdog must not read
+                    // the climb back as a stall.
+                    bestClimbY = float.MaxValue;
+                    stall = 0f;
+                    if (playActsLeft <= 0) { phase = Phase.Do; phaseTime = 0f; }
+                    return;
+                }
+                input = IdleMoves.Frame(p, playMove, ref playMoveRun);
+                Drain(dt, moving: true);
+                return;
+            }
             // On the wall at height -- strict to enter, a hand of slack to continue,
             // so a bob or a slide does not end the routine it belongs to.
             if (p.State == Player.StClimb &&
@@ -1222,7 +1276,29 @@ namespace DeskMadeline
                 // Not a still hang but a little routine: holds, bobs down and back,
                 // slides caught again -- until the acts run out or the arms do.
                 hangFor += dt;
-                if (playAct == 0) { playAct = 1 + rng.Next(3); hangFor = 0f; }
+                if (playAct == 0)
+                {
+                    hangFor = 0f;
+                    playActFired = false;
+                    playStarted = true;
+                    double r = rng.NextDouble();
+                    // The showpieces first: a wallbounce -- drop off, land, and rocket
+                    // back up past where she hung, in one of its timings -- where
+                    // dashing is allowed and the ground is near enough to come back
+                    // from; or a climb jump, tank permitting. Otherwise the quiet
+                    // three.
+                    if (r < .25 && !ctx.WindowsReactToDash &&
+                        playGroundY - targetRect.Top < 130f)
+                    {
+                        int[] bounceAts = { 15, 12, 18 };
+                        playMove = IdleMoves.Of(MoveKind.Wallbounce, dir: p.Facing,
+                            at: bounceAts[rng.Next(3)]);
+                        playBounce = 1;
+                        PetWindow.Log("idle: wall play bounce");
+                        return;
+                    }
+                    playAct = r < .5 && p.Stamina > 45f ? 4 : 1 + rng.Next(3);
+                }
                 bool actDone = false;
                 switch (playAct)
                 {
@@ -1237,13 +1313,29 @@ namespace DeskMadeline
                         input.MoveY = hangFor < .35f ? 1 : -1;
                         actDone = hangFor > .75f;
                         break;
+                    case 4:                                 // a climb jump up the wall
+                        input.GrabHeld = true;
+                        input.MoveX = p.Facing;
+                        if (!playActFired && p.Stamina > 40f)
+                        { p.BufferJump(); input.JumpPressed = true; playActFired = true; }
+                        if (playActFired && hangFor < .2f) input.JumpHeld = true;
+                        actDone = hangFor > .55f;
+                        break;
                     default:                                // let it slide, catch it
                         input.MoveX = p.Facing;
                         input.GrabHeld = hangFor > .2f;
                         actDone = hangFor > .5f;
                         break;
                 }
-                if (actDone) { playAct = 0; playActsLeft--; }
+                if (actDone)
+                {
+                    playAct = 0;
+                    playActsLeft--;
+                    // Slides and hops wander up and down on purpose; each finished act
+                    // hands the watchdog a fresh baseline.
+                    bestClimbY = float.MaxValue;
+                    stall = 0f;
+                }
                 if (playActsLeft <= 0 || p.Stamina < 15f)
                 {
                     if (playJumpOff)
@@ -1262,7 +1354,10 @@ namespace DeskMadeline
             Walk(ref input, dt, ctx, target.X, climbUpTo: float.MaxValue,
                 scaleWithJumps: true);
             Drain(dt, moving: true);
-            Watchdog(dt, ctx, wantTop: true);
+            // The watchdog guards the approach only: once the routine has begun, her
+            // wandering up and down the wall IS the activity, not a stall -- the act
+            // countdown and the activity budget bound it instead.
+            if (!playStarted) Watchdog(dt, ctx, wantTop: true);
         }
 
         Glider PickJelly(in IdleContext ctx)
@@ -1913,10 +2008,10 @@ namespace DeskMadeline
             {
                 var window = ctx.Windows[rng.Next(ctx.Windows.Count)];
                 RectangleF rect = window.Value;
-                // The one she just climbed mostly gives way -- three samples in four
-                // pass over it while the encore cools.
-                if (window.Key == lastClimbedWindow && clock < lastClimbedUntil &&
-                    rng.NextDouble() < .75) continue;
+                // The one she just climbed gives way entirely while the encore
+                // cools -- a soft skip barely bit on a desk with few candidates.
+                if (window.Key == lastClimbedWindow && clock < lastClimbedUntil)
+                    continue;
                 // No screen gate: a window on the neighbouring monitor is a candidate
                 // like any other, and the route decides -- monitors whose floors meet
                 // at a walkable seam connect, and where they do not, the route says no.
@@ -2014,6 +2109,8 @@ namespace DeskMadeline
             playAct = 0;
             playActsLeft = 2;
             playJumpOff = false;
+            playBounce = 0;
+            playGroundY = at.Y;
             phase = Phase.Go;
             phaseTime = 0f;
             bestDist = float.MaxValue;
