@@ -234,12 +234,28 @@ namespace DeskMadeline
             quiet = EngageAfter + 1f;
             sulk = 0f;
             Napping = false;
-            route = null;
+            Engaged = true;
             movePlan = null;
             replans = 0;
-            routeNullFor = 0f;
-            nextAuditionAt = 0f;
-            ForceActivityForCheck(forced, ctx.Player.Pos, rect);
+            PetWindow.Log("idle: pane override -> " + forced);
+            // The natural Begin does the real setup -- budgets, targets, flavors --
+            // so a forced outing behaves like a picked one. Candidates are refreshed
+            // first, the way Pick would have.
+            if (forced == Activity.ClimbWindow && rect.Width > 0f)
+                climbCandidate = rect;
+            else if (forced == Activity.ClimbWindow || forced == Activity.PlayWithWall)
+                climbCandidate = FindClimbable(ctx);
+            if (forced == Activity.PlayWithWall)
+            {
+                RectangleF room = RoomAround(ctx);
+                bool leftHere = Math.Abs(room.Left - ctx.EdgeLeft) < 2f;
+                bool rightHere = Math.Abs(room.Right - ctx.EdgeRight) < 2f;
+                hangEdgeDir = leftHere && rightHere ? (rng.Next(2) == 0 ? -1 : 1)
+                    : leftHere ? -1 : rightHere ? 1 : 0;
+            }
+            if (forced == Activity.Inspect && freshWindow.Width == 0f)
+                freshWindow = climbCandidate.Width > 0f ? climbCandidate : FindClimbable(ctx);
+            Begin(forced, ctx);
         }
 
         string ComposeDebug(in IdleContext ctx)
@@ -501,6 +517,8 @@ namespace DeskMadeline
             routeAt = 0;
             routeNullFor = 0f;
             nextAuditionAt = 0f;
+            movePlan = null;
+            replans = 0;
             leapCatchFrames = 0;
             Napping = false;
             PetWindow.Log("idle: " + next);

@@ -303,6 +303,30 @@ static class IdleChecks
             + $" (asked: -60), and is {(backDown ? "back on the ground" : "not down")}");
         Check("she climbs the screen edge, hangs, and drops back off", hung && backDown);
 
+        // The pane's force button takes the same road as a natural pick now: the
+        // override runs Begin with candidates refreshed, so a forced wall play
+        // actually finds a wall and plays with it.
+        var pressed = OnFloor(0f, edgeWall);
+        var pressDirector = new IdleDirector(new Random(7));
+        var pressCtx = Context(pressed);
+        pressCtx.EdgesClimbable = true;
+        pressCtx.EdgeLeft = -200f;
+        pressCtx.EdgeRight = 400f;
+        // The room must reach the edges it claims, as the real desk''s always does.
+        pressCtx.Monitors = new List<RectangleF> { new RectangleF(-200f, -500f, 600f, 540f) };
+        pressDirector.RequestOverride(IdleDirector.Activity.PlayWithWall, default);
+        bool pressPlayed = false, pressClimbed = false;
+        for (frames = 0; frames < (int)(25f / Dt); frames++)
+        {
+            Step(pressDirector, pressed, pressCtx);
+            if (pressDirector.Current == IdleDirector.Activity.PlayWithWall) pressPlayed = true;
+            if (pressed.State == Player.StClimb && pressed.Pos.Y < -20f) pressClimbed = true;
+            if (pressPlayed && pressClimbed && pressed.onGround && frames > 300) break;
+        }
+        Console.WriteLine($"      the pane button: began {pressPlayed},"
+            + $" got on a wall {pressClimbed}");
+        Check("a forced wall play finds a wall and plays with it", pressPlayed && pressClimbed);
+
         Console.WriteLine();
         Console.WriteLine("  Crossing the canyon between two monitors");
         var floorA = new Solid { Id = new IntPtr(1), L = -500f, T = 0f, R = 0f, B = 40f };
