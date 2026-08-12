@@ -172,6 +172,17 @@ namespace DeskMadeline
                 if (offR > b.L + 4f && offR < b.R - 4f &&
                     CorridorClear(ctx, offR, a.Y + 2f, b.Y - 2f, b.Solid, a.Solid))
                 { step = new NavStep { Seg = bi, Move = MoveDrop, X = a.R + 18f }; return true; }
+                // A running walk-off drifts well past twelve pixels; the far probes
+                // catch a neighbouring top whose near edge the close ones just miss --
+                // a window one step across and one step down. The rehearsal still
+                // judges the landing, so a probe that flatters never survives it.
+                float farL = a.L - 26f, farR = a.R + 26f;
+                if (farL > b.L + 4f && farL < b.R - 4f &&
+                    CorridorClear(ctx, farL, a.Y + 2f, b.Y - 2f, b.Solid, a.Solid))
+                { step = new NavStep { Seg = bi, Move = MoveDrop, X = a.L - 18f }; return true; }
+                if (farR > b.L + 4f && farR < b.R - 4f &&
+                    CorridorClear(ctx, farR, a.Y + 2f, b.Y - 2f, b.Solid, a.Solid))
+                { step = new NavStep { Seg = bi, Move = MoveDrop, X = a.R + 18f }; return true; }
             }
 
             if (dy > StepUp)
@@ -241,7 +252,13 @@ namespace DeskMadeline
                 // Or climb a nearby wall and leap across onto b's face.
                 foreach (Solid w in ctx.Solids)
                 {
-                    if (w.B < a.Y - GrabStart) continue;        // wall must start at her level
+                    // The assist wall must start within reach: a jump-grab's, or -- where
+                    // dashing is allowed -- the up-dash catch's, for borders that hang
+                    // the way a half-buried window's does. The plan grows a dash start.
+                    bool wallGrabbable = w.B >= a.Y - GrabStart;
+                    bool wallDashable = !ctx.WindowsReactToDash &&
+                        a.Y - w.B >= 25f && a.Y - w.B <= DashReach;
+                    if (!wallGrabbable && !wallDashable) continue;
                     if (w.T > sol.Bottom - 8f) continue;        // and rise past b's underside
                     // No stamina budget here anymore: the wall ladder climbs any height
                     // for free, and the kick's catch holds at a nearly dry tank long
@@ -267,8 +284,62 @@ namespace DeskMadeline
                         return true;
                     }
                 }
+                // A wall a dash-length away serves too: climb it, wall-jump off, and a
+                // horizontal dash carries the wide gap to a face that serves b -- the
+                // monitor's edge reaching a window mid-desk. Dash country only.
+                if (!ctx.WindowsReactToDash)
+                {
+                    foreach (Solid w in ctx.Solids)
+                    {
+                        if (w.B - w.T < 60f) continue;          // a real wall, not chrome
+                        bool wGrab = w.B >= a.Y - GrabStart;
+                        bool wDash = a.Y - w.B >= 25f && a.Y - w.B <= DashReach;
+                        if (!wGrab && !wDash) continue;
+                        foreach (Solid c in ctx.Solids)
+                        {
+                            if (Math.Abs(c.T - b.Y) > 4f) continue;
+                            if (c.B - c.T < 20f) continue;      // tall enough to catch
+                            float top = Math.Max(w.T, c.T) + 15f;
+                            float bottom = Math.Min(w.B, c.B) - 15f;
+                            if (bottom <= top) continue;
+                            float launch = Math.Clamp(c.T + 25f, top, bottom);
+                            if (w.L - c.R > ChimneyMax && w.L - c.R <= DashSpan &&
+                                c.R >= b.L - 4f && c.R <= b.R + 12f &&
+                                w.L - 5f > a.L - 10f && w.L - 5f < a.R + 10f &&
+                                FlightClear(ctx, c.R, w.L, launch))
+                            {
+                                step = new NavStep
+                                { Seg = bi, Move = MoveLeap, X = w.L + 2f, Dir = -1, Arg = launch };
+                                return true;
+                            }
+                            if (c.L - w.R > ChimneyMax && c.L - w.R <= DashSpan &&
+                                c.L >= b.L - 12f && c.L <= b.R + 4f &&
+                                w.R + 5f > a.L - 10f && w.R + 5f < a.R + 10f &&
+                                FlightClear(ctx, w.R, c.L, launch))
+                            {
+                                step = new NavStep
+                                { Seg = bi, Move = MoveLeap, X = w.R - 2f, Dir = 1, Arg = launch };
+                                return true;
+                            }
+                        }
+                    }
+                }
             }
             return false;
+        }
+
+        /// <summary>How far the wall-jump-and-dash traverse can carry her.</summary>
+        const float DashSpan = 130f;
+
+        /// <summary>The horizontal band a dash-across flies through is open air.</summary>
+        static bool FlightClear(in IdleContext ctx, float xFrom, float xTo, float y)
+        {
+            foreach (Solid s in ctx.Solids)
+            {
+                if (s.R <= xFrom + 1f || s.L >= xTo - 1f) continue;
+                if (s.T < y + 12f && s.B > y - 28f) return false;
+            }
+            return true;
         }
 
         /// <summary>Nothing rising past jump height stands between two step-neighbours.</summary>

@@ -27,6 +27,8 @@ namespace DeskMadeline
         Ultra,          // the chain: hop, down-diagonal air dash, land during the dash
                         // for the 1.2x boost, jump on contact, again -- accelerating
                         // bounding leaps down a long clear floor
+        DashAcross,     // off a wall and across a gap too wide to kick: wall-jump away,
+                        // a horizontal dash carries the rest, grab out for the far face
     }
 
     /// <summary>One move with its parameters. A plan is a list of these.</summary>
@@ -207,6 +209,19 @@ namespace DeskMadeline
                     if (!p.onGround) run.Acted = true;
                     break;
 
+                case MoveKind.DashAcross:
+                {
+                    if (f == 0) { p.BufferJump(); run.Acted = true; }
+                    input.MoveX = m.Dir;
+                    if (f <= 6) input.JumpHeld = true;
+                    if (run.Acted && !run.Acted2 && f >= m.At && p.Dashes > 0)
+                    { p.BufferDash(); run.Acted2 = true; }
+                    if (run.Acted2 && f < m.At + 8) input.AimX = m.Dir;
+                    if (run.Acted2 && f >= m.At + 4)
+                        input.GrabHeld = p.Stamina > 30f;
+                    break;
+                }
+
                 case MoveKind.Ultra:
                 {
                     input.MoveX = m.Dir;
@@ -344,6 +359,9 @@ namespace DeskMadeline
                     return (f > 24 && p.onGround) || f >= 140;
                 case MoveKind.Wavedash:
                     return (run.Acted2 && f > 30 && p.onGround) || f >= 80;
+                case MoveKind.DashAcross:
+                    return (run.Acted2 && p.State == Player.StClimb && f > m.At) ||
+                        (f > 20 && p.onGround) || f >= 90;
                 case MoveKind.Ultra:
                     // The chain ends when the speed does, or at the two-second cap.
                     return f >= 120 ||

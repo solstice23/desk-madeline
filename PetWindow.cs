@@ -1870,6 +1870,42 @@ namespace DeskMadeline
             return auto;
         }
 
+        /// <summary>
+        /// The debug pane's override: force an activity, optionally aimed at a window.
+        /// Called on the UI thread; the director locks internally.
+        /// </summary>
+        public void RequestIdleOverride(int activity, IntPtr window)
+        {
+            RectangleF rect = default;
+            if (window != IntPtr.Zero)
+            {
+                float s = GameScale;
+                foreach (PolledWindow w in polledWindows)
+                    if (w.Handle == window)
+                    {
+                        rect = new RectangleF(w.Rect.Left / s, w.Rect.Top / s,
+                            (w.Rect.Right - w.Rect.Left) / s,
+                            (w.Rect.Bottom - w.Rect.Top) / s);
+                        break;
+                    }
+            }
+            idleDirector.RequestOverride((IdleDirector.Activity)activity, rect);
+        }
+
+        /// <summary>The platform windows and their titles, for the pane's picker.</summary>
+        public List<KeyValuePair<IntPtr, string>> IdleDebugWindowChoices()
+        {
+            var list = new List<KeyValuePair<IntPtr, string>>();
+            foreach (PolledWindow w in polledWindows)
+            {
+                if (!w.IsPlatform) continue;
+                string title = Win32.GetWindowTextString(w.Handle);
+                if (title.Length > 44) title = title.Substring(0, 44);
+                list.Add(new KeyValuePair<IntPtr, string>(w.Handle, title));
+            }
+            return list;
+        }
+
         IdleContext BuildIdleContext()
         {
             float s = GameScale;

@@ -199,18 +199,45 @@ namespace DeskMadeline
 
                 case IdleNav.MoveLeap:
                 {
-                    // step.X is inside the assist wall; the chimney is on the leap side.
+                    // step.X is inside the assist wall; the crossing is on the leap side.
                     int leap = step.Dir;
                     float wallFace = step.X + leap * 2f;
-        
-                    candidates.Add(new List<Move>
-                    {
-                        IdleMoves.Of(MoveKind.WalkTo, x: wallFace + leap * 10f),
-                        IdleMoves.Of(MoveKind.RunningJump, dir: -leap, hold: 10, grab: true),
-                        IdleMoves.Of(MoveKind.WallLadder, dir: -leap, x: step.Arg),
-                        IdleMoves.Of(MoveKind.ChimneyKick, dir: leap),
-                        IdleMoves.Of(MoveKind.WallLadder, dir: leap, x: seg.Y - 6f),
-                    });
+                    // How far across decides the crossing: a kick clears a chimney, a
+                    // wider gap takes the mid-air dash.
+                    float across = leap > 0
+                        ? seg.Solid.Left - wallFace : wallFace - seg.Solid.Right;
+                    bool wide = across > 55f;
+                    if (wide && !dashOk) return null;
+                    Move crossing = wide
+                        ? IdleMoves.Of(MoveKind.DashAcross, dir: leap, at: 8)
+                        : IdleMoves.Of(MoveKind.ChimneyKick, dir: leap);
+                    // How the wall is boarded: one that hangs above the jump-grab takes
+                    // the dash catch instead.
+                    float wallB = float.MinValue;
+                    foreach (Solid so in ctx.Solids)
+                        if (so.L - 1f <= step.X && so.R + 1f >= step.X &&
+                            so.B - so.T > 20f && so.T < p.Pos.Y - 20f)
+                            wallB = Math.Max(wallB, Math.Min(so.B, p.Pos.Y));
+                    bool hangs = wallB < p.Pos.Y - 36f;
+                    if (!hangs)
+                        candidates.Add(new List<Move>
+                        {
+                            IdleMoves.Of(MoveKind.WalkTo, x: wallFace + leap * 10f),
+                            IdleMoves.Of(MoveKind.RunningJump, dir: -leap, hold: 10, grab: true),
+                            IdleMoves.Of(MoveKind.WallLadder, dir: -leap, x: step.Arg),
+                            crossing,
+                            IdleMoves.Of(MoveKind.WallLadder, dir: leap, x: seg.Y - 6f),
+                        });
+                    if (dashOk && hangs)
+                        candidates.Add(new List<Move>
+                        {
+                            IdleMoves.Of(MoveKind.WalkTo, x: wallFace + leap * 8f),
+                            IdleMoves.Of(MoveKind.Settle),
+                            IdleMoves.Of(MoveKind.UpDashGrab, dir: -leap, at: 14),
+                            IdleMoves.Of(MoveKind.WallLadder, dir: -leap, x: step.Arg),
+                            crossing,
+                            IdleMoves.Of(MoveKind.WallLadder, dir: leap, x: seg.Y - 6f),
+                        });
                     break;
                 }
             }

@@ -192,9 +192,43 @@ namespace DeskMadeline
 
         public PetInput Drive(float dt, in IdleContext ctx)
         {
+            ConsumeOverride(ctx);
             PetInput result = DriveCore(dt, ctx);
             if (DebugEnabled) DebugText = ComposeDebug(ctx);
             return result;
+        }
+
+        // A manual override from the debug pane: set on the UI thread, consumed here.
+        readonly object overrideLock = new object();
+        Activity? overrideActivity;
+        RectangleF overrideRect;
+
+        /// <summary>Force an activity now, from the pane. Thread-safe; next Drive obeys.</summary>
+        public void RequestOverride(Activity what, RectangleF rect)
+        {
+            lock (overrideLock) { overrideActivity = what; overrideRect = rect; }
+        }
+
+        void ConsumeOverride(in IdleContext ctx)
+        {
+            Activity forced;
+            RectangleF rect;
+            lock (overrideLock)
+            {
+                if (overrideActivity == null) return;
+                forced = overrideActivity.Value;
+                rect = overrideRect;
+                overrideActivity = null;
+            }
+            quiet = EngageAfter + 1f;
+            sulk = 0f;
+            Napping = false;
+            route = null;
+            movePlan = null;
+            replans = 0;
+            routeNullFor = 0f;
+            nextAuditionAt = 0f;
+            ForceActivityForCheck(forced, ctx.Player.Pos, rect);
         }
 
         string ComposeDebug(in IdleContext ctx)
@@ -272,15 +306,16 @@ namespace DeskMadeline
             var surveySegs = new List<NavSeg>();
             IdleNav.BuildSegs(ctx, surveySegs);
             int from = IdleNav.SegUnder(surveySegs, ctx.Player.Pos);
-            RectangleF room = RoomAround(ctx);
             var quietRng = new Random(11);
             foreach (var window in ctx.Windows)
             {
                 RectangleF rect = window.Value;
                 string verdict;
-                if (!room.IntersectsWith(rect)) verdict = "other screen";
-                else if (rect.Width < 24f) verdict = "too thin";
-                else if (ctx.Player.Pos.Y - rect.Top < 16f) verdict = "she is on it";
+                if (rect.Width < 24f) verdict = "too thin";
+                else if (Math.Abs(ctx.Player.Pos.Y - rect.Top) < 16f)
+                    verdict = ctx.Player.Pos.X > rect.Left - 8f &&
+                              ctx.Player.Pos.X < rect.Right + 8f
+                        ? "she is on it" : "hardly a climb";
                 else if (NearAPuffer(ctx, new PointF(rect.Left + rect.Width / 2f, rect.Top)))
                     verdict = "puffer near";
                 else if (RecentlyFailed(new PointF(rect.Left + rect.Width / 2f, rect.Top)))
@@ -720,7 +755,8 @@ namespace DeskMadeline
                 }
                 // And a long one may have a dash, on ground checked clear first --
                 // and half the dashes get their jump six frames later, which is a super.
-                if (!float.IsNaN(legDashX) && !ctx.WindowsAreKevin && ctx.Player.onGround &&
+                if (!float.IsNaN(legDashX) && !ctx.WindowsAreKevin &&
+                    !ctx.WindowsReactToDash && ctx.Player.onGround &&
                     Math.Abs(ctx.Player.Speed.X) > 60f &&
                     Math.Abs(ctx.Player.Pos.X - legDashX) < 6f)
                 {
@@ -1705,15 +1741,20 @@ namespace DeskMadeline
             IdleNav.BuildSegs(ctx, navSegs);
             int from = IdleNav.SegUnder(navSegs, ctx.Player.Pos);
             if (from < 0) return RectangleF.Empty;
-            RectangleF room = RoomAround(ctx);
             int noTop = 0, noRoute = 0;
             for (int attempt = 0; attempt < 8; attempt++)
             {
                 var window = ctx.Windows[rng.Next(ctx.Windows.Count)];
                 RectangleF rect = window.Value;
-                if (!room.IntersectsWith(rect)) continue;
+                // No screen gate: a window on the neighbouring monitor is a candidate
+                // like any other, and the route decides -- monitors whose floors meet
+                // at a walkable seam connect, and where they do not, the route says no.
                 if (rect.Width < 24f) continue;
-                if (ctx.Player.Pos.Y - rect.Top < 16f) continue;        // hardly a climb
+                // Hardly a climb when its top is within a step of her feet -- in either
+                // direction: standing on it, or beside something knee-high. A top well
+                // BELOW her perch is a real outing (descend, cross, climb), and the old
+                // height-order test wrongly rejected every window while she stood high.
+                if (Math.Abs(ctx.Player.Pos.Y - rect.Top) < 16f) continue;
                 if (NearAPuffer(ctx, new PointF(rect.Left + rect.Width / 2f, rect.Top))) continue;
                 if (RecentlyFailed(new PointF(rect.Left + rect.Width / 2f, rect.Top))) continue;
                 int to = -1;

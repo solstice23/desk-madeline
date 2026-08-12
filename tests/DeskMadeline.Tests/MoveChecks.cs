@@ -256,6 +256,103 @@ static class MoveChecks
         Check("a window climbable from both sides gets climbed from both", sawLeft && sawRight);
 
         Console.WriteLine();
+        Console.WriteLine("  A step across and a step down");
+        var highTop = new Solid { Id = new IntPtr(9), L = -80f, T = -132f, R = 6f, B = -131f };
+        var highWallL = new Solid { Id = new IntPtr(9), L = -80f, T = -131f, R = -79f, B = -20f };
+        var lowTop = new Solid { Id = new IntPtr(9), L = 19f, T = -100f, R = 300f, B = -98f };
+        var ledgeWalker = OnFloor(-30f, highTop, highWallL, lowTop);
+        ledgeWalker.Pos = new PointF(-30f, -132f);
+        for (int i = 0; i < 5; i++) ledgeWalker.Update(Dt, new PetInput());
+        var stepCtx = new IdleContext
+        {
+            Player = ledgeWalker,
+            Solids = ledgeWalker.Solids,
+            Monitors = new List<RectangleF> { new RectangleF(-400f, -500f, 800f, 540f) },
+            Cursor = new PointF(2000f, 2000f),
+            Gliders = new List<Glider>(),
+            Seekers = new List<Seeker>(),
+            Puffers = new List<Puffer>(),
+            Windows = new List<KeyValuePair<IntPtr, RectangleF>>(),
+        };
+        var stepSegs = new List<NavSeg>();
+        IdleNav.BuildSegs(stepCtx, stepSegs);
+        int stepFrom = -1, stepTo = -1;
+        for (int i = 0; i < stepSegs.Count; i++)
+        {
+            if (stepSegs[i].Y == -132f) stepFrom = i;
+            if (stepSegs[i].Y == -100f) stepTo = i;
+        }
+        var stepRoute = IdleNav.FindRoute(stepCtx, stepSegs, stepFrom, stepTo, new Random(3));
+        Console.WriteLine($"      13 across, 32 down: route"
+            + $" {(stepRoute == null ? "MISSING" : stepRoute.Count + " step(s)")}");
+        Check("a top one step across and one step down is a neighbour, not an island",
+            stepRoute != null);
+
+        Console.WriteLine();
+        Console.WriteLine("  The hanging assist wall");
+        var hangAssist = new Solid { Id = new IntPtr(9), L = 60f, T = -315f, R = 62f, B = -69f };
+        var besideTop = new Solid { Id = new IntPtr(9), L = 75f, T = -284f, R = 300f, B = -282f };
+        // The neighbour is a hollow window, so it has a border of its own -- which is
+        // what the dry-tank zigzag climbs once the boarding dash's stamina runs out.
+        var besideWall = new Solid { Id = new IntPtr(9), L = 75f, T = -282f, R = 77f, B = -100f };
+        var boarder = OnFloor(120f, hangAssist, besideTop, besideWall);
+        bool boarded = IdleMoves.Rehearse(boarder,
+            Plan(IdleMoves.Of(MoveKind.WalkTo, x: 70f),
+                 IdleMoves.Of(MoveKind.Settle),
+                 IdleMoves.Of(MoveKind.UpDashGrab, dir: -1, at: 14),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: -1, x: -290f),
+                 IdleMoves.Of(MoveKind.ChimneyKick, dir: 1),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: 1, x: -290f)),
+            p => p.onGround && Math.Abs(p.Pos.Y + 284f) <= 6f, 2600,
+            out PointF boardEnd, out _, out int boardFrames);
+        Console.WriteLine($"      dash-board the hanging border, kick across: ended"
+            + $" {boardEnd.X:F0},{boardEnd.Y:F0} in {boardFrames} frames");
+        Check("a hanging border is boarded by dash and leapt from", boarded);
+
+        Console.WriteLine();
+        Console.WriteLine("  The dash across");
+        var bigWall = new Solid { Id = new IntPtr(9), L = 200f, T = -350f, R = 600f, B = 0f };
+        var farTop = new Solid { Id = new IntPtr(9), L = -140f, T = -262f, R = 86f, B = -260f };
+        var farWall = new Solid { Id = new IntPtr(9), L = 84f, T = -260f, R = 86f, B = -95f };
+        var crosser2 = OnFloor(150f, bigWall, farTop, farWall);
+        bool spanned = IdleMoves.Rehearse(crosser2,
+            Plan(IdleMoves.Of(MoveKind.WalkTo, x: 190f),
+                 IdleMoves.Of(MoveKind.RunningJump, dir: 1, hold: 10, grab: true),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: 1, x: -235f),
+                 IdleMoves.Of(MoveKind.DashAcross, dir: -1, at: 8),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: -1, x: -268f)),
+            p => p.onGround && Math.Abs(p.Pos.Y + 262f) <= 6f, 2600,
+            out PointF crossEnd, out _, out int crossFrames);
+        Console.WriteLine($"      climb the big wall, dash the 114px gap: ended"
+            + $" {crossEnd.X:F0},{crossEnd.Y:F0} in {crossFrames} frames");
+        Check("the wall-jump dash carries a gap far past the kick", spanned);
+
+        var wideCtx = new IdleContext
+        {
+            Player = crosser2,
+            Solids = crosser2.Solids,
+            Monitors = new List<RectangleF> { new RectangleF(-400f, -500f, 1100f, 540f) },
+            Cursor = new PointF(2000f, 2000f),
+            Gliders = new List<Glider>(),
+            Seekers = new List<Seeker>(),
+            Puffers = new List<Puffer>(),
+            Windows = new List<KeyValuePair<IntPtr, RectangleF>>(),
+        };
+        var wideSegs = new List<NavSeg>();
+        IdleNav.BuildSegs(wideCtx, wideSegs);
+        int wideFrom = -1, wideTo = -1;
+        for (int i = 0; i < wideSegs.Count; i++)
+        {
+            if (wideSegs[i].Y == 0f && wideSegs[i].L <= 150f && wideSegs[i].R >= 150f)
+                wideFrom = i;
+            if (wideSegs[i].Y == -262f) wideTo = i;
+        }
+        var wideRoute = IdleNav.FindRoute(wideCtx, wideSegs, wideFrom, wideTo, new Random(2));
+        Console.WriteLine($"      the graph offers it: route"
+            + $" {(wideRoute == null ? "MISSING" : "found, kind " + wideRoute[0].Move)}");
+        Check("the graph sees the wall a dash-length away as a way up", wideRoute != null);
+
+        Console.WriteLine();
         Console.WriteLine("  Over the lip");
         var block = new Solid { Id = new IntPtr(9), L = 60f, T = -50f, R = 160f, B = 0f };
         var popper = OnFloor(20f, block);
