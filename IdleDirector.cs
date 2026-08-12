@@ -204,19 +204,117 @@ namespace DeskMadeline
                              : $"waiting -- quiet {quiet:F1}s of {EngageAfter:F0}s")
                 : $"{Current}  ({(Current == Activity.CarryJelly ? "stage " + carryStage : phase.ToString().ToLowerInvariant())})"
                   + $"  {activityTime:F1}s / {activityBudget:F0}s";
-            return doing + "\n"
-                + $"energy {energy:F2}   napping {(Napping ? "yes" : "no")}   stall {stall:F1}s\n"
-                + $"target {target.X:F0},{target.Y:F0}"
+            var sb = new System.Text.StringBuilder(1024);
+            sb.Append(doing).Append('\n');
+            sb.Append($"energy {energy:F2}   napping {(Napping ? "yes" : "no")}   stall {stall:F1}s\n");
+            sb.Append($"target {target.X:F0},{target.Y:F0}"
                 + $"   her {ctx.Player.Pos.X:F0},{ctx.Player.Pos.Y:F0}"
-                + $"   stamina {ctx.Player.Stamina:F0}\n"
-                + $"windows {ctx.Windows.Count}   climb pick {(climbCandidate.Width > 0f ? "yes" : "no")}"
-                + $"   fresh window {(freshAge < 30f ? freshAge.ToString("F0") + "s ago" : "no")}\n"
-                + $"cursor {ctx.Cursor.X:F0},{ctx.Cursor.Y:F0}"
-                + $"   still {cursorStillFor:F1}s   near her {cursorNearFor:F1}s\n"
-                + $"fullscreen fg {(ctx.ForegroundFullscreen ? "yes" : "no")}"
-                + $"   seekers dormant {(ctx.SeekersDormant ? "yes" : "no")}\n"
-                + $"kevin {(ctx.WindowsAreKevin ? "yes" : "no")}"
-                + $"   edges {(ctx.EdgesClimbable ? "climbable" : "wrapping")}";
+                + $"   stamina {ctx.Player.Stamina:F0}\n");
+            sb.Append($"cursor {ctx.Cursor.X:F0},{ctx.Cursor.Y:F0}"
+                + $"   still {cursorStillFor:F1}s   near her {cursorNearFor:F1}s\n");
+            sb.Append($"fullscreen fg {(ctx.ForegroundFullscreen ? "yes" : "no")}"
+                + $"   seekers dormant {(ctx.SeekersDormant ? "yes" : "no")}"
+                + $"   kevin {(ctx.WindowsAreKevin ? "yes" : "no")}"
+                + $"   edges {(ctx.EdgesClimbable ? "climbable" : "wrapping")}\n");
+
+            // The outing's machinery: the route as steps, the plan as moves, and what
+            // the planner last said no to.
+            if (route != null)
+            {
+                sb.Append($"route ({routeAt}/{route.Count}): ");
+                for (int i = 0; i < route.Count; i++)
+                {
+                    NavStep st = route[i];
+                    char k = st.Move switch
+                    { IdleNav.MoveWalk => 'W', IdleNav.MoveClimb => 'C',
+                      IdleNav.MoveDash => 'D', IdleNav.MoveDrop => 'V', _ => 'L' };
+                    string h = st.Seg < navSegs.Count
+                        ? navSegs[st.Seg].Y.ToString("F0") : "?";
+                    sb.Append(i == routeAt ? $"[{k}>{h}] " : $"{k}>{h} ");
+                }
+                sb.Append('\n');
+            }
+            if (movePlan != null)
+                sb.Append($"plan ({moveAt}/{movePlan.Count}): {Describe(movePlan)}"
+                    + $"   replans {replans}\n");
+            if (IdlePlanner.LastRefusal != null)
+                sb.Append($"last refusal: {IdlePlanner.LastRefusal}\n");
+            int scars = 0;
+            foreach ((PointF _, float until) in failedSpots) if (until > clock) scars++;
+            sb.Append($"walled legs {walledLegs}   failure notes {scars}"
+                + $"   fresh window {(freshAge < 30f ? freshAge.ToString("F0") + "s ago" : "no")}\n");
+
+            // Every window on the desk, judged by the climb scan's own filters --
+            // refreshed each second, titles and all, so "why not that one?" has its
+            // answer on screen.
+            if (clock - surveyAt > 1f || surveyAt == 0f)
+            {
+                surveyAt = clock;
+                climbSurvey = BuildClimbSurvey(ctx);
+            }
+            sb.Append(climbSurvey);
+            return sb.ToString();
+        }
+
+        float surveyAt;
+        string climbSurvey = "";
+
+        /// <summary>
+        /// Every window judged by FindClimbable's filters, in filter order, each line
+        /// naming the first filter that turned it away -- or "climbable". Uses its own
+        /// segs and a fixed-seed rng so the live route and the shared dice never feel
+        /// the survey happening.
+        /// </summary>
+        string BuildClimbSurvey(in IdleContext ctx)
+        {
+            var sb = new System.Text.StringBuilder(512);
+            sb.Append($"windows ({ctx.Windows.Count}):\n");
+            var surveySegs = new List<NavSeg>();
+            IdleNav.BuildSegs(ctx, surveySegs);
+            int from = IdleNav.SegUnder(surveySegs, ctx.Player.Pos);
+            RectangleF room = RoomAround(ctx);
+            var quietRng = new Random(11);
+            foreach (var window in ctx.Windows)
+            {
+                RectangleF rect = window.Value;
+                string verdict;
+                if (!room.IntersectsWith(rect)) verdict = "other screen";
+                else if (rect.Width < 24f) verdict = "too thin";
+                else if (ctx.Player.Pos.Y - rect.Top < 16f) verdict = "she is on it";
+                else if (NearAPuffer(ctx, new PointF(rect.Left + rect.Width / 2f, rect.Top)))
+                    verdict = "puffer near";
+                else if (RecentlyFailed(new PointF(rect.Left + rect.Width / 2f, rect.Top)))
+                    verdict = "recently failed";
+                else
+                {
+                    int to = -1;
+                    for (int i = 0; i < surveySegs.Count && to < 0; i++)
+                        if (Math.Abs(surveySegs[i].Y - rect.Top) <= 4f &&
+                            surveySegs[i].R > rect.Left && surveySegs[i].L < rect.Right) to = i;
+                    if (to < 0) verdict = "no standable top";
+                    else if (from < 0) verdict = "she is airborne";
+                    else if (IdleNav.FindRoute(ctx, surveySegs, from, to, quietRng) != null)
+                        verdict = "climbable";
+                    else
+                    {
+                        // Routes die for tellable reasons: when the only doors are dash
+                        // doors and the window rules forbid dashing, say that instead of
+                        // a bare shrug -- it is the difference between "impossible" and
+                        // "forbidden by the mode you chose".
+                        IdleContext freed = ctx;
+                        freed.WindowsReactToDash = false;
+                        verdict = ctx.WindowsReactToDash &&
+                            IdleNav.FindRoute(freed, surveySegs, from, to, quietRng) != null
+                            ? "no route without a dash"
+                            : "no route from here";
+                    }
+                }
+                string title = Win32.GetWindowTextString(window.Key);
+                if (title.Length > 22) title = title.Substring(0, 22);
+                sb.Append($" {rect.Left,5:F0},{rect.Top,4:F0} {rect.Width,4:F0}x{rect.Height,-4:F0}"
+                    + $" {verdict,-16} {title}\n");
+            }
+            return sb.ToString();
         }
 
         PetInput DriveCore(float dt, in IdleContext ctx)
@@ -911,7 +1009,9 @@ namespace DeskMadeline
                     {
                         PetWindow.Log($"idle: no plan survived for step kind {step.Move}"
                             + $" to y={seg.Y:F0} from"
-                            + $" {ctx.Player.Pos.X:F0},{ctx.Player.Pos.Y:F0}");
+                            + $" {ctx.Player.Pos.X:F0},{ctx.Player.Pos.Y:F0}"
+                            + (IdlePlanner.LastRefusal == null ? ""
+                                : $" ({IdlePlanner.LastRefusal})"));
                         // A stroll shrugs and tries another idea -- an elevated one for
                         // a while, then a flat one -- without noting anything: a cheap
                         // re-roll is not a verdict. Only committed outings record the

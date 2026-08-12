@@ -86,6 +86,16 @@ namespace DeskMadeline
             return sb.ToString();
         }
 
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+        public static string GetWindowTextString(IntPtr hwnd)
+        {
+            var sb = new StringBuilder(128);
+            GetWindowText(hwnd, sb, sb.Capacity);
+            return sb.ToString();
+        }
+
         /// <summary>Get the visible window rect (prefer DWM extended frame; drop invisible shadow borders).</summary>
         public static bool TryGetWindowRect(IntPtr hwnd, out RECT rect)
         {

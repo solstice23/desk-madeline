@@ -20,11 +20,11 @@ namespace DeskMadeline
         public IdleDebugWindow()
         {
             Text = Loc.T("Menu.AutonomyDebug");
-            FormBorderStyle = FormBorderStyle.FixedToolWindow;
+            FormBorderStyle = FormBorderStyle.SizableToolWindow;
             ShowInTaskbar = false;
             TopMost = true;
             StartPosition = FormStartPosition.Manual;
-            ClientSize = new Size(340, 170);
+            ClientSize = new Size(520, 420);
             Rectangle area = Screen.PrimaryScreen.WorkingArea;
             Location = new Point(area.Right - Width - 12, area.Top + 12);
             label = new Label

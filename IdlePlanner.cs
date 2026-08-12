@@ -15,6 +15,13 @@ namespace DeskMadeline
     internal static class IdlePlanner
     {
         /// <summary>
+        /// Why the last PlanStep returned null, for the diary: "no plan survived" hides
+        /// the difference between physics refusing and a rule refusing, and only one of
+        /// those is worth a bisect.
+        /// </summary>
+        internal static string LastRefusal;
+
+        /// <summary>
         /// Plan the given step from the player's current state. Returns null when no
         /// candidate survives rehearsal -- which is an answer, not a failure to answer.
         /// </summary>
@@ -150,7 +157,13 @@ namespace DeskMadeline
 
                 case IdleNav.MoveDash:
                 {
-                    if (!dashOk) return null;
+                    if (!dashOk)
+                    {
+                        LastRefusal = ctx.WindowsReactToDash
+                            ? "dashing is off by window rules"
+                            : "a puffer floats too near to dash";
+                        return null;
+                    }
                     int side = step.Dir;
                     float face = step.X + side * 8f;
                     // The same reach, several hands: dash timings and the diagonal are
@@ -208,7 +221,14 @@ namespace DeskMadeline
             foreach (List<Move> plan in candidates)
                 if (IdleMoves.Rehearse(ctx.Player, plan, Accept, 2600, out _, out _, out _))
                     survivors.Add(plan);
-            if (survivors.Count == 0) return null;
+            if (survivors.Count == 0)
+            {
+                LastRefusal = candidates.Count == 0
+                    ? "no candidate offered"
+                    : candidates.Count + " candidates rehearsed, none survived";
+                return null;
+            }
+            LastRefusal = null;
             return survivors[rng.Next(survivors.Count)];
         }
 
