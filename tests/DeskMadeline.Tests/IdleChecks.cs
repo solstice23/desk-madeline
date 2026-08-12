@@ -281,7 +281,7 @@ static class IdleChecks
         var edgeWall = new Solid { Id = new IntPtr(1), L = -260f, T = -2000f, R = -200f, B = 40f };
         var hanger = OnFloor(0f, edgeWall);
         var hangDirector = new IdleDirector(new Random(7));
-        hangDirector.ForceActivityForCheck(IdleDirector.Activity.HangOnEdge,
+        hangDirector.ForceActivityForCheck(IdleDirector.Activity.PlayWithWall,
             new PointF(-202f, 0f), new RectangleF(-202f, -60f, 4f, 4f));
         var hangCtx = Context(hanger);
         hangCtx.EdgesClimbable = true;

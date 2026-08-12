@@ -33,6 +33,9 @@ namespace DeskMadeline
             NavSeg seg = segs[step.Seg];
             bool dashOk = !ctx.WindowsReactToDash && !NearAPuffer(ctx, p.Pos, seg);
             bool flair = dashOk && rng.NextDouble() < .45;
+            // Whether this plan's summit ladder finishes with a climb jump over the
+            // lip -- when the tank allows -- or the quiet crawl. Rolled per plan.
+            int lip = rng.NextDouble() < .5 ? 1 : 0;
 
             // Arriving on an adjacent run at the same height counts: window chrome
             // splits one top into segments a pixel apart, and a lip-pop lands where it
@@ -133,7 +136,7 @@ namespace DeskMadeline
                     // The wall ladder covers any height the tank cannot: climb while it
                     // lasts, then the free wall-jump cadence, ending by jumping the lip.
                     candidates.Add(new List<Move> { walk, jumpGrab,
-                        IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f) });
+                        IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f, hold: lip) });
                     // And for faces that hang -- a floating window, or one whose lower
                     // half is buried behind the window she stands on -- the running grab
                     // flies under the wall, so the ladder starts itself with a vertical
@@ -141,7 +144,7 @@ namespace DeskMadeline
                     candidates.Add(new List<Move>
                     {
                         IdleMoves.Of(MoveKind.WalkTo, x: face - side * 5f),
-                        IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f),
+                        IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f, hold: lip),
                     });
                     // A facing wall along part of the climb invites kicking across it:
                     // the kick-styled ladders audition too, and the roll decides whether
@@ -150,12 +153,12 @@ namespace DeskMadeline
                     {
                         candidates.Add(new List<Move> { walk, jumpGrab,
                             IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f,
-                                grab: true) });
+                                hold: lip, grab: true) });
                         candidates.Add(new List<Move>
                         {
                             IdleMoves.Of(MoveKind.WalkTo, x: face - side * 5f),
                             IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f,
-                                grab: true),
+                                hold: lip, grab: true),
                         });
                     }
                     break;
@@ -180,14 +183,14 @@ namespace DeskMadeline
                             IdleMoves.Of(MoveKind.WalkTo, x: step.X),
                             IdleMoves.Of(MoveKind.Settle),
                             IdleMoves.Of(MoveKind.UpDashGrab, dir: side, at: at),
-                            IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f),
+                            IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f, hold: lip),
                         });
                     candidates.Add(new List<Move>
                     {
                         IdleMoves.Of(MoveKind.WalkTo, x: step.X - side * 14f),
                         IdleMoves.Of(MoveKind.Settle),
                         IdleMoves.Of(MoveKind.DiagDashGrab, dir: side, at: 12),
-                        IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f),
+                        IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f, hold: lip),
                     });
                     // The wallbounce is not mere flair here: it reaches thirty pixels
                     // past the up-dash, and half the desk''s hanging faces live in that
@@ -196,7 +199,7 @@ namespace DeskMadeline
                     {
                         IdleMoves.Of(MoveKind.WalkTo, x: face - side * 6f),
                         IdleMoves.Of(MoveKind.Wallbounce, dir: side, at: 15),
-                        IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f),
+                        IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f, hold: lip),
                     };
                     if (flair) candidates.Insert(0, bounce);
                     else candidates.Add(bounce);
@@ -214,9 +217,16 @@ namespace DeskMadeline
                         ? seg.Solid.Left - wallFace : wallFace - seg.Solid.Right;
                     bool wide = across > 55f;
                     if (wide && !dashOk) return null;
-                    Move crossing = wide
-                        ? IdleMoves.Of(MoveKind.DashAcross, dir: leap, at: 8)
-                        : IdleMoves.Of(MoveKind.ChimneyKick, dir: leap);
+                    // The wide crossing comes in two hands -- straight across, and the
+                    // up-diagonal that trades reach for height -- and each auditions.
+                    var crossings = new List<Move>();
+                    if (wide)
+                    {
+                        crossings.Add(IdleMoves.Of(MoveKind.DashAcross, dir: leap, at: 8));
+                        crossings.Add(IdleMoves.Of(MoveKind.DashAcross, dir: leap, at: 8,
+                            hold: -1));
+                    }
+                    else crossings.Add(IdleMoves.Of(MoveKind.ChimneyKick, dir: leap));
                     // How the wall is boarded: one that hangs above the jump-grab takes
                     // the dash catch instead.
                     float wallB = float.MinValue;
@@ -225,25 +235,28 @@ namespace DeskMadeline
                             so.B - so.T > 20f && so.T < p.Pos.Y - 20f)
                             wallB = Math.Max(wallB, Math.Min(so.B, p.Pos.Y));
                     bool hangs = wallB < p.Pos.Y - 36f;
-                    if (!hangs)
-                        candidates.Add(new List<Move>
-                        {
-                            IdleMoves.Of(MoveKind.WalkTo, x: wallFace + leap * 10f),
-                            IdleMoves.Of(MoveKind.RunningJump, dir: -leap, hold: 10, grab: true),
-                            IdleMoves.Of(MoveKind.WallLadder, dir: -leap, x: step.Arg),
-                            crossing,
-                            IdleMoves.Of(MoveKind.WallLadder, dir: leap, x: seg.Y - 6f),
-                        });
-                    if (dashOk && hangs)
-                        candidates.Add(new List<Move>
-                        {
-                            IdleMoves.Of(MoveKind.WalkTo, x: wallFace + leap * 8f),
-                            IdleMoves.Of(MoveKind.Settle),
-                            IdleMoves.Of(MoveKind.UpDashGrab, dir: -leap, at: 14),
-                            IdleMoves.Of(MoveKind.WallLadder, dir: -leap, x: step.Arg),
-                            crossing,
-                            IdleMoves.Of(MoveKind.WallLadder, dir: leap, x: seg.Y - 6f),
-                        });
+                    foreach (Move crossing in crossings)
+                    {
+                        if (!hangs)
+                            candidates.Add(new List<Move>
+                            {
+                                IdleMoves.Of(MoveKind.WalkTo, x: wallFace + leap * 10f),
+                                IdleMoves.Of(MoveKind.RunningJump, dir: -leap, hold: 10, grab: true),
+                                IdleMoves.Of(MoveKind.WallLadder, dir: -leap, x: step.Arg),
+                                crossing,
+                                IdleMoves.Of(MoveKind.WallLadder, dir: leap, x: seg.Y - 6f, hold: lip),
+                            });
+                        if (dashOk && hangs)
+                            candidates.Add(new List<Move>
+                            {
+                                IdleMoves.Of(MoveKind.WalkTo, x: wallFace + leap * 8f),
+                                IdleMoves.Of(MoveKind.Settle),
+                                IdleMoves.Of(MoveKind.UpDashGrab, dir: -leap, at: 14),
+                                IdleMoves.Of(MoveKind.WallLadder, dir: -leap, x: step.Arg),
+                                crossing,
+                                IdleMoves.Of(MoveKind.WallLadder, dir: leap, x: seg.Y - 6f, hold: lip),
+                            });
+                    }
                     break;
                 }
             }

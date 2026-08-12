@@ -4995,6 +4995,10 @@ namespace DeskMadeline
                 }
                 else idleDebugWindow?.Hide();
             };
+            // A developer's item: it appears only when the menu is opened with Shift
+            // held, so the everyday right-click stays a user's menu.
+            menu.Opening += (_, __) =>
+                autonomyDebugItem.Visible = (Control.ModifierKeys & Keys.Shift) == Keys.Shift;
             var resetItem = new ToolStripMenuItem(Loc.T("Menu.ResetPosition"), null, (_, __) => ResetPosition());
             var spawnGliderItem = new ToolStripMenuItem(Loc.T("Menu.SpawnJellyfish"), null, (_, __) =>
                 Interlocked.Increment(ref pendingGliderSpawns));

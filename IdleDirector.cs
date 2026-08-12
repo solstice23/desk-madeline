@@ -54,7 +54,7 @@ namespace DeskMadeline
     internal sealed class IdleDirector
     {
         public enum Activity
-        { Rest, Nap, Wander, ClimbWindow, WatchCursor, Inspect, CarryJelly, HangOnEdge }
+        { Rest, Nap, Wander, ClimbWindow, WatchCursor, Inspect, CarryJelly, PlayWithWall }
 
         /// <summary>How long the keys must be quiet before she takes over. A field for the checks.</summary>
         internal float EngageAfter = 5f;
@@ -126,6 +126,10 @@ namespace DeskMadeline
         bool pendingLeap;
         float hangFor;
         int hangEdgeDir;
+        int playAct;            // wall play: the act now running (0: pick one)
+        int playActsLeft;       // wall play: acts before the dismount
+        bool playJumpOff;       // wall play: leap off for the dismount, or just let go
+        float restDuckAt = float.NaN;   // rest: when the crouch-bounce starts, if rolled
         float legHopX = float.NaN;
         float legDashX = float.NaN;
         bool legDreamDive;
@@ -418,6 +422,16 @@ namespace DeskMadeline
             {
                 case Activity.Rest:
                     FaceCursorIfNear(ref input, ctx, dt);
+                    if (!float.IsNaN(restDuckAt) && ctx.Player.onGround &&
+                        activityTime >= restDuckAt)
+                    {
+                        // Duck, up, duck, up: a second of pure playfulness.
+                        float bounce = activityTime - restDuckAt;
+                        if (bounce < 1.1f)
+                            input.MoveY = bounce < .3f || (bounce >= .55f && bounce < .85f)
+                                ? 1 : 0;
+                        else restDuckAt = float.NaN;
+                    }
                     Drain(dt, moving: false, resting: true);
                     break;
 
@@ -446,8 +460,8 @@ namespace DeskMadeline
                     RunCarry(ref input, dt, ctx);
                     break;
 
-                case Activity.HangOnEdge:
-                    RunHang(ref input, dt, ctx);
+                case Activity.PlayWithWall:
+                    RunWallPlay(ref input, dt, ctx);
                     break;
             }
             return input;
@@ -474,6 +488,7 @@ namespace DeskMadeline
             stepFalls = 0;
             carryStage = 0;
             hangFor = 0f;
+            playAct = 0;
             wallSide = 0;
             legHopX = float.NaN;
             legDashX = float.NaN;
@@ -494,6 +509,11 @@ namespace DeskMadeline
             {
                 case Activity.Rest:
                     activityBudget = 1.5f + (float)rng.NextDouble() * 3f;
+                    // Sometimes a rest has a little crouch-bounce in it: duck, up,
+                    // duck, up -- rolled here so the whole rest stays deterministic.
+                    restDuckAt = activityBudget > 1.9f && rng.NextDouble() < .22
+                        ? .4f + (float)rng.NextDouble() * (activityBudget - 1.7f)
+                        : float.NaN;
                     break;
                 case Activity.Nap:
                     activityBudget = 45f + (float)rng.NextDouble() * 105f;
@@ -517,10 +537,28 @@ namespace DeskMadeline
                     activityBudget = 35f;
                     target = targetJelly == null ? ctx.Player.Pos : targetJelly.Pos;
                     break;
-                case Activity.HangOnEdge:
+                case Activity.PlayWithWall:
                 {
                     activityBudget = 25f;
-                    if (hangEdgeDir == 0) { Begin(Activity.Rest, ctx); return; }
+                    playActsLeft = 2 + rng.Next(3);
+                    playJumpOff = rng.NextDouble() < .4;
+                    // A window's wall or the screen's edge, whichever is about -- and a
+                    // coin toss when both are.
+                    bool windowFlavor = climbCandidate.Width > 0f &&
+                        (hangEdgeDir == 0 || rng.Next(2) == 0);
+                    if (!windowFlavor && hangEdgeDir == 0) { Begin(Activity.Rest, ctx); return; }
+                    if (windowFlavor)
+                    {
+                        RectangleF w = climbCandidate;
+                        int side = ctx.Player.Pos.X < w.Left + w.Width / 2f ? 1 : -1;
+                        float faceX = side > 0 ? w.Left : w.Right;
+                        target = new PointF(faceX + side * 2f, ctx.Player.Pos.Y);
+                        // Play just under the window's lip, a little way down its face.
+                        float wallY = w.Top + 26f + (float)rng.NextDouble() *
+                            Math.Clamp(w.Height - 46f, 0f, 50f);
+                        targetRect = new RectangleF(faceX - 2f, wallY, 4f, 4f);
+                        break;
+                    }
                     // Aim a touch inside the wall so the walk keeps pressing at it, and pick
                     // a hanging point forty to eighty pixels up the side of the screen.
                     float edgeX = hangEdgeDir > 0 ? ctx.EdgeRight : ctx.EdgeLeft;
@@ -568,7 +606,7 @@ namespace DeskMadeline
             // Remember where the idea failed, so the next pick goes somewhere else
             // instead of returning to the same cursed lip every twenty seconds.
             if (Current == Activity.ClimbWindow || Current == Activity.Inspect ||
-                Current == Activity.HangOnEdge || legElevated)
+                Current == Activity.PlayWithWall || legElevated)
                 NoteFailedSpot(target);
             // Say what was standing there, so a stuck spot can be diagnosed from the diary.
             int said = 0;
@@ -620,13 +658,15 @@ namespace DeskMadeline
                 bool rightHere = Math.Abs(room.Right - ctx.EdgeRight) < 2f;
                 hangEdgeDir = leftHere && rightHere ? (rng.Next(2) == 0 ? -1 : 1)
                     : leftHere ? -1 : rightHere ? 1 : 0;
-                // Once a minute at most: with no climbable window about it was the only
-                // vertical thing on offer, and she hung off the screen four times a minute.
-                if (hangEdgeDir != 0 && Since(Activity.HangOnEdge) > 60f &&
-                    !RecentlyFailed(new PointF(
-                        hangEdgeDir > 0 ? ctx.EdgeRight : ctx.EdgeLeft, ctx.Player.Pos.Y)))
-                    scores.Add((Activity.HangOnEdge, .35f + energy * .5f + Novelty(Activity.HangOnEdge)));
             }
+            // Any wall is for playing with -- a window's side as much as the screen's
+            // edge -- so the offer stands whenever either is about, on a cooldown.
+            if ((hangEdgeDir != 0 || climbCandidate.Width > 0f) &&
+                Since(Activity.PlayWithWall) > 45f &&
+                (hangEdgeDir == 0 || !RecentlyFailed(new PointF(
+                    hangEdgeDir > 0 ? ctx.EdgeRight : ctx.EdgeLeft, ctx.Player.Pos.Y))))
+                scores.Add((Activity.PlayWithWall,
+                    .45f + energy * .5f + Novelty(Activity.PlayWithWall)));
             targetJelly = PickJelly(ctx);
             if (targetJelly != null)
                 scores.Add((Activity.CarryJelly, .6f + Novelty(Activity.CarryJelly)));
@@ -1139,7 +1179,7 @@ namespace DeskMadeline
         /// and drop off. The edge walls are real solids the shell builds, so this is the
         /// same grab and climb as any wall.
         /// </summary>
-        void RunHang(ref PetInput input, float dt, in IdleContext ctx)
+        void RunWallPlay(ref PetInput input, float dt, in IdleContext ctx)
         {
             Player p = ctx.Player;
             if (phase == Phase.Telegraph)
@@ -1150,23 +1190,59 @@ namespace DeskMadeline
             }
             if (phase == Phase.Do)
             {
-                // Let go was the exit; a beat on the ground, then done.
+                // The dismount was the exit; a beat on the ground, then done.
                 Drain(dt, moving: false, resting: true);
                 if (p.onGround && phaseTime > 1.5f) Finish(ctx);
                 return;
             }
-            if (p.State == Player.StClimb && p.Pos.Y <= targetRect.Top)
+            // On the wall at height -- strict to enter, a hand of slack to continue,
+            // so a bob or a slide does not end the routine it belongs to.
+            if (p.State == Player.StClimb &&
+                (p.Pos.Y <= targetRect.Top ||
+                 (playAct != 0 && p.Pos.Y <= targetRect.Top + 34f)))
             {
-                // High enough: hold still and hang, until it has been a moment or the
-                // arms have had enough.
+                // Not a still hang but a little routine: holds, bobs down and back,
+                // slides caught again -- until the acts run out or the arms do.
                 hangFor += dt;
-                input.GrabHeld = true;
-                input.MoveX = p.Facing;
-                if (hangFor > 1.5f + (float)rng.NextDouble() * 2f || p.Stamina < 12f)
-                { phase = Phase.Do; phaseTime = 0f; }
+                if (playAct == 0) { playAct = 1 + rng.Next(3); hangFor = 0f; }
+                bool actDone = false;
+                switch (playAct)
+                {
+                    case 1:                                 // the classic hang
+                        input.GrabHeld = true;
+                        input.MoveX = p.Facing;
+                        actDone = hangFor > .8f + (float)rng.NextDouble() * .9f;
+                        break;
+                    case 2:                                 // bob down, climb back
+                        input.GrabHeld = true;
+                        input.MoveX = p.Facing;
+                        input.MoveY = hangFor < .35f ? 1 : -1;
+                        actDone = hangFor > .75f;
+                        break;
+                    default:                                // let it slide, catch it
+                        input.MoveX = p.Facing;
+                        input.GrabHeld = hangFor > .2f;
+                        actDone = hangFor > .5f;
+                        break;
+                }
+                if (actDone) { playAct = 0; playActsLeft--; }
+                if (playActsLeft <= 0 || p.Stamina < 15f)
+                {
+                    if (playJumpOff)
+                    {
+                        // The dismount with flair: push off the wall and leap away.
+                        input.GrabHeld = false;
+                        input.MoveX = -p.Facing;
+                        p.BufferJump();
+                        input.JumpPressed = true;
+                    }
+                    phase = Phase.Do;
+                    phaseTime = 0f;
+                }
                 return;
             }
-            Walk(ref input, dt, ctx, target.X, climbUpTo: float.MaxValue);
+            Walk(ref input, dt, ctx, target.X, climbUpTo: float.MaxValue,
+                scaleWithJumps: true);
             Drain(dt, moving: true);
             Watchdog(dt, ctx, wantTop: true);
         }
@@ -1917,6 +1993,9 @@ namespace DeskMadeline
             }
             activityTime = 0f;
             activityBudget = 999f;
+            playAct = 0;
+            playActsLeft = 2;
+            playJumpOff = false;
             phase = Phase.Go;
             phaseTime = 0f;
             bestDist = float.MaxValue;

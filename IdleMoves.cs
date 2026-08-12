@@ -51,6 +51,7 @@ namespace DeskMadeline
         public bool Acted2;     // the move's second one-shot fired
         public int Side;        // wall ladder: the wall she is working now, once a
                                 // kick has crossed her to the facing one (0: m.Dir)
+        public bool Acted3;     // wall ladder: the lip climb-jump was spent
     }
 
     /// <summary>
@@ -216,9 +217,21 @@ namespace DeskMadeline
                     if (f <= 6) input.JumpHeld = true;
                     if (run.Acted && !run.Acted2 && f >= m.At && p.Dashes > 0)
                     { p.BufferDash(); run.Acted2 = true; }
-                    if (run.Acted2 && f < m.At + 8) input.AimX = m.Dir;
-                    if (run.Acted2 && f >= m.At + 4)
-                        input.GrabHeld = p.Stamina > 30f;
+                    if (run.Acted2 && f < m.At + 8)
+                    {
+                        input.AimX = m.Dir;
+                        // Hold carries the vertical aim: an up-diagonal trades reach
+                        // across for height when the catch band sits above the launch.
+                        input.AimY = m.Hold;
+                        if (m.Hold != 0) input.MoveY = m.Hold;
+                    }
+                    // The grab comes out two frames after the dash -- clear of the
+                    // launch wall, well before any far wall a wide gap allows -- and at
+                    // whatever the tank still holds: this move runs after a ladder has
+                    // drained it, and a late or withheld grab is a slide down the very
+                    // face she crossed for.
+                    if (run.Acted2 && f >= m.At + 2)
+                        input.GrabHeld = p.Stamina > 5f;
                     break;
                 }
 
@@ -256,6 +269,12 @@ namespace DeskMadeline
                             input.GrabHeld = true;
                             input.MoveY = -1;
                             input.MoveX = run.Side == 0 ? m.Dir : run.Side;
+                            // The lip flourish (hold 1): near the stop with tank to
+                            // spare, one climb jump pops her over the top instead of
+                            // the quiet crawl. Costs 27.5, hence the margin.
+                            if (m.Hold == 1 && !run.Acted3 && p.Pos.Y <= m.X + 26f &&
+                                p.Stamina > 40f)
+                            { p.BufferJump(); run.MarkF = f; run.Acted3 = true; }
                         }
                         // else release: the airborne cadence below is free
                     }

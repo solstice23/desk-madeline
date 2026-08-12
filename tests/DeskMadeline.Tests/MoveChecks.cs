@@ -192,6 +192,17 @@ static class MoveChecks
         Check("the vertical hop catches a hanging face the running grab flies under",
             hung);
 
+        var lipBox = new Solid { Id = new IntPtr(9), L = 60f, T = -80f, R = 120f, B = 40f };
+        var flourisher = OnFloor(48f, lipBox);
+        bool lipJumped = IdleMoves.Rehearse(flourisher,
+            Plan(IdleMoves.Of(MoveKind.WalkTo, x: 52f),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: 1, x: -86f, hold: 1)),
+            p => p.onGround && Math.Abs(p.Pos.Y + 80f) <= 6f, 2600,
+            out PointF lipEnd, out _, out int lipFrames);
+        Console.WriteLine($"      the climb-jump finish: {lipJumped} at"
+            + $" {lipEnd.X:F0},{lipEnd.Y:F0} ({lipFrames}f)");
+        Check("the lip flourish still lands her on the top", lipJumped);
+
         Console.WriteLine();
         Console.WriteLine("  Chimney kicks in the ladder");
         var chimA = new Solid { Id = new IntPtr(9), L = 40f, T = -300f, R = 62f, B = 40f };
@@ -326,6 +337,24 @@ static class MoveChecks
         Console.WriteLine($"      climb the big wall, dash the 114px gap: ended"
             + $" {crossEnd.X:F0},{crossEnd.Y:F0} in {crossFrames} frames");
         Check("the wall-jump dash carries a gap far past the kick", spanned);
+
+        // The same crossing against a SHORT catch wall, with the tank already drained
+        // by the ladder: a late or withheld grab slides past the band and there is
+        // nothing below to save it. Only a timely catch survives this one.
+        var strictTop = new Solid { Id = new IntPtr(9), L = -140f, T = -262f, R = 86f, B = -260f };
+        var strictWall = new Solid { Id = new IntPtr(9), L = 84f, T = -260f, R = 86f, B = -200f };
+        var strictCatcher = OnFloor(150f, bigWall, strictTop, strictWall);
+        bool strictCaught = IdleMoves.Rehearse(strictCatcher,
+            Plan(IdleMoves.Of(MoveKind.WalkTo, x: 190f),
+                 IdleMoves.Of(MoveKind.RunningJump, dir: 1, hold: 10, grab: true),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: 1, x: -235f),
+                 IdleMoves.Of(MoveKind.DashAcross, dir: -1, at: 8),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: -1, x: -268f)),
+            p => p.onGround && Math.Abs(p.Pos.Y + 262f) <= 6f, 2600,
+            out PointF strictEnd, out _, out int strictFrames);
+        Console.WriteLine($"      a sixty-pixel catch band, drained tank: ended"
+            + $" {strictEnd.X:F0},{strictEnd.Y:F0} in {strictFrames} frames");
+        Check("the grab is out at contact even on a drained tank", strictCaught);
 
         var wideCtx = new IdleContext
         {
@@ -462,6 +491,31 @@ static class MoveChecks
             + $" via the screen edge {viaScreenEdge}");
         Check("both ways up the taller neighbour come up in the rolls",
             viaSteam && viaScreenEdge);
+        // The launch height for the crossing is rolled inside the shared band, not
+        // pinned: the same edge should offer different heights across seeds.
+        float loArg = float.MaxValue, hiArg = float.MinValue;
+        for (int seed = 0; seed < 24; seed++)
+        {
+            var ra = IdleNav.FindRoute(deskCtx, deskSegs, dFrom, dFp, new Random(seed));
+            if (ra == null || ra.Count == 0 || ra[0].Dir >= 0 || ra[0].X < 1100f) continue;
+            loArg = Math.Min(loArg, ra[0].Arg);
+            hiArg = Math.Max(hiArg, ra[0].Arg);
+        }
+        Console.WriteLine($"      launch heights rolled: {loArg:F0}..{hiArg:F0}");
+        Check("the crossing launches from anywhere in the band, not one height",
+            hiArg - loArg > 25f);
+        // And the band low end is performable, not just offered.
+        bool lowLaunch = IdleMoves.Rehearse(desk,
+            Plan(IdleMoves.Of(MoveKind.WalkTo, x: 1163f),
+                 IdleMoves.Of(MoveKind.RunningJump, dir: 1, hold: 10, grab: true),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: 1, x: 200f),
+                 IdleMoves.Of(MoveKind.DashAcross, dir: -1, at: 8),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: -1, x: 42f)),
+            pp => pp.onGround && pp.Pos.Y <= 54f && pp.Pos.Y >= 38f, 2600,
+            out PointF lowEnd, out _, out int lowFrames);
+        Console.WriteLine($"      from the band low end (200): {lowLaunch}"
+            + $" end {lowEnd.X:F0},{lowEnd.Y:F0} ({lowFrames}f)");
+        Check("a low launch crosses and climbs the rest on the far side", lowLaunch);
         // And the screen-edge plan itself, performed.
         bool viaEdge = IdleMoves.Rehearse(desk,
             Plan(IdleMoves.Of(MoveKind.WalkTo, x: 1163f),

@@ -63,7 +63,7 @@ namespace DeskMadeline
             foreach (IdleDirector.Activity a in new[]
             {
                 IdleDirector.Activity.Wander, IdleDirector.Activity.Inspect,
-                IdleDirector.Activity.HangOnEdge, IdleDirector.Activity.Nap,
+                IdleDirector.Activity.PlayWithWall, IdleDirector.Activity.Nap,
                 IdleDirector.Activity.Rest,
             })
             {

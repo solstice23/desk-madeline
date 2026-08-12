@@ -299,7 +299,10 @@ namespace DeskMadeline
                             float top = Math.Max(w.T, c.T) + 15f;
                             float bottom = Math.Min(w.B, c.B) - 15f;
                             if (bottom <= top) continue;
-                            float launch = Math.Clamp(c.T + 25f, top, bottom);
+                            // Any height in the shared band works -- the catch wall
+                            // spans all of it by construction -- so the launch is
+                            // rolled, and the same crossing flies differently twice.
+                            float launch = top + (float)rng.NextDouble() * (bottom - top);
                             if (w.L - c.R > ChimneyMax && w.L - c.R <= DashSpan &&
                                 c.R >= b.L - 4f && c.R <= b.R + 12f &&
                                 w.L - 5f > a.L - 10f && w.L - 5f < a.R + 10f &&
