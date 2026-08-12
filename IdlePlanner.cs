@@ -83,6 +83,12 @@ namespace DeskMadeline
                 case IdleNav.MoveDrop:
                 {
                     int dir = step.X > p.Pos.X ? 1 : -1;
+                    // The flourish first when the roll favours it: hop off the ledge,
+                    // dash down the diagonal, and land boosted on the top below -- the
+                    // ultra, in its natural habitat. The plain walk-off always auditions.
+                    if (flair)
+                        candidates.Add(new List<Move>
+                        { IdleMoves.Of(MoveKind.Ultra, dir: dir, grab: true) });
                     candidates.Add(new List<Move> { IdleMoves.Of(MoveKind.DropOff, dir: dir) });
                     break;
                 }

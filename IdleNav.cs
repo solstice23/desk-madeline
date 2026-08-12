@@ -249,7 +249,10 @@ namespace DeskMadeline
                 // dash doors serve the pairs no climb can, not the ones a climb can.
                 var pool = climbs.Count > 0 ? climbs : dashes;
                 if (pool.Count > 0) { step = pool[rng.Next(pool.Count)]; return true; }
-                // Or climb a nearby wall and leap across onto b's face.
+                // Or climb a nearby wall and leap across onto b's face. Leaps pool
+                // and roll like the faces do: two assist walls are two different
+                // ascents, and a shadowed one is a re-roll wasted.
+                var leaps = new List<NavStep>();
                 foreach (Solid w in ctx.Solids)
                 {
                     // The assist wall must start within reach: a jump-grab's, or -- where
@@ -269,20 +272,14 @@ namespace DeskMadeline
                     if (gapL >= ChimneyMin && gapL <= ChimneyMax &&
                         w.R + 5f > a.L - 10f && w.R + 5f < a.R + 10f &&
                         CorridorClear(ctx, w.R + 6f, sol.Bottom - 12f, a.Y - 1f, sol, wr))
-                    {
-                        step = new NavStep
-                        { Seg = bi, Move = MoveLeap, X = w.R - 2f, Dir = 1, Arg = sol.Bottom - 8f };
-                        return true;
-                    }
+                        leaps.Add(new NavStep
+                        { Seg = bi, Move = MoveLeap, X = w.R - 2f, Dir = 1, Arg = sol.Bottom - 8f });
                     float gapR = w.L - sol.Right;               // wall right of b's solid
                     if (gapR >= ChimneyMin && gapR <= ChimneyMax &&
                         w.L - 5f > a.L - 10f && w.L - 5f < a.R + 10f &&
                         CorridorClear(ctx, w.L - 6f, sol.Bottom - 12f, a.Y - 1f, sol, wr))
-                    {
-                        step = new NavStep
-                        { Seg = bi, Move = MoveLeap, X = w.L + 2f, Dir = -1, Arg = sol.Bottom - 8f };
-                        return true;
-                    }
+                        leaps.Add(new NavStep
+                        { Seg = bi, Move = MoveLeap, X = w.L + 2f, Dir = -1, Arg = sol.Bottom - 8f });
                 }
                 // A wall a dash-length away serves too: climb it, wall-jump off, and a
                 // horizontal dash carries the wide gap to a face that serves b -- the
@@ -307,23 +304,18 @@ namespace DeskMadeline
                                 c.R >= b.L - 4f && c.R <= b.R + 12f &&
                                 w.L - 5f > a.L - 10f && w.L - 5f < a.R + 10f &&
                                 FlightClear(ctx, c.R, w.L, launch))
-                            {
-                                step = new NavStep
-                                { Seg = bi, Move = MoveLeap, X = w.L + 2f, Dir = -1, Arg = launch };
-                                return true;
-                            }
+                                leaps.Add(new NavStep
+                                { Seg = bi, Move = MoveLeap, X = w.L + 2f, Dir = -1, Arg = launch });
                             if (c.L - w.R > ChimneyMax && c.L - w.R <= DashSpan &&
                                 c.L >= b.L - 12f && c.L <= b.R + 4f &&
                                 w.R + 5f > a.L - 10f && w.R + 5f < a.R + 10f &&
                                 FlightClear(ctx, w.R, c.L, launch))
-                            {
-                                step = new NavStep
-                                { Seg = bi, Move = MoveLeap, X = w.R - 2f, Dir = 1, Arg = launch };
-                                return true;
-                            }
+                                leaps.Add(new NavStep
+                                { Seg = bi, Move = MoveLeap, X = w.R - 2f, Dir = 1, Arg = launch });
                         }
                     }
                 }
+                if (leaps.Count > 0) { step = leaps[rng.Next(leaps.Count)]; return true; }
             }
             return false;
         }

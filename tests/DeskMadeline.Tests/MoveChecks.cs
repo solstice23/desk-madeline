@@ -389,6 +389,198 @@ static class MoveChecks
         Console.WriteLine($"      off the shelf to {dropEnd.X:F0},{dropEnd.Y:F0}");
         Check("she walks off the end and lands below", dropped);
 
+        Console.WriteLine();
+        Console.WriteLine("  The desk with two ways up (from a real probe)");
+        var dFpTop = new Solid { Id = new IntPtr(2), L = 775f, T = 48f, R = 1059f, B = 50f };
+        var dFpBot = new Solid { Id = new IntPtr(2), L = 775f, T = 227f, R = 1059f, B = 229f };
+        var dFpL = new Solid { Id = new IntPtr(2), L = 775f, T = 50f, R = 776f, B = 227f };
+        var dFpR = new Solid { Id = new IntPtr(2), L = 1057f, T = 50f, R = 1059f, B = 227f };
+        var dStTop = new Solid { Id = new IntPtr(3), L = 676f, T = 16f, R = 762f, B = 17f };
+        var dStBot = new Solid { Id = new IntPtr(3), L = 676f, T = 263f, R = 762f, B = 264f };
+        var dStL = new Solid { Id = new IntPtr(3), L = 676f, T = 17f, R = 677f, B = 263f };
+        var dStR = new Solid { Id = new IntPtr(3), L = 761f, T = 17f, R = 762f, B = 263f };
+        var dFloor = new Solid { Id = new IntPtr(1), L = 533f, T = 332f, R = 1173f, B = 732f };
+        var dEdgeR = new Solid { Id = new IntPtr(1), L = 1173f, T = -28f, R = 1573f, B = 332f };
+        var dEdgeT = new Solid { Id = new IntPtr(1), L = 533f, T = -428f, R = 1173f, B = -28f };
+        var desk = new Player
+        {
+            Solids = new List<Solid> { dFpTop, dFpBot, dFpL, dFpR, dStTop, dStBot, dStL,
+                dStR, dFloor, dEdgeR, dEdgeT },
+            MinX = -100000f,
+            MaxX = 100000f,
+            FreezeFramesEnabled = false,
+            Dashes = 1,
+            Facing = 1,
+            Pos = new PointF(900f, 332f)
+        };
+        for (int i = 0; i < 5; i++) desk.Update(Dt, new PetInput());
+        var deskCtx = new IdleContext
+        {
+            Player = desk,
+            Solids = desk.Solids,
+            Monitors = new List<RectangleF> { new RectangleF(533f, -28f, 640f, 360f) },
+            Cursor = new PointF(3000f, 3000f),
+            Gliders = new List<Glider>(),
+            Seekers = new List<Seeker>(),
+            Puffers = new List<Puffer>(),
+            Windows = new List<KeyValuePair<IntPtr, RectangleF>>(),
+        };
+        var deskSegs = new List<NavSeg>();
+        IdleNav.BuildSegs(deskCtx, deskSegs);
+        int dFrom = -1, dSteam = -1, dFp = -1;
+        for (int i = 0; i < deskSegs.Count; i++)
+        {
+            if (deskSegs[i].Y == 332f && deskSegs[i].L <= 900f && deskSegs[i].R >= 900f)
+                dFrom = i;
+            if (deskSegs[i].Y == 16f) dSteam = i;
+            if (deskSegs[i].Y == 48f) dFp = i;
+        }
+        Console.WriteLine($"      the hanging window, from both sides:");
+        bool stLeft = false, stRight = false;
+        for (int seed = 0; seed < 16; seed++)
+        {
+            var r1 = IdleNav.FindRoute(deskCtx, deskSegs, dFrom, dSteam, new Random(seed));
+            if (r1 == null || r1.Count == 0) continue;
+            var last = r1[r1.Count - 1];
+            if (last.Dir > 0) stLeft = true;
+            if (last.Dir < 0) stRight = true;
+        }
+        Console.WriteLine($"        16 rolls: left-side door {stLeft}, right-side door {stRight}");
+        Check("a hanging window is climbed from both its sides", stLeft && stRight);
+        // The taller neighbour has two ways up: the leap that boards the hanging
+        // window's border, and the screen edge a dash-length away. Both must come
+        // up in the rolls -- a shadowed route is variety lost and resilience lost.
+        bool viaSteam = false, viaScreenEdge = false;
+        for (int seed = 0; seed < 24; seed++)
+        {
+            var rr = IdleNav.FindRoute(deskCtx, deskSegs, dFrom, dFp, new Random(seed));
+            if (rr == null || rr.Count == 0) continue;
+            if (rr[0].Dir > 0 && rr[0].X < 900f) viaSteam = true;
+            if (rr[0].Dir < 0 && rr[0].X > 1100f) viaScreenEdge = true;
+        }
+        Console.WriteLine($"      the taller neighbour: via the hanging window {viaSteam},"
+            + $" via the screen edge {viaScreenEdge}");
+        Check("both ways up the taller neighbour come up in the rolls",
+            viaSteam && viaScreenEdge);
+        // And the screen-edge plan itself, performed.
+        bool viaEdge = IdleMoves.Rehearse(desk,
+            Plan(IdleMoves.Of(MoveKind.WalkTo, x: 1163f),
+                 IdleMoves.Of(MoveKind.RunningJump, dir: 1, hold: 10, grab: true),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: 1, x: 75f),
+                 IdleMoves.Of(MoveKind.DashAcross, dir: -1, at: 8),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: -1, x: 42f)),
+            pp => pp.onGround && pp.Pos.Y <= 54f && pp.Pos.Y >= 38f, 2600,
+            out PointF edgeEnd, out _, out int edgeFrames);
+        Console.WriteLine($"        via the screen edge, performed: {viaEdge}"
+            + $" end {edgeEnd.X:F0},{edgeEnd.Y:F0} ({edgeFrames}f)");
+        Check("the screen-edge route is performable end to end", viaEdge);
+
+        // The hop from the hanging window down onto the taller neighbour is ultra
+        // terrain: down the diagonal, landing mid-dash for the boost. The physics
+        // first, demanding a REAL boost -- then the planner, which must offer it.
+        var diver = new Player
+        {
+            Solids = desk.Solids,
+            MinX = -100000f,
+            MaxX = 100000f,
+            FreezeFramesEnabled = false,
+            Dashes = 1,
+            Facing = 1,
+            Pos = new PointF(700f, 16f)
+        };
+        for (int i = 0; i < 5; i++) diver.Update(Dt, new PetInput());
+        bool dove = IdleMoves.Rehearse(diver,
+            Plan(IdleMoves.Of(MoveKind.Ultra, dir: 1, grab: true)),
+            pp => pp.onGround && pp.Pos.Y <= 54f && pp.Pos.Y >= 38f &&
+                pp.WavedashCount >= 1, 400,
+            out PointF diveEnd, out _, out int diveFrames);
+        Console.WriteLine($"      the ultra off the ledge: {dove} end"
+            + $" {diveEnd.X:F0},{diveEnd.Y:F0} ({diveFrames}f)");
+        Check("the drop to the neighbour lands boosted -- a real ultra", dove);
+        int steamTopSeg = -1, fpSeg2 = -1;
+        for (int i = 0; i < deskSegs.Count; i++)
+        {
+            if (deskSegs[i].Y == 16f) steamTopSeg = i;
+            if (deskSegs[i].Y == 48f) fpSeg2 = i;
+        }
+        var dropRoute = IdleNav.FindRoute(deskCtx, deskSegs, steamTopSeg, fpSeg2, new Random(4));
+        int ultras = 0, drops = 0;
+        if (dropRoute != null && dropRoute.Count > 0)
+        {
+            var diverCtx = deskCtx;
+            diverCtx.Player = diver;
+            for (int seed = 0; seed < 24; seed++)
+            {
+                var dPlan = IdlePlanner.PlanStep(diverCtx, deskSegs, dropRoute[0], new Random(seed));
+                if (dPlan == null) continue;
+                if (dPlan[0].Kind == MoveKind.Ultra) ultras++;
+                else drops++;
+            }
+        }
+        Console.WriteLine($"      24 planner rolls on that drop: {ultras} ultras,"
+            + $" {drops} plain walk-offs");
+        Check("the planner rolls the ultra on the drop, sometimes", ultras > 0 && drops > 0);
+
+        Console.WriteLine();
+        Console.WriteLine("  Dream country");
+        var dreamBlock = new Solid
+        { Id = new IntPtr(9), L = 60f, T = -60f, R = 200f, B = 40f, Dream = true };
+        var dreamer = OnFloor(20f, dreamBlock);
+        dreamer.BufferDash();
+        bool through = false;
+        for (int i = 0; i < 150 && !through; i++)
+        {
+            var di = new PetInput { MoveX = 1, AimX = 1, DashPressed = dreamer.HasDashBuffer };
+            dreamer.Update(Dt, di);
+            if (dreamer.IsDead) break;
+            if (dreamer.Pos.X > 205f) through = true;
+        }
+        Console.WriteLine($"      dashed into the block at 60, now at"
+            + $" {dreamer.Pos.X:F0},{dreamer.Pos.Y:F0}, dead {dreamer.IsDead}");
+        Check("a dream block is a doorway: in one side, out the other, alive",
+            through && !dreamer.IsDead);
+
+        Console.WriteLine();
+        Console.WriteLine("  The encore cools");
+        var westBox = new Solid { Id = new IntPtr(10), L = -200f, T = -140f, R = -80f, B = -20f };
+        var eastBox = new Solid { Id = new IntPtr(11), L = 80f, T = -140f, R = 200f, B = -20f };
+        var chooser2 = OnFloor(0f, westBox, eastBox);
+        var repDirector = new IdleDirector(new Random(9));
+        var repCtx = new IdleContext
+        {
+            Player = chooser2,
+            Solids = chooser2.Solids,
+            Monitors = new List<RectangleF> { new RectangleF(-400f, -500f, 800f, 540f) },
+            Cursor = new PointF(2000f, 2000f),
+            Gliders = new List<Glider>(),
+            Seekers = new List<Seeker>(),
+            Puffers = new List<Puffer>(),
+            Windows = new List<KeyValuePair<IntPtr, RectangleF>>
+            {
+                new KeyValuePair<IntPtr, RectangleF>(new IntPtr(10), new RectangleF(-200f, -140f, 120f, 120f)),
+                new KeyValuePair<IntPtr, RectangleF>(new IntPtr(11), new RectangleF(80f, -140f, 120f, 120f)),
+            },
+        };
+        int west1 = 0, east1 = 0;
+        for (int i = 0; i < 30; i++)
+        {
+            var got = repDirector.ProbeClimbForCheck(repCtx);
+            if (got.Left == -200f) west1++;
+            else if (got.Left == 80f) east1++;
+        }
+        repDirector.NoteClimbedForCheck(new IntPtr(10));
+        int west2 = 0, east2 = 0;
+        for (int i = 0; i < 30; i++)
+        {
+            var got = repDirector.ProbeClimbForCheck(repCtx);
+            if (got.Left == -200f) west2++;
+            else if (got.Left == 80f) east2++;
+        }
+        Console.WriteLine($"      before the note: west {west1} east {east1};"
+            + $" after climbing west: west {west2} east {east2}");
+        Check("a just-climbed window mostly yields to the rest of the desk",
+            west2 <= west1 / 2 && east2 > east1);
+
         return failed;
     }
 }

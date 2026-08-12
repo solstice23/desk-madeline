@@ -128,6 +128,10 @@ namespace DeskMadeline
         int hangEdgeDir;
         float legHopX = float.NaN;
         float legDashX = float.NaN;
+        bool legDreamDive;
+        IntPtr climbCandidateWindow;
+        IntPtr lastClimbedWindow;
+        float lastClimbedUntil;
         int superHopIn;
         int shrugCount;
         bool legLedgeJump;
@@ -152,6 +156,9 @@ namespace DeskMadeline
                 ? ctx.Player.Pos.X + span * (.2f + (float)rng.NextDouble() * .3f)
                 : float.NaN;
             legLedgeJump = rng.NextDouble() < .7;
+            // In dream country, some legs would rather dive through a window than walk
+            // around it; the roll is cheap and the ghost audits the dive later.
+            legDreamDive = rng.NextDouble() < .4 && !ctx.WindowsAreKevin;
         }
 
         internal void ForceLegDashForCheck(float x) => legDashX = x;
@@ -316,6 +323,8 @@ namespace DeskMadeline
                     verdict = ctx.Player.Pos.X > rect.Left - 8f &&
                               ctx.Player.Pos.X < rect.Right + 8f
                         ? "she is on it" : "hardly a climb";
+                else if (window.Key == lastClimbedWindow && clock < lastClimbedUntil)
+                    verdict = "just climbed it";
                 else if (NearAPuffer(ctx, new PointF(rect.Left + rect.Width / 2f, rect.Top)))
                     verdict = "puffer near";
                 else if (RecentlyFailed(new PointF(rect.Left + rect.Width / 2f, rect.Top)))
@@ -535,6 +544,13 @@ namespace DeskMadeline
                 Napping = false;
                 wakeRequested = true;
             }
+            if (Current == Activity.ClimbWindow)
+            {
+                // An encore is dull: the window she just topped mostly yields to the
+                // rest of the desk for a couple of minutes.
+                lastClimbedWindow = climbCandidateWindow;
+                lastClimbedUntil = clock + 150f;
+            }
             if (Current != Activity.Rest)
             {
                 PetWindow.Log("idle: finished " + Current);
@@ -752,6 +768,20 @@ namespace DeskMadeline
                     legHopX = rng.NextDouble() < .4
                         ? ctx.Player.Pos.X + dir * (30f + (float)rng.NextDouble() * 60f)
                         : float.NaN;
+                }
+                // In dream country a window is not a wall but a doorway: now and then
+                // a leg dives straight through the block instead of climbing over it.
+                // A ghost takes the dive first -- an exit into another solid is death.
+                if (legDreamDive && ctx.Player.onGround && !ctx.WindowsAreKevin &&
+                    !ctx.WindowsReactToDash && Math.Abs(ctx.Player.Speed.X) > 60f &&
+                    DreamFaceAhead(ctx, ctx.Player, dir) &&
+                    DreamDiveSurvives(ctx, dir))
+                {
+                    legDreamDive = false;
+                    PetWindow.Log("idle: dream dive");
+                    ctx.Player.BufferDash();
+                    input.DashPressed = true;
+                    input.AimX = dir;
                 }
                 // And a long one may have a dash, on ground checked clear first --
                 // and half the dashes get their jump six frames later, which is a super.
@@ -1384,6 +1414,43 @@ namespace DeskMadeline
             };
         }
 
+        /// <summary>A dream block's face just ahead at her body height.</summary>
+        static bool DreamFaceAhead(in IdleContext ctx, Player p, int dir)
+        {
+            float edge = p.Pos.X + dir * 4f;
+            foreach (Solid s in ctx.Solids)
+            {
+                if (!s.Dream) continue;
+                float face = dir > 0 ? s.L : s.R;
+                float d = (face - edge) * dir;
+                if (d < 0f || d > 26f) continue;
+                if (s.T < p.Pos.Y - 2f && s.B > p.Pos.Y - 9f) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// A ghost takes the dive first: it dashes into the block and must come out the
+        /// far side alive and well past the entry. An exit into another solid, or none,
+        /// fails the audition and the leg walks on.
+        /// </summary>
+        static bool DreamDiveSurvives(in IdleContext ctx, int dir)
+        {
+            Player ghost = ctx.Player.CloneForSim();
+            ghost.BufferDash();
+            for (int i = 0; i < 150; i++)
+            {
+                var input = new PetInput
+                { MoveX = dir, AimX = dir, DashPressed = ghost.HasDashBuffer };
+                ghost.Update(1f / 60f, input);
+                if (ghost.IsDead) return false;
+                if (i > 12 && ghost.State != Player.StDash &&
+                    ghost.State != Player.StDreamDash)
+                    break;
+            }
+            return !ghost.IsDead && (ghost.Pos.X - ctx.Player.Pos.X) * dir > 20f;
+        }
+
         static bool WallAhead(in IdleContext ctx, Player p, int dir, out float top)
             => WallWithin(ctx, p, dir, 5f, 8f, out top);
 
@@ -1735,6 +1802,12 @@ namespace DeskMadeline
         /// </summary>
         internal RectangleF ProbeClimbForCheck(in IdleContext ctx) => FindClimbable(ctx);
 
+        internal void NoteClimbedForCheck(IntPtr window)
+        {
+            lastClimbedWindow = window;
+            lastClimbedUntil = clock + 150f;
+        }
+
         RectangleF FindClimbable(in IdleContext ctx)
         {
             if (ctx.Windows.Count == 0) return RectangleF.Empty;
@@ -1746,6 +1819,10 @@ namespace DeskMadeline
             {
                 var window = ctx.Windows[rng.Next(ctx.Windows.Count)];
                 RectangleF rect = window.Value;
+                // The one she just climbed mostly gives way -- three samples in four
+                // pass over it while the encore cools.
+                if (window.Key == lastClimbedWindow && clock < lastClimbedUntil &&
+                    rng.NextDouble() < .75) continue;
                 // No screen gate: a window on the neighbouring monitor is a candidate
                 // like any other, and the route decides -- monitors whose floors meet
                 // at a walkable seam connect, and where they do not, the route says no.
@@ -1763,6 +1840,7 @@ namespace DeskMadeline
                         navSegs[i].R > rect.Left && navSegs[i].L < rect.Right) to = i;
                 if (to < 0) { noTop++; continue; }
                 if (IdleNav.FindRoute(ctx, navSegs, from, to, rng) == null) { noRoute++; continue; }
+                climbCandidateWindow = window.Key;
                 return rect;
             }
             // The scan came up dry: say why, so the diary answers what a shrug cannot.

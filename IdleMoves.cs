@@ -224,6 +224,10 @@ namespace DeskMadeline
 
                 case MoveKind.Ultra:
                 {
+                    if (f == 0) run.Side = p.WavedashCount;
+                    // The single-shot variant (grab): one boosted landing, then brake
+                    // and stay -- the drop flourish, not the cross-country chain.
+                    if (m.Grab && p.WavedashCount > run.Side) break;
                     input.MoveX = m.Dir;
                     bool dashing = p.HasDashBuffer || p.State == Player.StDash;
                     if (dashing)
