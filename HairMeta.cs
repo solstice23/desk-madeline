@@ -370,6 +370,26 @@ namespace DeskMadeline
         public static bool TryGet(string frameId, out Meta meta)
         {
             if (frameId != null && Overrides.TryGetValue(frameId, out meta)) return true;
+            // A stumble is a run with the head dipped -- the game's own table says so,
+            // frame for frame. When someone hand-tuned runFast but never met
+            // runStumble, derive the stumble from THEIR run frames plus the game's dip,
+            // rather than mixing their convention with this file's: mixed sources read
+            // on screen as the hair leaping to the wrong side of her head for the
+            // length of the stumble after every hard landing.
+            if (frameId != null &&
+                frameId.StartsWith("runStumble", System.StringComparison.OrdinalIgnoreCase))
+            {
+                string n = frameId.Substring("runStumble".Length);
+                if (Overrides.TryGetValue("runFast" + n, out meta))
+                {
+                    float dip = n switch
+                    { "00" => 3f, "01" => 3f, "02" => 3f, "03" => 1f, "04" => 1f, _ => 0f };
+                    meta = new Meta(
+                        new System.Drawing.PointF(meta.Offset.X, meta.Offset.Y + dip),
+                        meta.Bangs);
+                    return true;
+                }
+            }
             if (frameId != null && Offsets.TryGetValue(frameId, out meta)) return true;
             if (frameId != null && Vanilla.TryGetValue(frameId, out meta)) return true;
             // Carry sheets use the same head poses as their non-carry counterparts.

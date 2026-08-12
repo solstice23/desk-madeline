@@ -635,6 +635,21 @@ static class MoveChecks
         Check("a just-climbed window mostly yields to the rest of the desk",
             west2 <= west1 / 2 && east2 > east1);
 
+        Console.WriteLine();
+        Console.WriteLine("  Hair sources do not mix mid-stumble");
+        string tweaks = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+            "deskmadeline_check_hair_tweaks.txt");
+        System.IO.File.WriteAllText(tweaks, "runFast00 1.0 -2.0 0\n");
+        HairMeta.LoadOverrides(tweaks);
+        bool gotStumble = HairMeta.TryGet("runStumble00", out var stumbleMeta);
+        HairMeta.LoadOverrides(tweaks + ".absent");   // clear overrides for later checks
+        System.IO.File.Delete(tweaks);
+        Console.WriteLine($"      tuned runFast00 (1,-2) begets runStumble00"
+            + $" ({stumbleMeta.Offset.X},{stumbleMeta.Offset.Y}) bangs {stumbleMeta.Bangs}");
+        Check("a hand-tuned run lends the stumble its convention, dip included",
+            gotStumble && stumbleMeta.Offset.X == 1.0f && stumbleMeta.Offset.Y == 1.0f &&
+            stumbleMeta.Bangs == 0);
+
         return failed;
     }
 }
