@@ -103,7 +103,7 @@ namespace DeskMadeline
         /// maneuvers in order, or null when the terrain truly offers no way.
         /// </summary>
         public static List<NavStep> FindRoute(in IdleContext ctx, List<NavSeg> segs,
-            int from, int to)
+            int from, int to, Random rng)
         {
             if (from < 0 || to < 0) return null;
             if (from == to) return new List<NavStep>();
@@ -120,7 +120,7 @@ namespace DeskMadeline
                 for (int next = 0; next < segs.Count; next++)
                 {
                     if (cameFrom[next] >= 0 || next == cur) continue;
-                    if (!TryEdge(ctx, segs, cur, next, out NavStep step)) continue;
+                    if (!TryEdge(ctx, segs, cur, next, rng, out NavStep step)) continue;
                     cameFrom[next] = cur;
                     cameBy[next] = step;
                     if (next == to)
@@ -138,7 +138,7 @@ namespace DeskMadeline
 
         /// <summary>Whether one of her moves connects segment a to segment b, and which.</summary>
         static bool TryEdge(in IdleContext ctx, List<NavSeg> segs, int ai, int bi,
-            out NavStep step)
+            Random rng, out NavStep step)
         {
             NavSeg a = segs[ai], b = segs[bi];
             step = default;
@@ -177,6 +177,8 @@ namespace DeskMadeline
             if (dy > StepUp)
             {
                 RectangleF sol = b.Solid;
+                var climbs = new List<NavStep>();
+                var dashes = new List<NavStep>();
                 // Climb a face that reaches down to her, or up-dash to one hanging higher.
                 // A face is ANY solid whose top ends at b's level with the lip opening onto
                 // b -- a hollow window's side border serves its top border exactly like a
@@ -218,20 +220,24 @@ namespace DeskMadeline
                         if (!CorridorClear(ctx, spot, b.Y - 4f, a.Y - 1f, fr, b.Solid)) continue;
                         if (f.B > a.Y - GrabStart)
                         {
-                            step = new NavStep
-                            { Seg = bi, Move = MoveClimb, X = face + side * 2f, Dir = side };
-                            return true;
+                            climbs.Add(new NavStep
+                            { Seg = bi, Move = MoveClimb, X = face + side * 2f, Dir = side });
+                            continue;
                         }
                         // A dash catch needs a face tall enough to actually catch: the
                         // two-pixel side of a top border is a lip to jump-grab, not a wall.
                         if (!ctx.WindowsReactToDash && f.B - f.T >= 20f &&
                             a.Y - f.B >= 25f && a.Y - f.B <= DashReach)
-                        {
-                            step = new NavStep { Seg = bi, Move = MoveDash, X = spot, Dir = side };
-                            return true;
-                        }
+                            dashes.Add(new NavStep
+                            { Seg = bi, Move = MoveDash, X = spot, Dir = side });
                     }
                 }
+                // Every valid face is a door, and which door is today's is the roll's
+                // to say -- first-match made the same window always climb the same side.
+                // A face she can climb directly outranks one she must dash for: the
+                // dash doors serve the pairs no climb can, not the ones a climb can.
+                var pool = climbs.Count > 0 ? climbs : dashes;
+                if (pool.Count > 0) { step = pool[rng.Next(pool.Count)]; return true; }
                 // Or climb a nearby wall and leap across onto b's face.
                 foreach (Solid w in ctx.Solids)
                 {

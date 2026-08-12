@@ -121,6 +121,30 @@ namespace DeskMadeline
                     // lasts, then the free wall-jump cadence, ending by jumping the lip.
                     candidates.Add(new List<Move> { walk, jumpGrab,
                         IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f) });
+                    // And for faces that hang -- a floating window, or one whose lower
+                    // half is buried behind the window she stands on -- the running grab
+                    // flies under the wall, so the ladder starts itself with a vertical
+                    // hop from just beside the column.
+                    candidates.Add(new List<Move>
+                    {
+                        IdleMoves.Of(MoveKind.WalkTo, x: face - side * 5f),
+                        IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f),
+                    });
+                    // A facing wall along part of the climb invites kicking across it:
+                    // the kick-styled ladders audition too, and the roll decides whether
+                    // today's ascent is neutral hops or wall jumps.
+                    if (PartialWallBeside(ctx, face, -side, seg.Y, p.Pos.Y))
+                    {
+                        candidates.Add(new List<Move> { walk, jumpGrab,
+                            IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f,
+                                grab: true) });
+                        candidates.Add(new List<Move>
+                        {
+                            IdleMoves.Of(MoveKind.WalkTo, x: face - side * 5f),
+                            IdleMoves.Of(MoveKind.WallLadder, dir: side, x: seg.Y - 6f,
+                                grab: true),
+                        });
+                    }
                     break;
                 }
 
@@ -217,6 +241,20 @@ namespace DeskMadeline
                 if (s.R <= l || s.L >= r) continue;
                 if (s.T > topY + 20f || s.B < bottomY - 20f) continue;
                 return true;
+            }
+            return false;
+        }
+
+        /// <summary>A second wall within kick reach along at least part of the climb.</summary>
+        static bool PartialWallBeside(in IdleContext ctx, float face, int dir,
+            float topY, float bottomY)
+        {
+            float l = Math.Min(face + dir * 12f, face + dir * 50f);
+            float r = Math.Max(face + dir * 12f, face + dir * 50f);
+            foreach (Solid s in ctx.Solids)
+            {
+                if (s.R <= l || s.L >= r) continue;
+                if (Math.Min(s.B, bottomY) - Math.Max(s.T, topY) >= 40f) return true;
             }
             return false;
         }

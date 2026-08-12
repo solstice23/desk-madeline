@@ -645,7 +645,7 @@ namespace DeskMadeline
                     IdleNav.BuildSegs(ctx, navSegs);
                     int from = IdleNav.SegUnder(navSegs, ctx.Player.Pos);
                     int to = IdleNav.SegAt(navSegs, target);
-                    route = IdleNav.FindRoute(ctx, navSegs, from, to);
+                    route = IdleNav.FindRoute(ctx, navSegs, from, to, rng);
                     routeAt = 0;
                     if (route == null)
                     {
@@ -662,7 +662,8 @@ namespace DeskMadeline
                         if (routeNullFor > .5f) Abandon(ctx);
                         return;
                     }
-                    routeNullFor = 0f;
+                    // routeNullFor is NOT cleared here: it is the audition clock too,
+                    // and a re-rolled route must not hand a failing door fresh time.
                 }
                 if (route != null && routeAt < route.Count)
                 {
@@ -901,6 +902,11 @@ namespace DeskMadeline
                 {
                     routeNullFor += dt;
                     nextAuditionAt = routeNullFor + .2f;
+                    // The route rolled one door among possibly several; a door whose
+                    // plans cannot be performed from here should not be the outing's
+                    // death. Drop the route so the next grounded frame re-rolls it --
+                    // a different door comes up before the give-up lands.
+                    route = null;
                     if (routeNullFor > .6f)
                     {
                         PetWindow.Log($"idle: no plan survived for step kind {step.Move}"
@@ -1615,7 +1621,7 @@ namespace DeskMadeline
                     if (Math.Abs(navSegs[i].Y - rect.Top) <= 4f &&
                         navSegs[i].R > rect.Left && navSegs[i].L < rect.Right) to = i;
                 if (to < 0) { noTop++; continue; }
-                if (IdleNav.FindRoute(ctx, navSegs, from, to) == null) { noRoute++; continue; }
+                if (IdleNav.FindRoute(ctx, navSegs, from, to, rng) == null) { noRoute++; continue; }
                 return rect;
             }
             // The scan came up dry: say why, so the diary answers what a shrug cannot.

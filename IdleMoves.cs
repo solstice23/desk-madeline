@@ -47,6 +47,8 @@ namespace DeskMadeline
         public int MarkF;       // the frame the first one-shot fired on
         public bool Acted;      // the move's first one-shot fired
         public bool Acted2;     // the move's second one-shot fired
+        public int Side;        // wall ladder: the wall she is working now, once a
+                                // kick has crossed her to the facing one (0: m.Dir)
     }
 
     /// <summary>
@@ -229,27 +231,66 @@ namespace DeskMadeline
                     if (p.State == Player.StClimb)
                     {
                         run.Acted = true;                       // has held the wall at least once
+                        run.Acted2 = false;
                         if (p.Stamina >= 30f)
                         {
                             input.GrabHeld = true;
                             input.MoveY = -1;
-                            input.MoveX = m.Dir;
+                            input.MoveX = run.Side == 0 ? m.Dir : run.Side;
                         }
                         // else release: the airborne cadence below is free
                     }
                     else if (!p.onGround)
                     {
-                        if (p.Speed.Y >= -10f && f - run.MarkF > 4 && NearWall(p, m.Dir, 5f))
-                        { p.BufferJump(); run.MarkF = f; }
-                        input.MoveX = f - run.MarkF < 2 ? 0 : m.Dir;
-                        input.GrabHeld = p.Stamina > 35f;
-                        if (f - run.MarkF <= 12) input.JumpHeld = true;
+                        if (run.Acted2)
+                        {
+                            // The hanging catch: a face whose bottom stops above her
+                            // standing head. Rise straight -- pressing in during the
+                            // rise drifts her under the face or bonks its underside --
+                            // and press in at the apex, where the grab engages.
+                            input.MoveX = p.Speed.Y >= -20f ? m.Dir : 0;
+                            input.GrabHeld = true;
+                            if (f - run.MarkF <= 12) input.JumpHeld = true;
+                        }
+                        else
+                        {
+                            int lad = run.Side == 0 ? m.Dir : run.Side;
+                            if (p.Speed.Y >= -10f && f - run.MarkF > 4 && NearWall(p, lad, 5f))
+                            {
+                                p.BufferJump(); run.MarkF = f;
+                                // The kick: cross to the facing wall instead of
+                                // regaining this one -- always when it crowds the
+                                // neutral's arc, by the plan's style when merely near.
+                                if (NearWall(p, -lad, 14f) ||
+                                    (m.Grab && NearWall(p, -lad, 44f)))
+                                { run.Side = -lad; lad = -lad; }
+                            }
+                            input.MoveX = f - run.MarkF < 2 ? 0 : lad;
+                            input.GrabHeld = p.Stamina > 35f;
+                            if (f - run.MarkF <= 12) input.JumpHeld = true;
+                        }
+                    }
+                    else if (!NearWall(p, m.Dir, 10f) && HangingFaceAhead(p, m.Dir))
+                    {
+                        // Grounded under a hanging face: the sideways self-start would
+                        // walk her beneath it and out the other side. Stand still and
+                        // hop vertically instead; the airborne half does the catching.
+                        input.MoveX = 0;
+                        if (f - run.MarkF > 14)
+                        { p.BufferJump(); run.MarkF = f; run.Acted2 = true; }
+                        if (run.Acted2 && f - run.MarkF <= 10)
+                        {
+                            input.JumpHeld = true;
+                            input.GrabHeld = true;
+                        }
                     }
                     else
                     {
                         // Grounded beside the wall: the ladder starts itself -- jump with
                         // the grab out, and retry each cycle until a catch lands.
                         input.MoveX = m.Dir;
+                        run.Acted2 = false;
+                        run.Side = 0;
                         if (f - run.MarkF > 10 && NearWall(p, m.Dir, 10f))
                         { p.BufferJump(); run.MarkF = f; }
                         if (f - run.MarkF <= 10)
@@ -312,17 +353,22 @@ namespace DeskMadeline
                 case MoveKind.Settle:
                     return (p.onGround && Math.Abs(p.Speed.X) < 15f) || f >= 40;
                 case MoveKind.WallLadder:
+                {
                     // Done gripped at the asked height, or airborne there when the wall
                     // demonstrably continues above -- a mid-wall stop before a kick -- or
                     // landed: near a lip the cadence keeps jumping until a jump carries
                     // her over and she stands on the top. High-but-airborne at a lip is
                     // never done; that is a fall about to happen. And grounded with no
                     // wall in reach is not a ladder at all: fail fast, do not wander off.
+                    // A chimney kick may have crossed her to the facing wall; the ladder
+                    // she is on now is the one that gets judged.
+                    int lad = run.Side == 0 ? m.Dir : run.Side;
                     return (p.Pos.Y <= m.X &&
                             (p.State == Player.StClimb ||
-                             (!p.onGround && WallSpansAbove(p, m.Dir, m.X)))) ||
+                             (!p.onGround && WallSpansAbove(p, lad, m.X)))) ||
                         (run.Acted && f > 20 && p.onGround) ||
-                        (f > 60 && p.onGround && !NearWall(p, m.Dir, 12f)) || f >= 900;
+                        (f > 60 && p.onGround && !NearWall(p, lad, 12f)) || f >= 900;
+                }
             }
             return true;
         }
@@ -372,6 +418,25 @@ namespace DeskMadeline
             {
                 if (s.R <= l || s.L >= r) continue;
                 if (s.T <= stopY - 25f && s.B >= stopY) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// A face on that side whose bottom hangs above her standing head yet within a
+        /// vertical hop's grab reach: the walls of windows that float, or whose lower
+        /// reaches another window covers.
+        /// </summary>
+        static bool HangingFaceAhead(Player p, int dir)
+        {
+            float edge = p.Pos.X + dir * 4f;
+            foreach (Solid s in p.Solids)
+            {
+                float face = dir > 0 ? s.L : s.R;
+                if (Math.Abs(face - edge) > 8f) continue;
+                if (s.B < p.Pos.Y - 34f || s.B > p.Pos.Y - 11f) continue;
+                if (s.T > s.B - 20f) continue;      // a sliver is not a wall to climb
+                return true;
             }
             return false;
         }

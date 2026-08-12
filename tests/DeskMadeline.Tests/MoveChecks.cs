@@ -179,6 +179,82 @@ static class MoveChecks
             + $" {rungEnd.X:F0},{rungEnd.Y:F0} in {rungFrames} frames");
         Check("climb while the tank lasts, wall-jump the rest, land over the lip", laddered);
 
+        var hangTop = new Solid { Id = new IntPtr(9), L = 60f, T = -274f, R = 147f, B = -273f };
+        var hangWall = new Solid { Id = new IntPtr(9), L = 146f, T = -272f, R = 147f, B = -27f };
+        var hanger = OnFloor(203f, hangTop, hangWall);
+        bool hung = IdleMoves.Rehearse(hanger,
+            Plan(IdleMoves.Of(MoveKind.WalkTo, x: 152f),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: -1, x: -280f)),
+            p => p.onGround && Math.Abs(p.Pos.Y + 274f) <= 6f, 2600,
+            out PointF hangEnd, out _, out int hangFrames);
+        Console.WriteLine($"      a face hanging 27px overhead: ended"
+            + $" {hangEnd.X:F0},{hangEnd.Y:F0} in {hangFrames} frames");
+        Check("the vertical hop catches a hanging face the running grab flies under",
+            hung);
+
+        Console.WriteLine();
+        Console.WriteLine("  Chimney kicks in the ladder");
+        var chimA = new Solid { Id = new IntPtr(9), L = 40f, T = -300f, R = 62f, B = 40f };
+        var chimB = new Solid { Id = new IntPtr(9), L = 102f, T = -300f, R = 124f, B = 40f };
+        var crosser = OnFloor(82f, chimA, chimB);
+        bool roomy = IdleMoves.Rehearse(crosser,
+            Plan(IdleMoves.Of(MoveKind.WalkTo, x: 94f),
+                 IdleMoves.Of(MoveKind.RunningJump, dir: 1, hold: 10, grab: true),
+                 IdleMoves.Of(MoveKind.WallLadder, dir: 1, x: -294f, grab: true)),
+            p => p.onGround && Math.Abs(p.Pos.Y + 300f) <= 6f, 2600,
+            out PointF roomyEnd, out _, out int roomyFrames);
+        Console.WriteLine($"      a forty-pixel chimney, kick style: ended"
+            + $" {roomyEnd.X:F0},{roomyEnd.Y:F0} in {roomyFrames} frames");
+        Check("the kick-styled ladder crosses a roomy chimney to the top", roomy);
+
+        var chimC = new Solid { Id = new IntPtr(9), L = 40f, T = -300f, R = 62f, B = 40f };
+        var chimD = new Solid { Id = new IntPtr(9), L = 76f, T = -300f, R = 98f, B = 40f };
+        var wedged = OnFloor(69f, chimC, chimD);
+        bool cramped = IdleMoves.Rehearse(wedged,
+            Plan(IdleMoves.Of(MoveKind.WallLadder, dir: 1, x: -294f)),
+            p => p.onGround && Math.Abs(p.Pos.Y + 300f) <= 6f, 2600,
+            out PointF crampEnd, out _, out int crampFrames);
+        Console.WriteLine($"      a fourteen-pixel chimney, plain ladder: ended"
+            + $" {crampEnd.X:F0},{crampEnd.Y:F0} in {crampFrames} frames");
+        Check("a chimney too tight for the neutral forces kicks even unstyled", cramped);
+
+        Console.WriteLine();
+        Console.WriteLine("  Both doors");
+        var doorBox = new Solid { Id = new IntPtr(9), L = -60f, T = -140f, R = 60f, B = -20f };
+        var chooser = OnFloor(150f, doorBox);
+        var doorCtx = new IdleContext
+        {
+            Player = chooser,
+            Solids = chooser.Solids,
+            Monitors = new List<RectangleF> { new RectangleF(-400f, -500f, 800f, 540f) },
+            Cursor = new PointF(2000f, 2000f),
+            Gliders = new List<Glider>(),
+            Seekers = new List<Seeker>(),
+            Puffers = new List<Puffer>(),
+            Windows = new List<KeyValuePair<IntPtr, RectangleF>>(),
+        };
+        var doorSegs = new List<NavSeg>();
+        IdleNav.BuildSegs(doorCtx, doorSegs);
+        int doorFrom = -1, doorTo = -1;
+        for (int i = 0; i < doorSegs.Count; i++)
+        {
+            if (doorSegs[i].Y == 0f && doorSegs[i].L <= 150f && doorSegs[i].R >= 150f)
+                doorFrom = i;
+            if (doorSegs[i].Y == -140f) doorTo = i;
+        }
+        bool sawLeft = false, sawRight = false;
+        for (int seed = 0; seed < 12; seed++)
+        {
+            var doorRoute = IdleNav.FindRoute(doorCtx, doorSegs, doorFrom, doorTo,
+                new Random(seed));
+            if (doorRoute == null || doorRoute.Count == 0) continue;
+            if (doorRoute[0].Dir > 0) sawLeft = true;
+            if (doorRoute[0].Dir < 0) sawRight = true;
+        }
+        Console.WriteLine($"      twelve rolls over a floater: left face {sawLeft},"
+            + $" right face {sawRight}");
+        Check("a window climbable from both sides gets climbed from both", sawLeft && sawRight);
+
         Console.WriteLine();
         Console.WriteLine("  Over the lip");
         var block = new Solid { Id = new IntPtr(9), L = 60f, T = -50f, R = 160f, B = 0f };
