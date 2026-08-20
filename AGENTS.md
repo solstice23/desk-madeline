@@ -162,3 +162,17 @@ parts in afterwards, one user report at a time.
   will look broken, so verify against the queue, and use the opt-in bank check
   (`SFXCHECK=1`) when an event path itself is in question.
 
+## Commit messages
+
+Name the change, plainly. A subject is lowercase, leads with the verb where a verb fits,
+and says what the commit does in the fewest words that stay specific: `port celeste's super
+dashing variant`, `update strings`. No conventional-commit prefixes, no ticket numbers, no
+trailing period.
+
+- Much of the existing log is figurative — `up is the point`, `a lip with a border standing
+  on it is not a lip`. That register is history, not the house style; do not imitate it.
+- A body carries only what the subject cannot: which reference method the port came from,
+  why a constant is that number, what was deliberately left out and why. When there is none
+  of that, the subject is the whole message.
+- Say what changed, not how it went. "fix", "improve" and "properly" carry no information,
+  and neither does a subject that praises the work it describes.
