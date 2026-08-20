@@ -1,6 +1,7 @@
 bin/
 obj/
 .vs/
+.idea/
 *.user
 pet_debug.log
 settings.txt
