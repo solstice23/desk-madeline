@@ -26,6 +26,7 @@ static class Program
         failed += WaterChecks.Run();     // swimming, when the windows are water
         failed += SoundChecks.Run();      // super and hyper, at the timings people play them
         failed += DreamHyperChecks.Run(); // the dream hyper, and the crouch that decides it
+        failed += SuperDashChecks.Run();  // the Super Dashing variant, and the plain dash beside it
         failed += TheoChecks.Run();       // how the Theo crystal breaks
         failed += EntityDreamChecks.Run();// crystal, jelly and seeker dropped inside a block
         failed += InputChecks.Run();     // bindings: three keys on an action, and what a press is

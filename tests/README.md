@@ -24,6 +24,7 @@ adding an assertion, and what these need is a fixed timestep and vanilla's const
 | `AtlasChecks.cs` | Sprites read out of an installed Celeste match the dumped originals pixel for pixel, and every id the animations ask for resolves (skipped without an install) |
 | `EntityDreamChecks.cs` | A crystal, jelly or seeker dropped inside a dream block is held there, while a window border still lets it go |
 | `TheoChecks.cs` | How the Theo crystal breaks: the death sound, the forest-green burst, and being gone once it finishes |
+| `SuperDashChecks.cs` | The Super Dashing variant: the 0.3s dash and the 0.15s it adds to the dash attack, steering the dash at 240 deg/s until the aim is within 8 degrees, an aim behind her moving nothing, a collision ending the steering, and spending a second dash without leaving the state -- each beside the plain dash it must not touch |
 | `DreamHyperChecks.cs` | The dream hyper, and the crouch on the way in that decides whether it lands as a hyper or a super |
 | `BumperChecks.cs` | The pinball bumper: the launch it throws her into, the six tenths it then sits out, its reach, and everything else going straight through it |
 | `PufferChecks.cs` | The pufferfish: bounced off the top, set off from below, the Theo crystal its blast throws, and its swim back to where it was left |

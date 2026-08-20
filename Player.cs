@@ -88,6 +88,9 @@ namespace DeskMadeline
         const float EndDashSpeed = 160f;
         const float EndDashUpMult = 0.75f;
         const float DashTime = 0.15f;
+        const float SuperDashTime = 0.3f;          // Super Dashing: the dash runs twice as long
+        const float SuperDashAttackBonus = 0.15f;  // and its dash-attack window with it
+        const float DashCurveRate = 4.1887903f;    // 240 deg/s, the rate the dash turns at
         const float DashCooldown = 0.2f;
         const float DashRefillCooldown = 0.1f;
         const float DashAttackTime = 0.3f;
@@ -147,6 +150,8 @@ namespace DeskMadeline
         public float Stamina = ClimbMaxStamina;
         public bool InfiniteStamina;
         public bool Invincible;
+        /// <summary>Assists.SuperDashing: the variant menu's "Super Dashing".</summary>
+        public bool SuperDashing;
         public bool FreezeFramesEnabled = true;
         public bool RespawnReversalEnabled;
         public bool ElytraEnabled;
@@ -464,6 +469,38 @@ namespace DeskMadeline
             return length > .00001f ? new PointF(x / length, y / length) : new PointF(fallbackX, fallbackY);
         }
 
+        // Calc.Angle / AngleToVector / AngleDiff / AngleApproach / RotateTowards, which
+        // the curving dash of Super Dashing goes through.
+        static float Angle(PointF p) => (float)Math.Atan2(p.Y, p.X);
+        static PointF AngleToVector(float radians, float length)
+            => new PointF((float)Math.Cos(radians) * length, (float)Math.Sin(radians) * length);
+        static float AngleDiff(float a, float b)
+        {
+            float d = b - a;
+            while (d > Math.PI) d -= (float)Math.PI * 2f;
+            while (d <= -Math.PI) d += (float)Math.PI * 2f;
+            return d;
+        }
+        static float AngleApproach(float value, float target, float maxMove)
+        {
+            float diff = AngleDiff(value, target);
+            if (Math.Abs(diff) < maxMove) return target;
+            return value + Math.Max(-maxMove, Math.Min(maxMove, diff));
+        }
+        static PointF RotateTowards(PointF vec, float targetRadians, float maxMoveRadians)
+            => AngleToVector(AngleApproach(Angle(vec), targetRadians, maxMoveRadians),
+                             (float)Math.Sqrt(vec.X * vec.X + vec.Y * vec.Y));
+
+        /// <summary>Player.CorrectDashPrecision: a hair off an axis counts as on it.</summary>
+        static PointF CorrectDashPrecision(PointF dir)
+        {
+            if (dir.X != 0f && Math.Abs(dir.X) < 0.001f)
+                return new PointF(0f, Math.Sign(dir.Y));
+            if (dir.Y != 0f && Math.Abs(dir.Y) < 0.001f)
+                return new PointF(Math.Sign(dir.X), 0f);
+            return dir;
+        }
+
         // Timers
         float jumpGraceTimer;
         float varJumpTimer;
@@ -501,6 +538,9 @@ namespace DeskMadeline
             return new PointF(aimX / len, aimY / len);
         }
         bool dashAimPending;
+        // Player.canCurveDash: a dash may be steered until it hits something. Only
+        // Super Dashing reads it, but it is cleared wherever vanilla clears it.
+        bool canCurveDash;
         bool calledDashEvents;  // vanilla Player.calledDashEvents: dash sfx fires once per dash
         bool autoJump;          // auto-jump hold after dash ends (vanilla AutoJump: half-gravity / var-jump treated as jump held)
         int lastClimbMove;
@@ -817,6 +857,10 @@ namespace DeskMadeline
                 {
                     counter.X = 0;
                     if (!notifyCollision) return;
+                    // Player.OnCollideH's first line, before any of its branches. It sits
+                    // out here because the port hoists the dash-collide question out of
+                    // OnCollideH, and vanilla clears the flag ahead of that too.
+                    canCurveDash = false;
                     // Held, not hit.  Nothing struck anything, so there is no impact to report:
                     // reporting one every frame she is in there would repeat its sound and its
                     // squash, and she is meant to simply sit in the block.  A dash reports as
@@ -873,6 +917,7 @@ namespace DeskMadeline
                 {
                     counter.Y = 0;
                     if (!notifyCollision) return;
+                    canCurveDash = false;   // Player.OnCollideV's first line; see MoveHExact.
                     // The vertical half has no NormalOverride mapping in vanilla; a vertical
                     // rebound is straight up, with no sideways part.
                     if (DashAttacking && Math.Sign(DashDir.Y) == sign && hit != IntPtr.Zero &&
@@ -1147,6 +1192,7 @@ namespace DeskMadeline
             dashRefillCooldownTimer = 0;
             dashAttackTimer = 0;
             dashTime = 0;
+            canCurveDash = false;
             jumpGraceTimer = 0;
             varJumpTimer = 0;
             varJumpSpeed = 0;
@@ -1507,6 +1553,7 @@ namespace DeskMadeline
                 }
 
                 int stateBeforeUpdate = State;
+                int dashCountBeforeUpdate = DashSequenceCount;
                 switch (State)
                 {
                     case StNormal:
@@ -1535,7 +1582,12 @@ namespace DeskMadeline
                 // DashDir still zero, so jumping on it supers in Facing exactly as vanilla.
                 // If DashUpdate already changed state, vanilla's StateMachine has replaced
                 // the coroutine and the aim is never applied.
-                if (dashAimPending && stateBeforeUpdate == StDash)
+                // A Super Dashing re-dash inside DashUpdate replaces the coroutine during
+                // this very frame, and a fresh coroutine spends this frame on its
+                // `yield return null` -- so the aim it reads is the next frame's, not this
+                // one's, exactly as when the dash began from another state.
+                if (dashAimPending && stateBeforeUpdate == StDash &&
+                    DashSequenceCount == dashCountBeforeUpdate)
                 {
                     dashAimPending = false;
                     if (State == StDash) ApplyDashAim();
@@ -2784,6 +2836,7 @@ namespace DeskMadeline
             dashCooldownTimer = DashCooldown;
             dashRefillCooldownTimer = DashRefillCooldown;
             dashAttackTimer = DashAttackTime;
+            if (SuperDashing) dashAttackTimer += SuperDashAttackBonus;
             gliderBoostTimer = 0.55f;
             wallSlideTimer = WallSlideTime;
             freezeTimer = FreezeFramesEnabled ? 0.05f : 0f; // vanilla Freeze(0.05)
@@ -2800,8 +2853,12 @@ namespace DeskMadeline
             Speed = new PointF(0, 0);
             DashDir = new PointF(0, 0);
             dashAimPending = true;
+            canCurveDash = true;
 
-            dashTime = DashTime;
+            // DashCoroutine's wait. Vanilla picks it when the coroutine resumes rather
+            // than here, which is the same instant in every way that shows: DashUpdate
+            // never drains it before the aim has landed.
+            dashTime = SuperDashing ? SuperDashTime : DashTime;
             return StDash;
         }
 
@@ -2862,6 +2919,37 @@ namespace DeskMadeline
 
         void DashUpdate(float dt, PetInput input)
         {
+            // Super Dashing steers the dash toward the aim at 240 deg/s, until the two are
+            // within about eight degrees of each other, and gives up once she has hit
+            // something. On the frame before the aim lands Speed is still zero, so this
+            // sits out the first frame of every dash on its own.
+            if (SuperDashing && canCurveDash && (input.AimX != 0 || input.AimY != 0) &&
+                (Speed.X != 0f || Speed.Y != 0f))
+            {
+                PointF aim = CorrectDashPrecision(lastAim);
+                PointF heading = SafeNormalize(Speed.X, Speed.Y);
+                float towards = aim.X * heading.X + aim.Y * heading.Y;
+                if (towards >= -0.1f && towards < 0.99f)
+                {
+                    Speed = RotateTowards(Speed, Angle(aim), DashCurveRate * dt);
+                    DashDir = CorrectDashPrecision(SafeNormalize(Speed.X, Speed.Y));
+                }
+            }
+
+            // And a dash spent mid-dash restarts it rather than waiting for Normal.
+            // StateMachine.ForceState(2) on the state it is already in runs DashEnd and
+            // then DashBegin, and replaces the coroutine, which begins by giving up a
+            // frame -- so the new aim lands one frame later, exactly as an ordinary
+            // dash's does. dashCooldownTimer keeps this out of the dash's own first
+            // frames, so the DashEnd here has always sounded already.
+            if (SuperDashing && CanDash)
+            {
+                bool crouchDash = ConsumeDashRequest();  // Player.StartDash
+                CallDashEvents();                        // Player.DashEnd
+                State = BeginDash(input, crouchDash);    // Player.DashBegin
+                return;
+            }
+
             if (Holding == null && (DashDir.X != 0f || DashDir.Y != 0f) &&
                 input.GrabHeld && !IsTired && CanUnDuck && TryPickupHoldable())
                 return;

@@ -18,6 +18,7 @@ namespace DeskMadeline
         public bool FreezeFramesEnabled = true;
         public bool InfiniteStamina;
         public bool Invincible;
+        public bool SuperDashing;
         public int DashMode = 1;
         public string Language;
         public string Skin = "default";
@@ -70,6 +71,7 @@ namespace DeskMadeline
                 ReadBool(values, "FreezeFramesEnabled", ref result.FreezeFramesEnabled);
                 ReadBool(values, "InfiniteStamina", ref result.InfiniteStamina);
                 ReadBool(values, "Invincible", ref result.Invincible);
+                ReadBool(values, "SuperDashing", ref result.SuperDashing);
                 if (values.TryGetValue("DashMode", out string dash) && int.TryParse(dash, out int dashValue))
                     result.DashMode = dashValue < 0 ? -1 : Math.Max(0, Math.Min(2, dashValue));
                 if (values.TryGetValue("Language", out string language) && language.Length > 0)
@@ -146,6 +148,7 @@ namespace DeskMadeline
                     "FreezeFramesEnabled=" + FreezeFramesEnabled,
                     "InfiniteStamina=" + InfiniteStamina,
                     "Invincible=" + Invincible,
+                    "SuperDashing=" + SuperDashing,
                     "DashMode=" + DashMode,
                     "Language=" + (Language ?? ""),
                     "Skin=" + (Skin ?? "default"),

@@ -291,6 +291,7 @@ namespace DeskMadeline
             player.RespawnReversalEnabled = settings.RespawnReversalEnabled;
             player.InfiniteStamina = settings.InfiniteStamina;
             player.Invincible = settings.Invincible;
+            player.SuperDashing = settings.SuperDashing;
             player.SetDashMode(settings.DashMode);
             player.NormalSurfaceSoundIndex = settings.SurfaceSoundIndex;
             player.Holdables = holdables;
@@ -1409,19 +1410,28 @@ namespace DeskMadeline
 
             if (dashVisualTimer >= 0f && !spawnedThisFrame)
             {
-                float previous = dashVisualTimer;
                 dashVisualTimer += dt;
                 // Normal DashCoroutine: immediate snapshot, DashUpdate snapshot at 0.08,
-                // and final coroutine snapshot at 0.15 seconds.
-                if (dashTrailStage == 1 && previous < 0.08f && dashVisualTimer >= 0.08f)
+                // and final coroutine snapshot at 0.15 seconds. Super Dashing sets
+                // dashTrailTimer to 0.1 with a counter of 2 and waits 0.3 instead, so it
+                // lays a fourth: 0.1, 0.2 and 0.3. Each stage latches the next, so the
+                // variant being toggled part-way through a dash cannot strand the timer.
+                bool superDash = player.SuperDashing;
+                if (dashTrailStage == 1 && dashVisualTimer >= (superDash ? 0.1f : 0.08f))
                 {
                     CaptureDashTrail();
                     dashTrailStage = 2;
                 }
-                if (dashTrailStage == 2 && previous < 0.15f && dashVisualTimer >= 0.15f)
+                if (dashTrailStage == 2 && dashVisualTimer >= (superDash ? 0.2f : 0.15f))
                 {
                     CaptureDashTrail();
-                    dashTrailStage = 3;
+                    dashTrailStage = superDash ? 3 : 4;
+                    if (!superDash) dashVisualTimer = -1f;
+                }
+                if (dashTrailStage == 3 && dashVisualTimer >= 0.3f)
+                {
+                    CaptureDashTrail();
+                    dashTrailStage = 4;
                     dashVisualTimer = -1f;
                 }
             }
@@ -4134,6 +4144,7 @@ namespace DeskMadeline
             settings.FreezeFramesEnabled = player.FreezeFramesEnabled;
             settings.InfiniteStamina = player.InfiniteStamina;
             settings.Invincible = player.Invincible;
+            settings.SuperDashing = player.SuperDashing;
             settings.DashMode = player.DashMode;
             settings.Language = Loc.CurrentCode;
             settings.Skin = skinManager.Active?.Id ?? SkinManager.DefaultId;
@@ -4942,6 +4953,13 @@ namespace DeskMadeline
                 SaveSettings();
             }) { Checked = player.Invincible };
 
+            var superDashItem = new ToolStripMenuItem(Loc.T("Menu.SuperDash"), null, (sender, __) =>
+            {
+                player.SuperDashing = !player.SuperDashing;
+                ((ToolStripMenuItem)sender).Checked = player.SuperDashing;
+                SaveSettings();
+            }) { Checked = player.SuperDashing };
+
             var dashItem = new ToolStripMenuItem(Loc.T("Menu.DashCount"));
             foreach (var option in new[]
             {
@@ -5052,7 +5070,7 @@ namespace DeskMadeline
             Section(menu, "Section.Input");
             AddAll(menu, inputItem, padInputItem, unfocusedInputItem,
                 BuildBindingsMenu(), BuildPadBindingsMenu(),
-                dashItem, staminaItem, invincibleItem, freezeItem, elytraItem);
+                dashItem, superDashItem, staminaItem, invincibleItem, freezeItem, elytraItem);
             Section(menu, "Section.Appearance");
             AddAll(menu, skinItem, cosmeticsItem, hairColorsItem, scaleItem,
                 particleItem, respawnReversalItem, sfxItem, overlaysItem);
