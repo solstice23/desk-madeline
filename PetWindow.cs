@@ -562,6 +562,22 @@ namespace DeskMadeline
             running = true;
             loopThread = new Thread(GameLoop) { IsBackground = true, Name = "PetLoop" };
             loopThread.Start();
+            OfferSoundRuntime();
+        }
+
+        /// <summary>
+        /// A copy of Celeste with no FMOD the pet can load, asked about once and then left
+        /// alone. Here rather than in the constructor because it is a dialog, and one that
+        /// fetches: it wants a window that exists to come back to, and she may as well be on
+        /// the desktop moving about while it is up.
+        /// </summary>
+        void OfferSoundRuntime()
+        {
+            if (settings.SfxRuntimeAsked || soundEffects.Available) return;
+            if (soundEffects.Trouble != "Sfx.WhyNoRuntime" || !FmodDownload.Wanted) return;
+            settings.SfxRuntimeAsked = true;
+            SaveSettings();
+            FmodDownload.Ask(this, () => { restartAfterExit = true; ExitApp(); });
         }
 
         // ================= Animation definitions =================
@@ -4701,15 +4717,26 @@ namespace DeskMadeline
             };
 
             var sfxItem = new ToolStripMenuItem(Loc.T("Menu.SoundEffects"));
-            // Silence has a reason, and the menu is where it is looked for. Shown rather than
-            // offered, like the Celeste folder above it: there is nothing to click, only the
-            // one line saying which of the two halves of sound this machine has not got.
-            if (!soundEffects.Available)
+            // Silence has a reason, and the menu is where it is looked for: the line saying
+            // which of the two halves of sound this machine has not got, and -- where it is the
+            // runtime, which is the half that can be fetched -- the offer to go and get it.
+            // Both are read when the menu opens rather than when it is built, since a download
+            // in between changes the answer.
+            var sfxTroubleItem = new ToolStripMenuItem { Enabled = false };
+            var sfxGetItem = new ToolStripMenuItem(Loc.T("Sfx.Get"), null,
+                (_, __) => FmodDownload.Ask(this, () => { restartAfterExit = true; ExitApp(); }));
+            var sfxTroubleSeparator = new ToolStripSeparator();
+            sfxItem.DropDownItems.Add(sfxTroubleItem);
+            sfxItem.DropDownItems.Add(sfxGetItem);
+            sfxItem.DropDownItems.Add(sfxTroubleSeparator);
+            sfxItem.DropDownOpening += (_, __) =>
             {
-                sfxItem.DropDownItems.Add(new ToolStripMenuItem(
-                    Loc.T(soundEffects.Trouble ?? "Sfx.WhyUnavailable")) { Enabled = false });
-                sfxItem.DropDownItems.Add(new ToolStripSeparator());
-            }
+                bool silent = !soundEffects.Available;
+                sfxTroubleItem.Text = Loc.T(soundEffects.Trouble ?? "Sfx.WhyUnavailable");
+                sfxTroubleItem.Visible = silent;
+                sfxGetItem.Visible = silent && FmodDownload.Wanted;
+                sfxTroubleSeparator.Visible = silent;
+            };
             foreach (var option in new[]
             {
                 new KeyValuePair<int, string>(0, Loc.T("Common.Off")),

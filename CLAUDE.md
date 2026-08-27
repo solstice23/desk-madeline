@@ -51,7 +51,9 @@ content: beside the exe first, then the install. `CelesteInstall.AtlasesDirector
 Sound wants two separate things of those places: the banks, which every copy of Celeste has,
 and the FMOD runtime, which only an install Everest has converted to its 64-bit FNA build has.
 `FmodRuntime` knows the layouts and `pet_debug.log` says which one was used. A plain install is
-complete and silent; the tray menu says why under Sound effects.
+complete and silent; the tray menu says why under Sound effects, and offers `FmodDownload`,
+which fetches the runtime out of Everest's release. `FMODFETCH=1` makes the checks do that for
+real, as `SFXCHECK=1` makes them play every event.
 
 Where that install is, for a build, is `-p:CelestePath=…`, then `CELESTE_PATH`, then a
 `celeste-path.txt` beside the project holding the path on one line — gitignored, since a path

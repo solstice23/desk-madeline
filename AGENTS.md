@@ -150,6 +150,12 @@ parts in afterwards, one user report at a time.
   game's 32-bit pair beside `Celeste.exe`, which a 64-bit pet cannot load and is told about
   rather than left to guess. Runtime and banks are looked for separately, beside the exe
   before inside the install. A new layout belongs in that table, not in another path check.
+- What a plain copy of Celeste can do about that is `FmodDownload`: the two libraries read out
+  of Everest's release archive by range request, about 1.2MB of a 71MB zip, checked against the
+  index's CRC and against being 64-bit at all before anything is written beside the pet. It is
+  offered once at startup and kept in the tray menu; nothing is fetched unasked, nothing of
+  FMOD's is in this repository, and the game's own folder is never written to. `FMODFETCH=1`
+  runs the fetch for real in the checks.
 - Which events fire, and in what order, is part of the port. `Play` calls in the reference
   are as load-bearing as the numbers beside them: `SuperJump` plays `jump` *and then* its
   `jump_super` / `jump_superslide` layer, and a move that plays one of a pair plays both.

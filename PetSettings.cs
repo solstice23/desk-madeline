@@ -39,6 +39,14 @@ namespace DeskMadeline
         public int SfxMode = 1;          // 0 off, 1 only when focused, 2 always
         public int SfxVolume = 100;
         public int SurfaceSoundIndex = 8;
+        /// <summary>Whether the offer to fetch the 64-bit FMOD has been made once already.</summary>
+        /// <remarks>
+        /// Asked at startup, and only ever once: a copy of Celeste with no runtime the pet can
+        /// load will have none tomorrow either, and a dialog every launch about a thing the user
+        /// has already declined is nagging. The tray menu keeps the offer for whenever they want
+        /// it. Written whichever way they answer, since the asking is what was done.
+        /// </remarks>
+        public bool SfxRuntimeAsked;
         /// <summary>Where Celeste is, once it has been found or chosen. Empty means look again.</summary>
         public string CelestePath = "";
 
@@ -111,6 +119,7 @@ namespace DeskMadeline
                 if (values.TryGetValue("SurfaceSoundIndex", out string surfaceSound) &&
                     int.TryParse(surfaceSound, out int surfaceSoundValue))
                     result.SurfaceSoundIndex = Math.Max(0, Math.Min(44, surfaceSoundValue));
+                ReadBool(values, "SfxRuntimeAsked", ref result.SfxRuntimeAsked);
                 if (values.TryGetValue("CelestePath", out string celestePath))
                     result.CelestePath = celestePath.Trim();
             }
@@ -168,6 +177,7 @@ namespace DeskMadeline
                     "SfxMode=" + SfxMode,
                     "SfxVolume=" + SfxVolume,
                     "SurfaceSoundIndex=" + SurfaceSoundIndex,
+                    "SfxRuntimeAsked=" + SfxRuntimeAsked,
                     "CelestePath=" + (CelestePath ?? "")
                 });
             }

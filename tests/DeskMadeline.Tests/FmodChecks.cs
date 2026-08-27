@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using DeskMadeline;
 
 /// <summary>Which FMOD a folder holds, in each of the layouts Celeste is shipped in.</summary>
@@ -134,7 +135,67 @@ static class FmodChecks
                 installed.Version == FmodRuntime.DefaultVersion);
         }
 
+        failed += Fetching();
+
         try { Directory.Delete(root, true); } catch { }
         return failed;
+    }
+
+    /// <summary>
+    /// The download itself, against Everest's real release. Opt in with FMODFETCH=1: it asks
+    /// GitHub for the newest release and reads a megabyte out of a 71MB archive, which is not
+    /// something every run of the checks should do to somebody else's bandwidth.
+    /// </summary>
+    static int Fetching()
+    {
+        Console.WriteLine();
+        if (Environment.GetEnvironmentVariable("FMODFETCH") != "1")
+        {
+            Console.WriteLine("  (the FMOD download is skipped; set FMODFETCH=1 to fetch it once)");
+            return 0;
+        }
+
+        Console.WriteLine("  Fetching the runtime out of Everest's release");
+        bool had = Directory.Exists(FmodDownload.Destination);
+        try
+        {
+            long last = 0;
+            var progress = new Progress<SelfUpdate.Fetched>(fetched => last = fetched.Done);
+            FmodDownload.Fetch(progress, CancellationToken.None).GetAwaiter().GetResult();
+            Check("something came down (" + last / 1024 + " KB, and the archive it is in is 70MB)",
+                last > 1_000_000 && last < 4_000_000);
+
+            var runtime = FmodRuntime.Locate(AppDomain.CurrentDomain.BaseDirectory);
+            Check("and what landed is a runtime this process can load" +
+                (runtime == null ? "" : ": " + runtime.Describe()),
+                runtime != null && runtime.Usable && runtime.Version >> 16 == 1);
+
+            // The same two files an Everest install has, byte for byte, where there is one to
+            // compare against: this is that install's own source, so anything else is wrong.
+            string everest = CelesteInstall.Directory == null ? null
+                : FmodRuntime.Locate(CelesteInstall.Directory)?.Studio;
+            if (everest == null || runtime == null)
+                Console.WriteLine("    ..    no installed 64-bit FMOD to compare it against");
+            else
+                Check("identical to the one the installed Celeste has",
+                    Same(everest, runtime.Studio));
+        }
+        catch (Exception ex)
+        {
+            Check("the fetch went through, and it did not: " + ex.Message, false);
+        }
+        finally
+        {
+            if (!had) { try { Directory.Delete(FmodDownload.Destination, true); } catch { } }
+        }
+        return 0;
+    }
+
+    static bool Same(string a, string b)
+    {
+        byte[] left = File.ReadAllBytes(a), right = File.ReadAllBytes(b);
+        if (left.Length != right.Length) return false;
+        for (int i = 0; i < left.Length; i++) if (left[i] != right[i]) return false;
+        return true;
     }
 }

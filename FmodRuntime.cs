@@ -115,13 +115,36 @@ namespace DeskMadeline
             return unusable;
         }
 
+        /// <summary>
+        /// Whether these bytes are a 64-bit Windows library, which is what a downloaded one has
+        /// to be before it is written anywhere the pet will later load it from.
+        /// </summary>
+        public static bool Is64BitImage(byte[] image)
+        {
+            try
+            {
+                using var stream = new MemoryStream(image);
+                return Machine(stream) == 0x8664;
+            }
+            catch { return false; }
+        }
+
         /// <summary>The architecture in a PE header, or 0 for anything that has none.</summary>
         static int Machine(string path)
         {
             try
             {
                 using var stream = File.OpenRead(path);
-                using var reader = new BinaryReader(stream);
+                return Machine(stream);
+            }
+            catch { return 0; }
+        }
+
+        static int Machine(Stream stream)
+        {
+            try
+            {
+                using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, true);
                 if (stream.Length < 0x40) return 0;
                 stream.Position = 0x3c;
                 int header = reader.ReadInt32();
