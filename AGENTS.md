@@ -144,6 +144,12 @@ parts in afterwards, one user report at a time.
 
 - Sounds are the original Celeste FMOD events, played from an installed copy of the game.
   There are no substitute samples, so an event path is either vanilla's or nothing.
+- FMOD itself is not in one place, and which copy of Celeste it is decides whether there is
+  sound at all. `FmodRuntime` holds the layouts: Everest's `lib64-win-x64\fmod64.dll` with the
+  studio library under either name, the pair dropped into a folder by hand, and the plain
+  game's 32-bit pair beside `Celeste.exe`, which a 64-bit pet cannot load and is told about
+  rather than left to guess. Runtime and banks are looked for separately, beside the exe
+  before inside the install. A new layout belongs in that table, not in another path check.
 - Which events fire, and in what order, is part of the port. `Play` calls in the reference
   are as load-bearing as the numbers beside them: `SuperJump` plays `jump` *and then* its
   `jump_super` / `jump_superslide` layer, and a move that plays one of a pair plays both.

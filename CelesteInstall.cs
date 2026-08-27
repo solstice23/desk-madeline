@@ -52,14 +52,19 @@ namespace DeskMadeline
         /// or half-updated one has it and little else, and taking that for an install is how
         /// the pet ends up with no sprites or no sound and nothing said about why. Her portrait
         /// is not here: assets\portrait.png ships beside the app and is what the tray icon uses.
+        ///
+        /// Neither is the FMOD runtime, which used to be, as lib64-win-x64\fmod64.dll and
+        /// fmodstudio.dll. Only an install Everest has converted to its 64-bit FNA build has
+        /// those, so listing them called every plain copy of Celeste broken and offered to go
+        /// looking for a better one, of which there is none. What a folder can do about sound
+        /// is <see cref="FmodRuntime"/>'s question, and it is asked where the answer can be
+        /// acted on: the log, and the tray menu beside the sound settings.
         /// </remarks>
         static readonly string[] Required =
         {
             "Celeste.exe",
             "Content/Graphics/Atlases/Gameplay.meta",
             "Content/Graphics/Atlases/Gameplay0.data",
-            "lib64-win-x64/fmod64.dll",
-            "lib64-win-x64/fmodstudio.dll",
             "Content/FMOD/Desktop/Master Bank.bank",
             "Content/FMOD/Desktop/Master Bank.strings.bank",
             "Content/FMOD/Desktop/sfx.bank",
@@ -88,9 +93,18 @@ namespace DeskMadeline
 
         /// <summary>Whether a folder holds the FMOD runtime and banks, bundled or installed.</summary>
         public static bool HasAudio(string directory)
-            => !string.IsNullOrWhiteSpace(directory) &&
-               File.Exists(Path.Combine(directory, "lib64-win-x64", "fmod64.dll")) &&
-               System.IO.Directory.Exists(Path.Combine(directory, "Content", "FMOD", "Desktop"));
+            => FmodRuntime.Locate(directory) != null && BanksDirectory(directory) != null;
+
+        /// <summary>
+        /// The folder holding the sound banks, beside the app or inside an install, or null
+        /// when it holds none. The banks themselves are the same in every copy of the game.
+        /// </summary>
+        public static string BanksDirectory(string directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory)) return null;
+            string banks = Path.Combine(directory, "Content", "FMOD", "Desktop");
+            return File.Exists(Path.Combine(banks, "Master Bank.bank")) ? banks : null;
+        }
 
         static string BundledAtlases => Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
             "Content", "Graphics", "Atlases");

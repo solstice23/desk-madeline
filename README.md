@@ -9,6 +9,8 @@ You can also check for updates in the pet's tray menu.
 
 You need to own a copy of [Celeste](https://www.celestegame.com/) and have it locally installed to let the pet run, as it uses the game's assets on the fly.
 
+Her sounds need one thing more: Celeste's 64-bit FMOD, which comes with [Everest](https://everestapi.github.io/)'s build of the game. The plain install carries the 32-bit one, which a 64-bit pet cannot load, so on that copy she runs and looks exactly the same and stays silent -- the tray menu says as much under Sound effects. Copying `fmod64.dll` and `fmodstudio64.dll` out of an Everest install's `lib64-win-x64` and next to `DeskMadeline.exe` also does it.
+
 # Building
 
 To build, you need the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), then

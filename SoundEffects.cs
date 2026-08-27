@@ -11,8 +11,6 @@ namespace DeskMadeline
     /// </summary>
     internal sealed class SoundEffects : IDisposable
     {
-        const uint FmodVersion = 0x00011014; // Celeste ships FMOD Studio 1.10.14.
-
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         delegate int StudioSystemCreate(out IntPtr system, uint headerVersion);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -70,6 +68,12 @@ namespace DeskMadeline
         public volatile int Volume;     // 0..100
         public bool Available => system != IntPtr.Zero;
 
+        /// <summary>
+        /// Why there is none, as a localization key, or null while there is. The log says which
+        /// file and which version; this is the one line the tray menu has room for.
+        /// </summary>
+        public string Trouble { get; private set; }
+
         public SoundEffects(Func<bool> focused, int mode, int volume)
         {
             this.focused = focused;
@@ -82,29 +86,57 @@ namespace DeskMadeline
         {
             try
             {
-                // A bundled build carries the runtime and banks beside the exe, in the layout
-                // they have inside Celeste; otherwise they come from an install, as ever.
-                string game = CelesteInstall.HasBundledAudio
-                    ? AppDomain.CurrentDomain.BaseDirectory
-                    : CelesteInstall.Directory;
-                if (game == null)
+                // The runtime and the banks are looked for one at a time, beside the exe before
+                // inside the install: a bundled build carries both there, an ordinary one
+                // carries neither. Separately, because they are not always in the same place --
+                // every copy of Celeste has the banks, but only one Everest has converted to
+                // its 64-bit FNA build has a runtime a 64-bit process can load, so for the rest
+                // the way to have sound is that pair of DLLs sitting beside DeskMadeline.exe
+                // while the banks still come out of the game. See FmodRuntime for the layouts.
+                string beside = AppDomain.CurrentDomain.BaseDirectory;
+                string game = CelesteInstall.Directory;
+                FmodRuntime runtime = FmodRuntime.Locate(beside, game);
+                string banks = CelesteInstall.BanksDirectory(beside) ??
+                               CelesteInstall.BanksDirectory(game);
+                if (runtime == null)
                 {
-                    PetWindow.Log("SFX unavailable: Celeste installation not found");
+                    Trouble = "Sfx.WhyNoRuntime";
+                    PetWindow.Log("SFX unavailable: no FMOD runtime beside the app or in " +
+                        (game ?? "an install, there being none"));
+                    return;
+                }
+                if (!runtime.Usable)
+                {
+                    // The 32-bit XNA build, which is Celeste as it is sold. Nothing is missing
+                    // from it; it simply has no library this process can load.
+                    Trouble = "Sfx.WhyNoRuntime";
+                    PetWindow.Log("SFX unavailable: " + runtime.Describe() +
+                        " cannot be loaded by a " + (Environment.Is64BitProcess ? 64 : 32) +
+                        "-bit process. Everest's build installs the 64-bit FMOD into " +
+                        "lib64-win-x64; its fmod64.dll and fmodstudio64.dll also work copied " +
+                        "beside DeskMadeline.exe");
+                    return;
+                }
+                if (runtime.Version >> 16 != 1)
+                {
+                    // The bindings below are FMOD 1.x's: 2.x moved the parameter calls, so
+                    // silence is the honest outcome rather than a call into the wrong function.
+                    // There is a runtime here, so it is not the missing-runtime line to show.
+                    Trouble = "Sfx.WhyUnavailable";
+                    PetWindow.Log("SFX unavailable: " + runtime.Describe() +
+                        " is not FMOD 1.x, which is what these bindings are");
+                    return;
+                }
+                if (banks == null)
+                {
+                    Trouble = "Sfx.WhyNoBanks";
+                    PetWindow.Log("SFX unavailable: no FMOD banks beside the app or in " +
+                        (game ?? "an install, there being none"));
                     return;
                 }
 
-                string native = Path.Combine(game, "lib64-win-x64");
-                string corePath = Path.Combine(native, "fmod64.dll");
-                string studioPath = Path.Combine(native, "fmodstudio.dll");
-                string banks = Path.Combine(game, "Content", "FMOD", "Desktop");
-                if (!File.Exists(corePath) || !File.Exists(studioPath) || !Directory.Exists(banks))
-                {
-                    PetWindow.Log("SFX unavailable: Celeste FMOD runtime or banks not found");
-                    return;
-                }
-
-                coreLibrary = NativeLibrary.Load(corePath);
-                studioLibrary = NativeLibrary.Load(studioPath);
+                coreLibrary = NativeLibrary.Load(runtime.Core);
+                studioLibrary = NativeLibrary.Load(runtime.Studio);
                 var createSystem = Export<StudioSystemCreate>("FMOD_Studio_System_Create");
                 var initialize = Export<StudioSystemInitialize>("FMOD_Studio_System_Initialize");
                 var loadBank = Export<StudioSystemLoadBankFile>("FMOD_Studio_System_LoadBankFile");
@@ -120,7 +152,7 @@ namespace DeskMadeline
                 setParameterValue = Export<ParameterInstanceSetValue>("FMOD_Studio_ParameterInstance_SetValue");
                 setBusVolume = Export<BusSetVolume>("FMOD_Studio_Bus_SetVolume");
 
-                Check(createSystem(out system, FmodVersion), "create system");
+                Check(createSystem(out system, runtime.Version), "create system");
                 Check(initialize(system, 64, 0, 0, IntPtr.Zero), "initialize system");
                 foreach (string bank in new[]
                 {
@@ -132,10 +164,11 @@ namespace DeskMadeline
                 }
                 if (getBus(system, "bus:/gameplay_sfx", out sfxBus) != 0)
                     Check(getBus(system, "bus:/", out sfxBus), "get SFX bus");
-                PetWindow.Log("SFX active: original Celeste FMOD banks from " + game);
+                PetWindow.Log("SFX active: " + runtime.Describe() + ", banks from " + banks);
             }
             catch (Exception ex)
             {
+                Trouble = "Sfx.WhyUnavailable";
                 PetWindow.Log("SFX unavailable: " + ex.Message);
                 DisposeNative();
             }

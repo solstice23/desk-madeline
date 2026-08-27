@@ -122,6 +122,11 @@
       <!-- Where her hair sits on every frame of every animation. HairMeta reads it beside the
            exe or out of the install, the same two places the atlas is looked for. 90KB. -->
       <CelesteSprites Include="$(CelesteDir)\Content\Graphics\Sprites.xml" />
+      <!-- Whichever names this install has them under: newer Everest lib sets ship the
+           studio library as fmodstudio64.dll and older ones renamed it to fmodstudio.dll.
+           A copy of Celeste that Everest has not converted has neither, only the 32-bit
+           pair beside Celeste.exe, which a 64-bit build cannot load; hence the warning
+           below rather than a silent bundle. -->
       <CelesteFmodLib Include="$(CelesteDir)\lib64-win-x64\fmod*.dll" />
       <!-- The four SoundEffects loads. dlc_sfx.bank is needed despite its name: the jellyfish
            is a Farewell mechanic, so its sounds are under event:/new_content/. The music
@@ -144,6 +149,8 @@
           SkipUnchangedFiles="true" Condition="'@(CelesteFmodBank)' != ''" />
     <Warning Text="BundleAssets is on but '$(CelesteDir)' is not a Celeste install, so this build carries neither artwork nor audio. Name one with -p:CelestePath=..."
              Condition="'@(CelesteAtlas)' == ''" />
+    <Warning Text="'$(CelesteDir)' has no 64-bit FMOD in lib64-win-x64, so this bundled build will be silent. That runtime comes with Everest's build of Celeste; the plain game is the 32-bit one."
+             Condition="'@(CelesteAtlas)' != '' And '@(CelesteFmodLib)' == ''" />
   </Target>
 
 </Project>

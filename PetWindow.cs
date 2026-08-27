@@ -4701,6 +4701,15 @@ namespace DeskMadeline
             };
 
             var sfxItem = new ToolStripMenuItem(Loc.T("Menu.SoundEffects"));
+            // Silence has a reason, and the menu is where it is looked for. Shown rather than
+            // offered, like the Celeste folder above it: there is nothing to click, only the
+            // one line saying which of the two halves of sound this machine has not got.
+            if (!soundEffects.Available)
+            {
+                sfxItem.DropDownItems.Add(new ToolStripMenuItem(
+                    Loc.T(soundEffects.Trouble ?? "Sfx.WhyUnavailable")) { Enabled = false });
+                sfxItem.DropDownItems.Add(new ToolStripSeparator());
+            }
             foreach (var option in new[]
             {
                 new KeyValuePair<int, string>(0, Loc.T("Common.Off")),

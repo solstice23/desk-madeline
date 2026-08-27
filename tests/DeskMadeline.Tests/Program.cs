@@ -34,6 +34,7 @@ static class Program
         failed += IdleChecks.Run();     // the director that plays her when nobody is
         failed += UpdateChecks.Run();    // whether the build server has a newer build
         failed += SettingsChecks.Run();   // settings defaults, and snapping back onto the displays
+        failed += FmodChecks.Run();       // which FMOD each build of Celeste has, and where
         failed += HairChecks.Run();      // the hair table, read from the game rather than copied
         failed += AtlasChecks.Run();      // sprites read out of an installed Celeste
         failed += SoundBankChecks.Run();

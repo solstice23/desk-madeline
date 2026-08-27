@@ -111,7 +111,6 @@ static class SettingsChecks
             foreach (string file in new[]
             {
                 @"Content\Graphics\Atlases\Gameplay.meta", @"Content\Graphics\Atlases\Gameplay0.data",
-                @"lib64-win-x64\fmod64.dll", @"lib64-win-x64\fmodstudio.dll",
                 @"Content\FMOD\Desktop\Master Bank.bank", @"Content\FMOD\Desktop\Master Bank.strings.bank",
                 @"Content\FMOD\Desktop\sfx.bank", @"Content\FMOD\Desktop\dlc_sfx.bank",
             })
