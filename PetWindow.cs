@@ -2673,6 +2673,33 @@ namespace DeskMadeline
         /// saw a window cross half the screen between one look and the next, which is no longer
         /// a push but a teleport.
         /// </summary>
+        /// <summary>
+        /// How fast a window is moving, in game pixels a second: Platform.LiftSpeed, for
+        /// whatever is standing on it or being shoved by it to take with them.
+        /// </summary>
+        /// <remarks>
+        /// Two ways of knowing, and the first is the better one. A window the pet is drifting
+        /// itself can say what it meant to move, which is what vanilla measures -- Platform's
+        /// lift speed is the movement asked for, not the whole pixels that came of it -- so a
+        /// moon block bobbing one pixel every fifth frame lifts at the twenty a second it is
+        /// really rising at, rather than sixty for a frame and nothing for four. A window
+        /// somebody else moved can only be measured, so it is: where it is now against where
+        /// it was last frame, which is exactly what she was carried by.
+        /// </remarks>
+        PointF WindowLift(IntPtr handle, Win32.RECT now, float dt)
+        {
+            if (dt <= 0f) return PointF.Empty;
+            if (moonMode && moonWindows.TryVelocity(handle, out PointF drifting)) return drifting;
+            if (!lastRects.TryGetValue(handle, out var old)) return PointF.Empty;
+            float dx = ToGamePixels(now.Left - old.Left), dy = ToGamePixels(now.Top - old.Top);
+            // The same line PushOutOfMovedWindows draws, for the same reason: past it the
+            // window was put somewhere rather than moved, the space between never existed,
+            // and launching her off a maximise would be as arbitrary as crushing her with it.
+            float teleport = TeleportSpeed * dt;
+            if (Math.Abs(dx) > teleport || Math.Abs(dy) > teleport) return PointF.Empty;
+            return new PointF(dx / dt, dy / dt);
+        }
+
         void RebuildSolids(float dt)
         {
             float s = GameScale;
@@ -2715,6 +2742,7 @@ namespace DeskMadeline
             foreach (var window in zorder)
             {
                 var r = window.Rect;
+                PointF lift = WindowLift(window.Handle, r, dt);
                 if (window.IsPlatform)
                 {
                     if (dreamBlockMode || waterMode)
@@ -2726,7 +2754,10 @@ namespace DeskMadeline
                         // solid nobody can see.
                         foreach (var p in SubtractRects(r, hidersOnly))
                             if (TryToSolid(window.Handle, p, dreamBlockMode, out Solid filled))
+                            {
+                                filled.LiftX = lift.X; filled.LiftY = lift.Y;
                                 (waterMode ? waters : solids).Add(filled);
+                            }
                     }
                     else
                     {
@@ -2734,7 +2765,11 @@ namespace DeskMadeline
                         {
                             var pieces = SubtractRects(edge, occluders);
                             foreach (var p in pieces)
-                                if (TryToSolid(window.Handle, p, false, out Solid piece)) solids.Add(piece);
+                                if (TryToSolid(window.Handle, p, false, out Solid piece))
+                                {
+                                    piece.LiftX = lift.X; piece.LiftY = lift.Y;
+                                    solids.Add(piece);
+                                }
                         }
                     }
                 }

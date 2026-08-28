@@ -200,6 +200,7 @@ static class MoonChecks
             slow.HomeOf(handle).Left == 100 && slow.HomeOf(handle).Top == 100);
 
         failed += StandingOnOne();
+        failed += MoonBoost();
         failed += HoldingOnToOne();
         return failed;
     }
@@ -395,5 +396,164 @@ static class MoonChecks
         Check("and is carried rather than left in the air", airborne < 5);
         Check("the dash reached the block", dashed);
         return 0;
+    }
+
+    /// <summary>
+    /// The moon boost: a block shoved by a dash carries whoever is standing on it, and the
+    /// jump that follows keeps what it was carried at. Player.LiftBoost, off
+    /// FloatySpaceBlock's own lurch.
+    /// </summary>
+    /// <remarks>
+    /// Eight pixels along the dash as dashEase yoyos down at one and a half a second: the
+    /// climb out takes about a fifth of a second, so the block travels at around forty pixels
+    /// a second, which is the number the tech is named for. The sine is worth four either way
+    /// on top of that, and the twelve pixels of sink are worth nothing at all -- LiftBoost
+    /// throws downward lift away, so a block sinking under her never presses her jump down.
+    ///
+    /// The lift is the movement the block asked for rather than the whole pixels it took. A
+    /// block bobbing one pixel every fifth frame would otherwise lift at sixty for one frame
+    /// and at nothing for four, which is the same boost delivered as a slap.
+    /// </remarks>
+    static int MoonBoost()
+    {
+        Console.WriteLine();
+        Console.WriteLine("  The moon boost");
+
+        Boost up = Shoved(new System.Drawing.PointF(0f, -1f));
+        Boost still = Shoved(System.Drawing.PointF.Empty);
+        Boost down = Shoved(new System.Drawing.PointF(0f, 1f));
+        Boost across = Shoved(new System.Drawing.PointF(1f, 0f));
+
+        Console.WriteLine($"      lift while she stands on it: {up.Up:F1} shoved up,"
+            + $" {still.Up:F1} left alone, {across.Across:F1} shoved sideways");
+        Console.WriteLine($"      the jump off it: {up.JumpY:F1} up, {still.JumpY:F1} still,"
+            + $" {down.JumpY:F1} shoved down; across, she leaves at {across.JumpX:F1}");
+        Console.WriteLine($"      and what was carrying her as she left:"
+            + $" {up.LiftAtJump:F1} up, {still.LiftAtJump:F1} still, {down.LiftAtJump:F1} down,"
+            + $" {across.LiftAcrossAtJump:F1} across");
+        // Eight pixels over about a fifth of a second. Sixty would be a whole pixel a frame,
+        // which is what reading the applied movement rather than the asked-for one would give.
+        Check($"a block shoved upward lifts her at the block's own speed ({up.Up:F1})",
+            up.Up < -30f && up.Up > -55f);
+        Check($"left alone it is the four pixels of sine and no more ({still.Up:F1})",
+            still.Up < -2f && still.Up > -6f);
+        // Both jumps are taken the same way off the same block, so whatever else the frame
+        // does to her -- a bob, a frame of gravity -- is in both and cancels.
+        Check($"the jump off a shoved block beats the plain one by what carried her"
+            + $" ({up.JumpY:F1} against {still.JumpY:F1})",
+            Math.Abs((up.JumpY - still.JumpY) - (up.LiftAtJump - still.LiftAtJump)) < 1f &&
+            up.JumpY < still.JumpY - 30f);
+        // Every one of them is the same jump plus whatever was carrying her, and a block
+        // sinking under her carries her nowhere: LiftBoost keeps nothing of downward lift.
+        float plain = still.JumpY - still.LiftAtJump;
+        Check($"one shoved downward gives the plain jump, its lift thrown away"
+            + $" ({down.JumpY:F1} against {plain:F1})",
+            down.LiftAtJump == 0f && Math.Abs(down.JumpY - plain) < 1f);
+        // Sideways it is the same addition, less the one frame of air friction that has had
+        // at it by the time this can read her speed -- Approach toward nothing at 650 a second.
+        Check($"and a sideways shove is carried across instead ({across.JumpX:F1} of"
+            + $" {across.LiftAcrossAtJump:F1}, a frame of air friction later)",
+            Math.Abs(across.JumpX - (across.LiftAcrossAtJump - 1000f * 0.65f / 60f)) < 1f);
+        return failed;
+    }
+
+    struct Boost
+    {
+        public float Up, Across;                    // the most it lifted her by, either way
+        public float JumpY, JumpX;                  // what she left the block with
+        public float LiftAtJump, LiftAcrossAtJump;  // and what it was doing as she did
+    }
+
+    /// <summary>
+    /// Settle her on a moon window, shove the block that way, and jump while the shove is
+    /// still under her. The desktop loop, as StandingOnOne runs it.
+    /// </summary>
+    static Boost Shoved(System.Drawing.PointF shove)
+    {
+        const int Scale = 6;
+        var handle = new IntPtr(11);
+        var moon = new MoonWindows();
+        var rect = new Win32.RECT { Left = -1200, Top = 0, Right = 1200, Bottom = 1200 };
+        float ToGame(int physical) => (float)Math.Floor(physical / (double)Scale + 0.5);
+        var player = new Player
+        {
+            MinX = -100000f,
+            MaxX = 100000f,
+            FreezeFramesEnabled = false,
+            Dashes = 1,
+            Pos = new System.Drawing.PointF(0f, 0f),
+        };
+        float top = ToGame(rect.Top);
+        var platform = new Solid
+        { Id = handle, L = ToGame(rect.Left), T = top, R = ToGame(rect.Right), B = top + 8f };
+        player.Solids = new List<Solid> { platform };
+        for (int i = 0; i < 5; i++) player.Update(Dt, new PetInput());
+
+        var boost = new Boost();
+        bool jumped = false;
+        // The sine takes 2*pi seconds to come round, so the shove waits for a whole turn of
+        // it: the bob is then measured going both ways whatever phase the block started at.
+        const int Shoved_At = 60 * 7;
+        for (int frame = 0; frame < 60 * 9; frame++)
+        {
+            var ridden = new HashSet<IntPtr>();
+            if (player.GroundId == handle) ridden.Add(handle);
+            // A dash into another part of the same window, which on a desktop is what a dash
+            // into the group is in Celeste: one window is one block, borders and all.
+            if (frame == Shoved_At && (shove.X != 0f || shove.Y != 0f)) moon.Dashed(handle, shove);
+            moon.Update(Dt, Scale, new List<PolledWindowInfo>
+                { new PolledWindowInfo(handle, rect, true) }, ridden);
+
+            Win32.RECT home = moon.HomeOf(handle);
+            var applied = moon.OffsetOfApplied(handle);
+            int dx = home.Left + applied.X - rect.Left, dy = home.Top + applied.Y - rect.Top;
+            rect = new Win32.RECT
+            {
+                Left = rect.Left + dx, Top = rect.Top + dy,
+                Right = rect.Right + dx, Bottom = rect.Bottom + dy,
+            };
+
+            float wasTop = platform.T, wasLeft = platform.L;
+            top = ToGame(rect.Top);
+            // PetWindow.WindowLift: a block the pet drifts itself says how fast it meant to go.
+            moon.TryVelocity(handle, out System.Drawing.PointF lift);
+            platform = new Solid
+            {
+                Id = handle, L = ToGame(rect.Left), T = top, R = ToGame(rect.Right), B = top + 8f,
+                LiftX = lift.X, LiftY = lift.Y,
+            };
+            player.Solids = new List<Solid> { platform };
+            if (player.GroundId == handle)
+                player.RideAlong(platform.L - wasLeft, top - wasTop);
+            else player.EndRide();
+            player.SweptInto(platform, platform.L - wasLeft, top - wasTop);
+
+            if (player.onGround && frame > 60)
+            {
+                boost.Up = Math.Min(boost.Up, player.LiftSpeed.Y);
+                if (Math.Abs(player.LiftSpeed.X) > Math.Abs(boost.Across))
+                    boost.Across = player.LiftSpeed.X;
+            }
+
+            // A few frames into the shove, which is where the lurch is fastest.
+            var input = new PetInput();
+            if (!jumped && frame >= Shoved_At + 6 && player.onGround)
+            {
+                player.BufferJump();
+                boost.LiftAtJump = player.LiftSpeed.Y < 0f ? player.LiftSpeed.Y : 0f;
+                boost.LiftAcrossAtJump = player.LiftSpeed.X;
+                jumped = true;
+            }
+            input.JumpPressed = player.HasJumpBuffer;
+            input.JumpHeld = input.JumpPressed;
+            player.Update(Dt, input);
+            if (jumped && !player.onGround)
+            {
+                boost.JumpY = player.Speed.Y;
+                boost.JumpX = player.Speed.X;
+                return boost;
+            }
+        }
+        return boost;
     }
 }

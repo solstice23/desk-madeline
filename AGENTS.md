@@ -140,6 +140,15 @@ parts in afterwards, one user report at a time.
   expectation from the reference before changing code.
 - The checks live in `tests/DeskMadeline.Tests`; add to them rather than starting over.
 
+- A window on the move hands its speed to whoever it carries or shoves, the way
+  `Solid.MoveVExact` hands `Platform.LiftSpeed` to its riders: `Solid.LiftX/LiftY` in game
+  pixels a second, `Player.LiftSpeed` keeping it for `LiftSpeedGraceTime` afterwards, and
+  `LiftBoost` capping it at 250 across and 130 up while throwing every bit of downward lift
+  away. It is added to the jump family, to a dash begun out of Normal or Climb, and to letting
+  go of a wall -- and `NormalUpdate` opens by launching her off a floor that rose out from
+  under her, which is the moon boost. A block the pet drifts itself reports the movement it
+  asked for rather than the whole pixels it took; see `PetWindow.WindowLift`.
+
 ## Sound
 
 - Sounds are the original Celeste FMOD events, played from an installed copy of the game.

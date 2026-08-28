@@ -9,6 +9,12 @@ namespace DeskMadeline
     {
         public IntPtr Id;
         public float L, T, R, B;
+        /// <summary>
+        /// How fast it is moving, in game pixels a second -- Platform.LiftSpeed, which is what
+        /// it hands to whatever it carries or shoves. Zero for a window standing still, and
+        /// for the desktop's own edges, which never move.
+        /// </summary>
+        public float LiftX, LiftY;
         public bool Dream;
         /// <summary>Fills the area beyond the monitors; nothing here can be seen.</summary>
         public bool OffScreen;
@@ -157,6 +163,76 @@ namespace DeskMadeline
         public bool ElytraEnabled;
         public bool onGround;
         public IntPtr GroundId;
+
+        // ===== Lift speed: Actor.LiftSpeed, and what Player makes of it =====
+        /// <summary>Actor.LiftSpeedGraceTime: how long the last one is still worth having.</summary>
+        public const float LiftSpeedGraceTime = 0.16f;
+        PointF currentLiftSpeed, lastLiftSpeed;
+        float liftSpeedTimer;
+        bool wasOnGround;
+
+        /// <summary>
+        /// What the solid under her is moving at, in game pixels a second, and for a sixth of
+        /// a second afterwards what the last one was.
+        /// </summary>
+        /// <remarks>
+        /// Actor.LiftSpeed keeps two: the one set this frame, and the last one that was not
+        /// zero. Reading takes the current one when there is one and the kept one otherwise,
+        /// which is what makes a boost survive the frame or two between the platform stopping
+        /// and her jumping -- and, on a desktop, the frames a window spends between whole
+        /// pixels. Her own update clears the current one at the end of every frame; only the
+        /// kept one has a clock.
+        /// </remarks>
+        public PointF LiftSpeed
+        {
+            get => currentLiftSpeed.X == 0f && currentLiftSpeed.Y == 0f
+                ? lastLiftSpeed : currentLiftSpeed;
+            set
+            {
+                currentLiftSpeed = value;
+                if (value.X != 0f || value.Y != 0f)
+                {
+                    lastLiftSpeed = value;
+                    liftSpeedTimer = LiftSpeedGraceTime;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Player.LiftBoost: the lift speed as a jump is allowed to use it. Sideways is capped
+        /// at 250 either way, downwards is thrown away entirely, and upwards at 130 -- so a
+        /// window dropping out from under her never presses her down, and one sweeping upwards
+        /// launches her, which is the moon block's whole trick.
+        /// </summary>
+        PointF LiftBoost
+        {
+            get
+            {
+                PointF lift = LiftSpeed;
+                if (Math.Abs(lift.X) > 250f) lift.X = 250f * Math.Sign(lift.X);
+                if (lift.Y > 0f) lift.Y = 0f;
+                else if (lift.Y < -130f) lift.Y = -130f;
+                return lift;
+            }
+        }
+
+        /// <summary>Actor.ResetLiftSpeed: forget it entirely, kept one included.</summary>
+        public void ResetLiftSpeed()
+        {
+            currentLiftSpeed = lastLiftSpeed = PointF.Empty;
+            liftSpeedTimer = 0f;
+        }
+
+        /// <summary>
+        /// Player.LaunchedBoostCheck: a boost worth a hundred, on a jump worth two hundred and
+        /// twenty, is a launch, and vanilla says so out loud over the ordinary jump.
+        /// </summary>
+        bool LaunchedBoostCheck()
+        {
+            PointF lift = LiftBoost;
+            return lift.X * lift.X + lift.Y * lift.Y >= 10000f &&
+                   Speed.X * Speed.X + Speed.Y * Speed.Y >= 48400f;
+        }
         public PointF DashDir;
         /// <summary>
         /// Solid.OnDashCollide, asked with the collision's own one-axis direction while she is
@@ -1705,6 +1781,17 @@ namespace DeskMadeline
 
             UpdateSprite(dt, input);
 
+            // Actor.Update's tail: the lift speed set this frame is spent, and the kept one
+            // runs down. orig_Update's own last line is wasOnGround = onGround, and the rule
+            // at the top of NormalUpdate is the reason it exists.
+            LiftSpeed = PointF.Empty;
+            if (liftSpeedTimer > 0f)
+            {
+                liftSpeedTimer -= dt;
+                if (liftSpeedTimer <= 0f) lastLiftSpeed = PointF.Empty;
+            }
+            wasOnGround = onGround;
+
             // PetWindow runs PlayerHair.AfterUpdate after it applies the animation
             // selected above, matching Player.UpdateSprite -> UpdateHair ordering.
         }
@@ -1748,6 +1835,12 @@ namespace DeskMadeline
         // ===== Normal state =====
         void NormalUpdate(float dt, PetInput input)
         {
+            // The first thing NormalUpdate does: a floor that rose out from under her throws
+            // her after it. No jump and no button -- she leaves the ground already moving at
+            // what carried her, which is the boost a moon block gives for stepping off one.
+            if (LiftBoost.Y < 0f && wasOnGround && !onGround && Speed.Y >= 0f)
+                Speed.Y = LiftBoost.Y;
+
             if (Holding == null && input.GrabHeld && !IsTired && !Ducking && TryPickupHoldable())
             {
                 Ducking = false;
@@ -1785,6 +1878,7 @@ namespace DeskMadeline
             // the holdable is released.
             if (Holding == null && CanDash)
             {
+                Speed.X += LiftBoost.X; Speed.Y += LiftBoost.Y;
                 normalDashWasCrouch = ConsumeDashRequest();
                 normalDashRequested = true;
                 return;
@@ -2025,9 +2119,13 @@ namespace DeskMadeline
             gliderBoostTimer = 0f;
             Speed.X += JumpHBoost * moveX;
             Speed.Y = JumpSpeed;
+            Speed.X += LiftBoost.X; Speed.Y += LiftBoost.Y;
             varJumpSpeed = Speed.Y;
+            bool launched = LaunchedBoostCheck();
             SpriteScaleX = 0.6f; SpriteScaleY = 1.4f;
             if (particles) JumpEffectCount++;
+            // Vanilla plays the assisted jump over the ordinary one, not instead of it.
+            if (launched) PlaySound("event:/char/madeline/jump_assisted");
             PlaySound(dreamJump
                 ? "event:/char/madeline/jump_dreamblock"
                 : "event:/char/madeline/jump");
@@ -2048,6 +2146,7 @@ namespace DeskMadeline
             int dir = Facing;
             Speed.X = SuperJumpH * dir;
             Speed.Y = JumpSpeed;
+            Speed.X += LiftBoost.X; Speed.Y += LiftBoost.Y;
             if (Ducking)
             {
                 Ducking = false;
@@ -2080,8 +2179,16 @@ namespace DeskMadeline
             wallBoostTimer = 0f;
             dashAttackTimer = 0f;  // Vanilla: wall jump clears the dash-attack window
             gliderBoostTimer = 0f;
+            // Vanilla asks the wall behind her for its lift when she has none of her own, so
+            // that wall-jumping off a window on the move takes that window's speed along the
+            // way standing on it would have.
+            if (LiftSpeed.X == 0f && LiftSpeed.Y == 0f)
+                foreach (Solid solid in Solids)
+                    if (OverlapsHitboxAt(solid, Pos.X + 3f * -dir, Pos.Y))
+                    { LiftSpeed = new PointF(solid.LiftX, solid.LiftY); break; }
             Speed.X = WallJumpHSpeed * dir;
             Speed.Y = JumpSpeed;
+            Speed.X += LiftBoost.X; Speed.Y += LiftBoost.Y;
             varJumpSpeed = Speed.Y;
             // Player.orig_WallJump only forces the long steering lock for a
             // SlowFall holdable (the jelly). Theo uses the normal neutral-wall-
@@ -2114,6 +2221,7 @@ namespace DeskMadeline
             wallBoostTimer = 0f;
             Speed.X = SuperWallJumpH * dir;
             Speed.Y = SuperWallJumpSpeed;
+            Speed.X += LiftBoost.X; Speed.Y += LiftBoost.Y;
             varJumpSpeed = Speed.Y;
             // Vanilla SuperWallJump does not set forceMove (can turn immediately)
             Facing = dir;
@@ -2392,6 +2500,12 @@ namespace DeskMadeline
             int rideY = (int)Math.Round(rideRemainder.Y, MidpointRounding.ToEven);
             rideRemainder = new PointF(rideRemainder.X - rideX, rideRemainder.Y - rideY);
             if (rideX != 0 || rideY != 0) Pos = new PointF(Pos.X + rideX, Pos.Y + rideY);
+            // Solid.MoveVExact ends by handing its rider its own lift speed. Here the rider
+            // reads it off the solid instead, which is the same sentence from the other end:
+            // whole pixels or not, what she leaves the ground with is what carried her.
+            foreach (Solid solid in Solids)
+                if (solid.Id == rideAlongId)
+                { LiftSpeed = new PointF(solid.LiftX, solid.LiftY); break; }
         }
 
         /// <summary>She is riding nothing; the next ride starts its fraction afresh.</summary>
@@ -2432,6 +2546,11 @@ namespace DeskMadeline
         public bool SweptInto(Solid solid, float dx, float dy)
         {
             if (!OverlapsHitbox(solid)) return true;
+
+            // Solid.MoveHExact hands its lift to what it shoves as well as to what it carries,
+            // so a window sweeping her along the desktop leaves her moving when she jumps out
+            // of its way.
+            LiftSpeed = new PointF(solid.LiftX, solid.LiftY);
 
             if (dx != 0f)
             {
@@ -2479,6 +2598,13 @@ namespace DeskMadeline
         public bool OverlapsHitbox(Solid solid)
         {
             HitboxAt(Pos.X, Pos.Y, out float l, out float t, out float r, out float b);
+            return Overlap(l, t, r, b, solid);
+        }
+
+        /// <summary>The same, from somewhere she is not: CollideCheck at a given position.</summary>
+        bool OverlapsHitboxAt(Solid solid, float x, float y)
+        {
+            HitboxAt(x, y, out float l, out float t, out float r, out float b);
             return Overlap(l, t, r, b, solid);
         }
 
@@ -2713,10 +2839,17 @@ namespace DeskMadeline
                 EnterNormal();
                 return;
             }
-            if (CanDash) { SweatAnimId = "idle"; State = StartDash(input); return; }
+            if (CanDash)
+            {
+                SweatAnimId = "idle";
+                Speed.X += LiftBoost.X; Speed.Y += LiftBoost.Y;
+                State = StartDash(input);
+                return;
+            }
             if (!input.GrabHeld)
             {
                 SweatAnimId = "idle";
+                Speed.X += LiftBoost.X; Speed.Y += LiftBoost.Y;
                 PlaySound("event:/char/madeline/grab_letgo");
                 EnterNormal();
                 return;
@@ -2784,6 +2917,7 @@ namespace DeskMadeline
             {
                 Stamina = 0;
                 SweatAnimId = "idle";
+                Speed.X += LiftBoost.X; Speed.Y += LiftBoost.Y;
                 EnterNormal();
             }
             else if (climbNoMoveTimer > 0f)

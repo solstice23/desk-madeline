@@ -23,6 +23,7 @@ static class Program
         failed += BumperChecks.Run();
         failed += PufferChecks.Run();    // the pufferfish, and the crystal it throws    // the pinball bumper, and what it ignores
         failed += PushChecks.Run();      // what a window moving into her does
+        failed += LiftChecks.Run();      // and what a window moving under her hands her
         failed += WaterChecks.Run();     // swimming, when the windows are water
         failed += SoundChecks.Run();      // super and hyper, at the timings people play them
         failed += DreamHyperChecks.Run(); // the dream hyper, and the crouch that decides it

@@ -42,6 +42,7 @@ namespace DeskMadeline
             public PointF DashDir;
             public int AppliedX, AppliedY;   // the offset this last asked for, in screen pixels
             public float OffsetX, OffsetY;   // and the same in game pixels, before rounding
+            public float VelX, VelY;         // and how fast it is going there, game pixels a second
             public readonly Point[] Told = new Point[32];   // places lately asked for
             public int ToldNext;
         }
@@ -65,6 +66,22 @@ namespace DeskMadeline
         public bool Active => floating.Count > 0;
 
         /// <summary>
+        /// What a block is moving at, in game pixels a second, as of the last frame it was
+        /// advanced -- which is the movement the desktop is showing now, a window taking a
+        /// frame to be where it was told. False for a window this is not drifting.
+        /// </summary>
+        public bool TryVelocity(IntPtr handle, out System.Drawing.PointF velocity)
+        {
+            if (floating.TryGetValue(handle, out Floating block))
+            {
+                velocity = new System.Drawing.PointF(block.VelX, block.VelY);
+                return true;
+            }
+            velocity = System.Drawing.PointF.Empty;
+            return false;
+        }
+
+        /// <summary>
         /// Advance every window one frame and move the ones whose whole-pixel offset changed.
         /// </summary>
         /// <param name="scale">Game pixels to screen pixels.</param>
@@ -81,10 +98,16 @@ namespace DeskMadeline
                 {
                     // FloatySpaceBlock starts each group at a random point of the sine, so a
                     // desktop full of them does not breathe in unison.
+                    float sine = (float)(random.NextDouble() * Math.PI * 2.0);
                     floating[window.Handle] = block = new Floating
                     {
                         Home = window.Rect,
-                        Sine = (float)(random.NextDouble() * Math.PI * 2.0)
+                        Sine = sine,
+                        // Where the offset already is, not zero: the offsets are last frame's,
+                        // and the first frame of a block that starts a third of the way round
+                        // the sine would otherwise read as four pixels of movement in one
+                        // frame -- and be handed to whoever is standing on it as such.
+                        OffsetY = 4f * (float)Math.Sin(sine),
                     };
                     Remember(block, window.Rect.Left, window.Rect.Top);
                 }
@@ -122,6 +145,15 @@ namespace DeskMadeline
                     + 4f * (float)Math.Sin(block.Sine)
                     + block.DashDir.Y * nudge;
 
+                // Platform.MoveV takes its lift speed from the movement asked for rather
+                // than the whole pixels that came of it, so a block bobbing a pixel every
+                // fifth frame still lifts smoothly rather than in bursts of sixty. Kept for
+                // whoever is standing on it to be handed; see Player.LiftSpeed.
+                if (dt > 0f)
+                {
+                    block.VelX = (offsetX - block.OffsetX) / dt;
+                    block.VelY = (offsetY - block.OffsetY) / dt;
+                }
                 block.OffsetX = offsetX;
                 block.OffsetY = offsetY;
                 // Whole game pixels, not whole screen pixels; see the remarks above.
