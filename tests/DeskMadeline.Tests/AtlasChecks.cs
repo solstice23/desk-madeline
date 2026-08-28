@@ -204,6 +204,53 @@ static class AtlasChecks
         })
             Check($"id \"{id}\" resolves", Sprites.Get(id, false) != null);
 
+        // The hair painted into the poses that carry no hair of their own, lifted out so it
+        // can be tinted with the rest of her. Counted against the frame it came from: every
+        // pixel of the game's hair red, and no others.
+        Console.WriteLine();
+        Console.WriteLine("  Painted hair, lifted out of the frames that wear no hair");
+        // Badeline is still the loaded skin here, and hers is painted in her own colours:
+        // nothing of the game's red to lift, so nothing is tinted and her art is left alone.
+        Check("a skin that painted its own is untouched (badeline asleep)",
+            Sprites.BakedHairMask("sleep00", false) == null);
+        Sprites.LoadAll(Path.Combine(Path.GetTempPath(), "deskmadeline-no-assets"), null, null);
+        foreach (string id in new[] { "sleep00", "wakeUp00" })
+        {
+            Bitmap frame = Sprites.Get(id, false), mask = Sprites.BakedHairMask(id, false);
+            int red = Painted(frame, 0xAC, 0x32, 0x32), shade = Painted(frame, 0x5A, 0x1A, 0x1A);
+            int lit = mask == null ? 0 : Lit(mask);
+            Check($"{id} has its hair painted in and lifted ({red} + {shade} px)",
+                mask != null && red > 0 && lit == red + shade);
+        }
+        Bitmap awake = Sprites.Get("idle00", false);
+        Check("a frame that wears its own hair has none painted in, and no mask",
+            awake != null && Painted(awake, 0xAC, 0x32, 0x32) == 0 &&
+            Sprites.BakedHairMask("idle00", false) == null);
+
         return failed;
+    }
+
+    /// <summary>How many pixels of one colour a frame has.</summary>
+    static int Painted(Bitmap frame, int r, int g, int b)
+    {
+        if (frame == null) return 0;
+        int n = 0;
+        for (int y = 0; y < frame.Height; y++)
+            for (int x = 0; x < frame.Width; x++)
+            {
+                Color px = frame.GetPixel(x, y);
+                if (px.A > 0 && px.R == r && px.G == g && px.B == b) n++;
+            }
+        return n;
+    }
+
+    /// <summary>How many pixels of a mask will be painted with the hair colour.</summary>
+    static int Lit(Bitmap mask)
+    {
+        int n = 0;
+        for (int y = 0; y < mask.Height; y++)
+            for (int x = 0; x < mask.Width; x++)
+                if (mask.GetPixel(x, y).A > 0) n++;
+        return n;
     }
 }

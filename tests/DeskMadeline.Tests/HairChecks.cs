@@ -91,6 +91,24 @@ static class HairChecks
         Check("the frames the game cannot supply are the elytra's and the longer climb sheet",
             onlyOurs.TrueForAll(id => id.StartsWith("fly") || id.StartsWith("climb")));
 
+        // PlayerSprite.HasHair: a frame the table has no entry for wears none. Two sheets
+        // answer that way, and both are poses with her hair painted into the sprite -- the
+        // sleeping sheet, which says hair="" outright, and the wakeUp sheet, which the game's
+        // table simply never mentions. She sleeps on the second of those, so drawing hair
+        // over anything the table cannot answer for put a second head of it beside the first.
+        Console.WriteLine();
+        Console.WriteLine("  Which frames wear hair at all (PlayerSprite.HasHair)");
+        int hairless = 0;
+        foreach (string frame in vanilla.Keys) if (!HairMeta.HasHair(frame)) hairless++;
+        Check($"every frame the game gives an offset for wears it ({hairless} would not)",
+            hairless == 0);
+        Check("the sleeping sheet does not, hair=\"\" being the game's way of saying so",
+            !HairMeta.HasHair("sleep00") && !HairMeta.HasHair("sleep11"));
+        Check("nor the wakeUp sheet, which is the frame she is held on while asleep",
+            !HairMeta.HasHair("wakeUp00") && !HairMeta.HasHair("wakeUp07"));
+        Check("while the frames beside them do", HairMeta.HasHair("idle00") &&
+            HairMeta.HasHair("duck") && HairMeta.HasHair("swim00"));
+
         return failed;
     }
 }

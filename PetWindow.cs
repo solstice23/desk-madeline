@@ -3050,11 +3050,12 @@ namespace DeskMadeline
                 }
                 else
                 {
-                    // Draw hair behind the body (hair first, body on top).
-                    // wakeUp frames already include full hair (curled sleep pose), and the
-                    // sleep sheet is hair="" in the game's own table: baked in, never overlaid.
-                    if (animator.CurrentId != "wakeUp" &&
-                        !HairMeta.IsHairless(animator.CurrentFrameId))
+                    // Draw hair behind the body (hair first, body on top). Which frames get
+                    // any is PlayerSprite.HasHair's question, and its answer is the frame
+                    // table: the sleep sheet says hair="" outright, and the wakeUp sheet she
+                    // lies asleep on is simply not in the table at all. Both are poses with
+                    // the hair painted in, and DrawBody tints that to the colour of the day.
+                    if (HairMeta.HasHair(animator.CurrentFrameId))
                     {
                         DrawCatTail(g, camX, camY);
                         DrawHair(g, camX, camY);
@@ -3694,7 +3695,15 @@ namespace DeskMadeline
                 if (player.IsLowStamina && tiredFlash)
                     Sprites.DrawTinted(g, frame, Color.Red, x, y, w, h);
                 else
+                {
                     g.DrawImage(frame, x, y, w, h);
+                    // A pose with its hair painted in -- sleeping, mostly -- wears whatever
+                    // colour her hair is, rather than the red it was drawn in. Nothing here
+                    // for an ordinary frame: the mask is null and asked for only once.
+                    Bitmap paintedHair = Sprites.BakedHairMask(animator.CurrentFrameId, flip);
+                    if (paintedHair != null)
+                        Sprites.DrawTinted(g, paintedHair, player.HairColor, x, y, w, h);
+                }
             }
         }
 

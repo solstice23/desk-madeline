@@ -97,6 +97,9 @@ namespace DeskMadeline
     {
         private static readonly Dictionary<string, Bitmap> _tex = new Dictionary<string, Bitmap>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, Bitmap> _texFlip = new Dictionary<string, Bitmap>(StringComparer.OrdinalIgnoreCase);
+        // Built on demand from the frames above; a null value means asked and there is none.
+        private static readonly Dictionary<string, Bitmap> _hairMask = new Dictionary<string, Bitmap>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, Bitmap> _hairMaskFlip = new Dictionary<string, Bitmap>(StringComparer.OrdinalIgnoreCase);
 
         public static string AssetsDir;
 
@@ -113,6 +116,12 @@ namespace DeskMadeline
             foreach (var kv in _texFlip) kv.Value.Dispose();
             _tex.Clear();
             _texFlip.Clear();
+            // Derived from those, so they go with them; a skin brings its own frames and its
+            // own answer to whether any hair is painted into them.
+            foreach (var kv in _hairMask) kv.Value?.Dispose();
+            foreach (var kv in _hairMaskFlip) kv.Value?.Dispose();
+            _hairMask.Clear();
+            _hairMaskFlip.Clear();
 
             // Celeste's own art comes from its atlases, whether those are beside the app or
             // in an install.  assets\ is laid over the top and holds only what the game has
@@ -306,6 +315,62 @@ namespace DeskMadeline
         }
 
         public static bool Has(string id) => _tex.ContainsKey(id);
+
+        /// <summary>
+        /// The hair the artist drew into a frame, as a mask to be tinted, or null for a frame
+        /// that has none.
+        /// </summary>
+        /// <remarks>
+        /// Most poses carry no hair at all -- PlayerHair draws it over them -- but the ones it
+        /// is left off, the sleeping sheet above all, have it painted into the sprite in her
+        /// ordinary red. In the game that is always the right red, because nobody lies down at
+        /// a campfire holding two dashes; on a desktop she naps whenever she is left alone, and
+        /// with two dashes the pose came out red-haired while every other frame of her was
+        /// pink. So the painted hair is lifted into a mask -- white where the red is, and the
+        /// bangs sprite's own grey where its shade is -- and drawing that tinted paints it
+        /// whatever colour her hair is now, the shade included, since DrawTinted multiplies.
+        ///
+        /// Only the game's own red is lifted. A skin that paints its sleeping hair some other
+        /// colour has already answered the question for itself and is left alone.
+        /// </remarks>
+        public static Bitmap BakedHairMask(string id, bool flipped)
+        {
+            if (id == null) return null;
+            var cache = flipped ? _hairMaskFlip : _hairMask;
+            if (cache.TryGetValue(id, out Bitmap cached)) return cached;
+            Bitmap mask = BuildHairMask(Get(id, flipped));
+            cache[id] = mask;   // null included: a frame with no painted hair is asked once
+            return mask;
+        }
+
+        // Madeline's hair as the frames paint it, and under it the shade the bangs sprite
+        // carries as a grey. 0x5A/0xAC and 134/255 are the same ratio to within a unit; the
+        // grey is used so a sleeping head and an awake one are shaded alike.
+        static readonly Color PaintedHair = Color.FromArgb(0xAC, 0x32, 0x32);
+        static readonly Color PaintedHairShade = Color.FromArgb(0x5A, 0x1A, 0x1A);
+        const int BangsShade = 134;
+
+        static Bitmap BuildHairMask(Bitmap frame)
+        {
+            if (frame == null) return null;
+            Bitmap mask = null;
+            for (int y = 0; y < frame.Height; y++)
+                for (int x = 0; x < frame.Width; x++)
+                {
+                    Color px = frame.GetPixel(x, y);
+                    if (px.A == 0) continue;
+                    int shade;
+                    if (px.R == PaintedHair.R && px.G == PaintedHair.G && px.B == PaintedHair.B)
+                        shade = 255;
+                    else if (px.R == PaintedHairShade.R && px.G == PaintedHairShade.G &&
+                             px.B == PaintedHairShade.B)
+                        shade = BangsShade;
+                    else continue;
+                    mask ??= new Bitmap(frame.Width, frame.Height, PixelFormat.Format32bppArgb);
+                    mask.SetPixel(x, y, Color.FromArgb(px.A, shade, shade, shade));
+                }
+            return mask;
+        }
 
         /// <summary>Build frame-id list from a sequence (prefix + two-digit index, or a single unprefixed frame).</summary>
         public static string[] Seq(string prefix, int from, int to)

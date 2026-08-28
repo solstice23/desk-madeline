@@ -277,6 +277,17 @@ namespace DeskMadeline
             return hairless.Contains(sheet);
         }
 
+        /// <summary>Whether hair is drawn over this frame at all.</summary>
+        /// <remarks>
+        /// PlayerSprite.HasHair is a lookup and nothing more: a frame the table has no entry
+        /// for has no hair. That is not only the sheets marked hair="" -- the whole wakeUp
+        /// sheet has no entry either, and it is the sheet she sleeps on, curled up with her
+        /// hair already painted into the pose. Drawing over those put a second head of hair
+        /// beside the first, in the second's colour.
+        /// </remarks>
+        public static bool HasHair(string frameId)
+            => !IsHairless(frameId) && TryGet(frameId, out _);
+
         public static void LoadVanilla(string spritesXmlPath)
         {
             Vanilla.Clear();
