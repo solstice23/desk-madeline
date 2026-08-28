@@ -212,6 +212,59 @@ static class WaterChecks
         Check("and nothing sounds water_out while she stays in",
             !heard.Contains("event:/char/madeline/water_out"));
 
+        Console.WriteLine();
+        Console.WriteLine("  Dashing out of the water (Player.SwimUpdate, which never calls StartDash)");
+        // Every other state reaches the dash through StartDash, whose first two lines spend
+        // the dash and set wasDashB. Swimming does not: it takes the buffers and returns the
+        // state, so the count is not touched at all. Swimming refills every frame in any case,
+        // but a frame later and only while she is still in the water -- which is the
+        // difference here, since a dash that carries her out of it kept nothing before.
+        var swimDash = InPool(Surface + 200f);
+        var dashInput = new PetInput { MoveX = 1, AimX = 1, FeatherX = 1 };
+        Run(swimDash, Neutral, 5);
+        swimDash.BufferDash();
+        int lowest = swimDash.Dashes, dashedAt = -1;
+        for (int i = 0; i < 40; i++)
+        {
+            dashInput.DashPressed = swimDash.HasDashBuffer;
+            swimDash.Update(Dt, dashInput);
+            if (swimDash.State == Player.StDash && dashedAt < 0) dashedAt = i + 1;
+            lowest = Math.Min(lowest, swimDash.Dashes);
+        }
+        Check("the dash still comes out of the swim", dashedAt == 1);
+        Check($"and the count is never spent, not even for a frame ({lowest} at its lowest)",
+            lowest == 1);
+
+        // Dashing up and out of it. Swimming would have handed the count back a few frames
+        // later, so the pool above cannot tell a dash that was never spent from one that was
+        // refunded; out here nothing refunds anything, and she keeps it only if it was never
+        // taken. Started deep enough to be swimming: SwimCheck wants water 8 above her too.
+        var leaving = InPool(Surface + 20f);
+        var upInput = new PetInput { MoveY = -1, AimY = -1, FeatherY = -1 };
+        Run(leaving, Neutral, 3);
+        leaving.BufferDash();
+        int leastOut = leaving.Dashes;
+        bool everOut = false;
+        for (int i = 0; i < 30; i++)
+        {
+            upInput.DashPressed = leaving.HasDashBuffer;
+            leaving.Update(Dt, upInput);
+            leastOut = Math.Min(leastOut, leaving.Dashes);
+            if (leaving.Pos.Y < Surface) everOut = true;
+        }
+        Check("the dash carries her up out of the water", everOut);
+        Check($"and she still has the one she went in with ({leastOut} at its lowest)",
+            leastOut == 1);
+
+        // The other states are unchanged: NormalUpdate still goes through StartDash.
+        var inAir = InPool(Surface - 200f);
+        var airInput = new PetInput { MoveX = 1, AimX = 1, FeatherX = 1 };
+        inAir.BufferDash();
+        airInput.DashPressed = inAir.HasDashBuffer;
+        inAir.Update(Dt, airInput);
+        Check("a dash out of the air still spends it, as StartDash does",
+            inAir.State == 2 && inAir.Dashes == 0);
+
         return failed;
     }
 }

@@ -2633,7 +2633,17 @@ namespace DeskMadeline
             if (CanUnDuck) Ducking = false;
             if (CanDash)
             {
-                bool crouchDash = ConsumeDashRequest();
+                // Player.SwimUpdate is the one state that goes into the dash itself rather
+                // than through StartDash: it takes demoDashed and both buffers and returns
+                // the state, and so never runs the two lines StartDash opens with. A dash
+                // out of water therefore costs nothing and leaves wasDashB -- LastDashWasTwo
+                // here, which picks the pink or the red dash sound -- saying whatever the
+                // dash before it did. Swimming hands the count back a few frames later in
+                // any case, orig_Update refilling every frame she is in the state, but not
+                // taking it is what keeps her hair from turning used and what lets a dash
+                // that leaves the water still have one in it.
+                bool crouchDash = crouchDashBufferTimer > 0f;
+                ConsumeDash();
                 State = BeginDash(input, crouchDash);
                 return;
             }
