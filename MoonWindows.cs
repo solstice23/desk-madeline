@@ -214,7 +214,16 @@ namespace DeskMadeline
                 Win32.SWP_NOSIZE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE |
                 Win32.SWP_ASYNCWINDOWPOS);
 
-        static readonly Random random = new Random();
+        readonly Random random;
+
+        public MoonWindows() : this(null) { }
+
+        /// <summary>
+        /// A seed makes the drift repeatable, which is what a check wants of it: every block
+        /// starts at a random point of the sine, and a measurement of how far one sank is a
+        /// different number at every phase of it.
+        /// </summary>
+        public MoonWindows(int? seed) => random = seed.HasValue ? new Random(seed.Value) : new Random();
 
         static float Approach(float value, float target, float amount)
             => value > target ? Math.Max(value - amount, target) : Math.Min(value + amount, target);

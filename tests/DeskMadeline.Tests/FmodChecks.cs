@@ -135,7 +135,10 @@ static class FmodChecks
                 installed.Version == FmodRuntime.DefaultVersion);
         }
 
-        failed += Fetching();
+        // Called rather than added: Fetching counts its own failures into the same field
+        // Check does, and "failed += Fetching()" would read that field before the call and
+        // write it back after, losing whatever failed inside.
+        Fetching();
 
         try { Directory.Delete(root, true); } catch { }
         return failed;
