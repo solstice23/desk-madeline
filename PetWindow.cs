@@ -1107,7 +1107,7 @@ namespace DeskMadeline
             foreach (Puffer puffer in puffers)
             {
                 if (puffer.Removed) { RequestPufferRemoval(puffer); continue; }
-                puffer.Update(dt, player, player.Solids, theos);
+                puffer.Update(dt, player, player.Solids, theos, seekerWorldBounds.Bottom);
                 while (puffer.SoundEvents.Count > 0)
                 {
                     PlayerSoundEvent sound = puffer.SoundEvents.Dequeue();

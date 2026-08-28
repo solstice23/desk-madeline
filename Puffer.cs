@@ -22,6 +22,14 @@ namespace DeskMadeline
     /// half seconds after it bursts, the last half of which it spends curving back to where it
     /// started. Being dragged is the desktop's, and moves where it starts from with it -- so a
     /// puffer put somewhere comes back to that place rather than to where it was spawned.
+    ///
+    /// What is left out of the class, and why: HitSpring, GotoHitSpeed and the PufferCollider
+    /// it answers are the spring family, and nothing on a desktop is a spring; Added sets a
+    /// draw depth for maps outside the vanilla level set; and Explode's screen shake and its
+    /// three displacement bursts want a Level to ripple. Everything else in the reference is
+    /// here, including the parts it is easy to read past: it is never carried by anything it
+    /// floats over, a solid that cannot push it clear sets it off, and a boop drops it back
+    /// to the middle of its own wander before it is thrown.
     /// </remarks>
     public sealed class Puffer
     {
@@ -102,7 +110,8 @@ namespace DeskMadeline
             };
         }
 
-        public void Update(float dt, Player player, IList<Solid> solids, IList<TheoCrystal> theos)
+        public void Update(float dt, Player player, IList<Solid> solids, IList<TheoCrystal> theos,
+            float worldBottom = float.PositiveInfinity)
         {
             Explosions = 0;
             timeActive += dt;
@@ -114,7 +123,9 @@ namespace DeskMadeline
             }
             else playerAliveFade = Approach(playerAliveFade, 0f, dt);
             if (cannotHitTimer > 0f) cannotHitTimer -= dt;
-            if (cantExplodeTimer > 0f) cantExplodeTimer -= dt;
+            // Held while it is gone: the half second it cannot go off for is meant to be
+            // spent after it re-forms, not while it is away.
+            if (State != States.Gone && cantExplodeTimer > 0f) cantExplodeTimer -= dt;
             if (alertTimer > 0f) alertTimer -= dt;
             Wigglers(dt);
             // Wiggler-driven squash settles back to round, as Puffer.Update's does.
@@ -158,6 +169,17 @@ namespace DeskMadeline
                     hitSpeed.X = Approach(hitSpeed.X, 0f, 150f * dt);
                     hitSpeed = TowardsZero(hitSpeed, StunnedAccel * dt);
                     if (ProximityExplodeCheck(player, solids)) { Explode(player, solids, theos); break; }
+                    // Knocked out of the world. Vanilla measures five pixels past the bottom
+                    // of the room; here that is the bottom of the monitors, which is the only
+                    // edge a boop can drive it through -- and it is the one thing loose on the
+                    // desktop that is not caught and put back, because it catches itself: it
+                    // hides where it fell and swims home from where it started.
+                    if (Pos.Y - HalfHeight >= worldBottom + 5f)
+                    {
+                        animator.Play("hidden", true);
+                        GotoGone();
+                        break;
+                    }
                     Touch(player, solids, theos);
                     if (hitSpeed.X == 0f && hitSpeed.Y == 0f)
                     {
@@ -185,19 +207,38 @@ namespace DeskMadeline
         void Touch(Player player, IList<Solid> solids, IList<TheoCrystal> theos)
         {
             if (player == null || player.IsDead || player.IsRespawning) return;
-            if (State == States.Gone || cantExplodeTimer > 0f || cannotHitTimer > 0f) return;
+            if (State == States.Gone || cantExplodeTimer > 0f) return;
             if (!player.OverlapsBox(Pos.X - TouchHalfWidth, Pos.Y + TouchTop,
                 Pos.X + TouchHalfWidth, Pos.Y + TouchBottom)) return;
 
-            // Vanilla measures her feet against where it was before the sine moved it this
-            // frame, so that its own wander cannot decide which of the two happens.
-            if (player.Pos.Y > lastSpeed.Y + 3f) { Explode(player, solids, theos); }
-            else
+            // The tenth of a second is refreshed by the touch and not by what came of it, so
+            // standing on one holds it open: she has to come off it before it can answer her
+            // again. Running the clock down under her foot would let it boop her twice.
+            if (cannotHitTimer <= 0f)
             {
-                player.Bounce(Pos.Y - HalfHeight);
-                GotoHit();
+                // Vanilla measures her feet against where it was before the sine moved it this
+                // frame, so that its own wander cannot decide which of the two happens.
+                if (player.Pos.Y > lastSpeed.Y + 3f) { Explode(player, solids, theos); }
+                else
+                {
+                    player.Bounce(Pos.Y - HalfHeight);
+                    GotoHit();
+                    // Player.OnPlayer's tail: it stops wandering where it stands. Back to the
+                    // middle of its bob, the sine begun again, and that spot is home for the
+                    // wander that follows -- without which it slides sideways as it is booped.
+                    MoveToAnchorX();
+                    sineCounter = 0f;
+                    anchor = lastSine = Pos;
+                }
             }
             cannotHitTimer = .1f;
+        }
+
+        /// <summary>MoveToX(anchorPosition.X): back to the middle of its own wander.</summary>
+        void MoveToAnchorX()
+        {
+            counter.X = 0f;
+            Pos.X = (float)Math.Round(anchor.X, MidpointRounding.ToEven);
         }
 
         bool ProximityExplodeCheck(Player player, IList<Solid> solids)
@@ -466,8 +507,10 @@ namespace DeskMadeline
                 float angle = (float)Math.Atan2(to.Y - from.Y, to.X - from.X)
                     + eyeSpin * (float)(Math.PI * 2.0) * 2f;
                 float dx = (float)Math.Cos(angle), dy = (float)Math.Sin(angle);
-                return new PointF((float)Math.Round(from.X + dx),
-                    (float)Math.Round(from.Y + Map(dy, -1f, 2f, -1f, 1f)));
+                // Vanilla rounds the step and adds it, rather than rounding where it lands:
+                // from a fractional position the two differ by a pixel, and the eye is one.
+                return new PointF(from.X + (float)Math.Round(dx),
+                    from.Y + (float)Math.Round(Map(dy, -1f, 2f, -1f, 1f)));
             }
         }
 
@@ -523,8 +566,7 @@ namespace DeskMadeline
         public void Squish(Player player, IList<Solid> solids, IList<TheoCrystal> theos)
         {
             if (State == States.Gone) return;
-            Explode(player, solids, theos);
-            GotoGone();
+            Explode(player, solids, theos);   // which goes on to GotoGone, as vanilla's does
         }
 
         void Wigglers(float dt)

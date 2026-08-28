@@ -284,6 +284,67 @@ static class PufferChecks
         Check($"and comes back on its own, so a nudge of a window costs nothing"
             + $" ({trapped.State})", trapped.State == Puffer.States.Idle);
 
+        Console.WriteLine();
+        Console.WriteLine("  Booped (Puffer.OnPlayer's tail, and the tenth of a second after)");
+        // One boop, however long she stays on it. Vanilla refreshes cannotHitTimer from the
+        // touch rather than from what came of it, so the clock never runs down under her foot.
+        var boopable = Still(new PointF(0f, -40f));
+        var stander = OnFloor(0f);
+        int answers = 0;
+        for (int i = 0; i < 40; i++)
+        {
+            // Kept on it, as though she never left: at its middle rather than four pixels
+            // over it, so that its own flight cannot carry it out from under her and break
+            // the contact this is about.
+            stander.Pos = new PointF(0f, boopable.Pos.Y);
+            boopable.Update(Dt, stander, World, NoCrystals);
+            // Counted by ear: a second boop while it is already flying is invisible in the
+            // state and plain in the sound, which is the one it makes on being booped.
+            foreach (string heard in Heard(boopable).Split(", "))
+                if (heard.EndsWith("puffer_boop")) answers++;
+            answers += boopable.Explosions;
+        }
+        Check($"standing on one is answered once, not once every tenth of a second ({answers})",
+            answers == 1);
+
+        // The boop drops it back to the middle of its own wander: MoveToX(anchorPosition.X),
+        // the sine begun again, and that spot taken as home. Without it a puffer booped at the
+        // far end of its swing is thrown from there and wanders about the wrong place after.
+        var swinging = new Puffer(new PointF(0f, -40f), true, (float)(Math.PI / 2.0));
+        float offAnchor = swinging.Pos.X;      // three pixels out at the end of the swing
+        var booper = OnFloor(0f);
+        booper.Pos = new PointF(offAnchor, swinging.Pos.Y - 4f);
+        swinging.Update(Dt, booper, World, NoCrystals);
+        Console.WriteLine($"      booped at {offAnchor:F1} out on its swing, it came back to"
+            + $" {swinging.Pos.X:F1}");
+        Check("a boop drops it back to the middle of its wander",
+            swinging.State == Puffer.States.Hit && Math.Abs(offAnchor) > 2f &&
+            Math.Abs(swinging.Pos.X) < 0.51f);
+
+        Console.WriteLine();
+        Console.WriteLine("  Knocked out of the world (Puffer.Update's room-bottom rule)");
+        // A boop drives it downward at 200, so the one edge it can be knocked through is the
+        // bottom. Vanilla hides it five pixels past the room and sends it home; here the room
+        // is the monitors. Nothing else catches it, and nothing else needs to.
+        var falling = Still(new PointF(0f, -40f));
+        var pusher = OnFloor(0f);
+        pusher.Pos = new PointF(0f, falling.Pos.Y - 4f);
+        falling.Update(Dt, pusher, World, NoCrystals);       // boop: hitSpeed 200 downward
+        var away2 = OnFloor(400f);
+        bool wentGone = false;
+        for (int i = 0; i < 60 && !wentGone; i++)
+        {
+            // A world whose floor is just below it, and no solids to stop the fall.
+            falling.Update(Dt, away2, new List<Solid>(), NoCrystals, worldBottom: -44f);
+            wentGone = falling.State == Puffer.States.Gone;
+        }
+        Check("knocked below the bottom of the desktop it goes, rather than sinking forever",
+            wentGone && falling.FrameId != null);
+        for (int i = 0; i < 60 * 3; i++)
+            falling.Update(Dt, away2, new List<Solid>(), NoCrystals, worldBottom: -44f);
+        Check($"and swims home to where it started ({falling.Pos.X:F0},{falling.Pos.Y:F0})",
+            falling.State == Puffer.States.Idle && Math.Abs(falling.Pos.Y - -40f) < 3f);
+
         // It floats: Puffer.IsRiding is false for a solid, so a window under one carries it
         // nowhere however far it goes.
         var floating = Still(new PointF(0f, -12f));
