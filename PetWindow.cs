@@ -2415,7 +2415,11 @@ namespace DeskMadeline
         ///
         /// The crystal follows the game, which spares it under Invincible: TheoCrystal.OnSquish
         /// asks the assist before it calls Die. The seeker is spared by nothing, which is also
-        /// the game's answer, and it is hostile, so it keeps it. Their sub-pixel remainders are kept here rather than in
+        /// the game's answer, and it is hostile, so it keeps it. Nor is the pufferfish, which
+        /// needs no sparing: Puffer.OnSquish sets it off and it swims back two and a half
+        /// seconds later. It is the one thing here a window never carries, its IsRiding being
+        /// false for solids and jumpthrus alike -- it floats, so nothing it is over is holding
+        /// it up. Their sub-pixel remainders are kept here rather than in
         /// them, one entry per thing being carried, because riding a window is a desktop
         /// arrangement and not something a Celeste entity knows about itself.
         /// </remarks>
@@ -2450,6 +2454,21 @@ namespace DeskMadeline
                         -TheoCrystal.ColliderHeight, 0f, piece, dx, dy) && !player.Invincible)
                         theo.Crush();
                     theo.SnapIntoView(at);
+                }
+                foreach (Puffer puffer in puffers)
+                {
+                    if (puffer.Removed || puffer.BeingDragged ||
+                        puffer.State == Puffer.States.Gone) continue;
+                    // No Carry: Puffer.IsRiding is false for a solid and for a jumpthru alike,
+                    // so a window sweeps past a fish floating over it rather than taking it
+                    // along. Shoved by one, though, like every other Actor in the scene -- and
+                    // what cannot be shoved clear goes off where it stands.
+                    if (teleported) continue;
+                    var floating = puffer.Pos;
+                    if (!ActorSweep.Push(solids, ref floating, Puffer.HalfWidth,
+                            -Puffer.HalfHeight, Puffer.HalfHeight, piece, dx, dy))
+                        puffer.Squish(player, solids, theos);
+                    puffer.Pos = floating;
                 }
                 foreach (Seeker seeker in seekers)
                 {

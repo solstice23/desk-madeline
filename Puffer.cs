@@ -29,7 +29,7 @@ namespace DeskMadeline
         const float BounceSpeed = 200f, ExplodeRadius = 40f, DetectRadius = 32f;
         const float StunnedAccel = 320f, AlertedRadius = 60f, CantExplodeTime = .5f;
         /// <summary>Collider = Hitbox(12, 10, -6, -5): six either side, five above and below.</summary>
-        const float HalfWidth = 6f, HalfHeight = 5f;
+        public const float HalfWidth = 6f, HalfHeight = 5f;
         /// <summary>PlayerCollider = Hitbox(14, 12, -7, -7): a touch wider, and higher up.</summary>
         const float TouchHalfWidth = 7f, TouchTop = -7f, TouchBottom = 5f;
 
@@ -508,6 +508,24 @@ namespace DeskMadeline
         }
 
         public void Remove() => Removed = true;
+
+        /// <summary>
+        /// Puffer.OnSquish: a solid that cannot push it clear sets it off where it stands and
+        /// it is gone -- which, being a puffer, is two and a half seconds and a swim home.
+        /// </summary>
+        /// <remarks>
+        /// Vanilla wiggles three pixels for somewhere to go first, and ActorSweep has already
+        /// done that by the time this is called. It is spared nothing: the crystal has the
+        /// invincibility assist behind it and the jellyfish is spared here for being somebody's
+        /// pet, but a puffer goes off and comes back on its own, so there is nothing to spare
+        /// it from.
+        /// </remarks>
+        public void Squish(Player player, IList<Solid> solids, IList<TheoCrystal> theos)
+        {
+            if (State == States.Gone) return;
+            Explode(player, solids, theos);
+            GotoGone();
+        }
 
         void Wigglers(float dt)
         {

@@ -241,6 +241,56 @@ static class PufferChecks
         Check("a puffer that has gone off draws no arc",
             vanished.AggroArc(at, inward, alpha) == 0);
 
+        Console.WriteLine();
+        Console.WriteLine("  A window moving into one (Solid.MoveHExact, Puffer.OnSquish)");
+        // Every Actor in the scene is walked by a moving solid, and a puffer is one -- it was
+        // the only thing loose on the desktop that a window used to pass straight through.
+        var shoved = Still(new PointF(0f, -40f));
+        var wall = new Solid { Id = new IntPtr(7), L = -60f, T = -80f, R = -10f, B = 0f };
+        var world = new List<Solid> { Floor(), wall };
+        // Eight pixels to the right, arriving over it: the fish is six wide either way, so a
+        // wall whose right edge reaches -10 + 8 has it by four.
+        var sweeping = new Solid
+        { Id = wall.Id, L = wall.L + 8f, T = wall.T, R = wall.R + 8f, B = wall.B };
+        world[1] = sweeping;
+        var pushedTo = shoved.Pos;
+        bool cleared = ActorSweep.Push(world, ref pushedTo, Puffer.HalfWidth,
+            -Puffer.HalfHeight, Puffer.HalfHeight, sweeping, 8f, 0f);
+        shoved.Pos = pushedTo;
+        Console.WriteLine($"      a window sweeping into it left it at {shoved.Pos.X:F0}"
+            + $" (it was at 0, the window's edge is now at {sweeping.R:F0})");
+        Check("a window sweeping into a puffer shoves it along", cleared && shoved.Pos.X > 0f);
+        Check("just far enough to be clear of it, and no further than the window went",
+            Math.Abs(shoved.Pos.X - (sweeping.R + Puffer.HalfWidth)) < 0.01f &&
+            shoved.Pos.X <= 8f);
+
+        // Against something solid behind it there is nowhere to go, and vanilla's answer to
+        // that is not to leave it inside: Puffer.OnSquish sets it off and it is gone.
+        var trapped = Still(new PointF(0f, -40f));
+        var behind = new Solid { Id = new IntPtr(8), L = 6f, T = -80f, R = 60f, B = 0f };
+        var vice = new List<Solid> { Floor(), behind,
+            new Solid { Id = new IntPtr(9), L = -60f, T = -80f, R = -6f, B = 0f } };
+        var closing = new Solid { Id = new IntPtr(9), L = -56f, T = -80f, R = -2f, B = 0f };
+        vice[2] = closing;
+        var nowhere = trapped.Pos;
+        bool clearedTrap = ActorSweep.Push(vice, ref nowhere, Puffer.HalfWidth,
+            -Puffer.HalfHeight, Puffer.HalfHeight, closing, 4f, 0f);
+        if (!clearedTrap) trapped.Squish(faraway, vice, NoCrystals);
+        Check("one with a wall behind it cannot be pushed clear", !clearedTrap);
+        Check("so it goes off where it stands, as Puffer.OnSquish does",
+            trapped.State == Puffer.States.Gone && trapped.Explosions == 1);
+        // Two and a half seconds and it swims home, which is why it needs no sparing.
+        for (int i = 0; i < 60 * 3; i++) trapped.Update(Dt, faraway, vice, NoCrystals);
+        Check($"and comes back on its own, so a nudge of a window costs nothing"
+            + $" ({trapped.State})", trapped.State == Puffer.States.Idle);
+
+        // It floats: Puffer.IsRiding is false for a solid, so a window under one carries it
+        // nowhere however far it goes.
+        var floating = Still(new PointF(0f, -12f));
+        var under = new Solid { Id = new IntPtr(10), L = -60f, T = 0f, R = 60f, B = 40f };
+        Check("a window it is floating over never carries it",
+            !ActorSweep.RidingOn(under, floating.Pos, Puffer.HalfWidth, Puffer.HalfHeight));
+
         return failed;
     }
 
