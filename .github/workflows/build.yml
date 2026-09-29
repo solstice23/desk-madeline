@@ -23,7 +23,12 @@ jobs:
       contents: write
 
     steps:
+      # The whole history, not just the last commit: the build number is the count of commits
+      # up to this one, and a shallow checkout would count one. The build leaves the number out
+      # rather than stamp a wrong one, but that would leave the release without it.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -68,8 +73,9 @@ jobs:
       # the download was actually built from. Pushing a tag does not start this workflow again;
       # the trigger above is filtered to branches.
       #
-      # The two labelled lines in the notes are read back by the pet's update check, which
-      # compares that commit against the one stamped into itself. Keep them, and their names.
+      # The labelled lines in the notes are read back by the pet's update check, which compares
+      # that commit against the one stamped into itself and shows the number beside it. Keep
+      # them, and their names.
       - name: Publish
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         env:
@@ -81,18 +87,20 @@ jobs:
 
           $short = $env:GITHUB_SHA.Substring(0, 7)
           $committed = git log -1 --format=%cI
+          $number = git rev-list --count HEAD
           # In the title, because the line GitHub puts beside it cannot be moved: published_at
           # is set once, when a release is first published, and only republishing resets it --
           # which is the thing that notifies everyone watching. So the release goes on saying it
           # was published whenever the first build was, and the title is where it says what it
           # actually is now.
           $when = ([datetimeoffset]$committed).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'")
-          $title = "Latest build ($short) - $when"
+          $title = "Latest build $short (#$number) - $when"
           $notes = @"
           This is the latest nightly build of the project.
 
           commit: $env:GITHUB_SHA
           committed: $committed
+          number: $number
           "@
           Set-Content notes.md -Value $notes -Encoding utf8
 

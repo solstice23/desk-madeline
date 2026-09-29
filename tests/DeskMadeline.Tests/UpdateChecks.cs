@@ -77,6 +77,11 @@ static class UpdateChecks
         Check("and with no date it is the hash alone",
             BuildStamp.Describe("c0ffee1", null) == "c0ffee1");
         Check("with one, both", BuildStamp.Describe("c0ffee1", Noon).StartsWith("c0ffee1  ·  "));
+        Check("a build number goes in brackets after the hash, which stays",
+            BuildStamp.Describe("c0ffee1", Noon, 412).StartsWith("c0ffee1 (#412)  ·  "));
+        Check("and with no date, the hash and its number alone",
+            BuildStamp.Describe("c0ffee1", null, 412) == "c0ffee1 (#412)");
+        Check("no number is no brackets", BuildStamp.Describe("c0ffee1", null, 0) == "c0ffee1");
 
         // The notes the build workflow writes, read back. Two labelled lines in among prose
         // that anybody might edit, so what matters is finding them and not the rest.
@@ -88,6 +93,12 @@ static class UpdateChecks
             BuildStamp.Parse(Labelled(notes, "committed")) == Noon);
         Check("a line that is not there is not invented", Labelled(notes, "author") == "");
         Check("and neither is one from notes somebody emptied", Labelled("", "commit") == "");
+        Check("the build number comes back out",
+            BuildStamp.ParseNumber(Labelled(notes + "number: 412\r\n", "number")) == 412);
+        Check("notes from before there were numbers give none, not a guess",
+            BuildStamp.ParseNumber(Labelled(notes, "number")) == 0);
+        Check("and nonsense in its place is no number either",
+            BuildStamp.ParseNumber("12a") == 0 && BuildStamp.ParseNumber("-3") == 0);
 
         Console.WriteLine();
         Console.WriteLine("  What the offer says it is handing over");

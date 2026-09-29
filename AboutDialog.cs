@@ -172,7 +172,7 @@ namespace DeskMadeline
         /// </remarks>
         static string Version()
         {
-            if (BuildStamp.Known) return BuildStamp.Describe(BuildStamp.Commit, BuildStamp.Made);
+            if (BuildStamp.Known) return BuildStamp.Title();
 
             var assembly = Assembly.GetExecutingAssembly();
             string version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()

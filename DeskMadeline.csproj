@@ -83,6 +83,23 @@
           ContinueOnError="true" IgnoreExitCode="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="CommitDate" />
     </Exec>
+    <!--
+      The build number: how many commits lead up to this one, which only ever goes up along
+      master. A shallow clone has only the last few to count and would call every build #1, so
+      it gets no number at all rather than a wrong one; CI checks out the whole history for this.
+    -->
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-parse --is-shallow-repository"
+          ConsoleToMSBuild="true" StandardOutputImportance="low"
+          ContinueOnError="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="CommitShallow" />
+    </Exec>
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-list --count HEAD"
+          Condition="'$(CommitShallow.Trim())' == 'false'"
+          ConsoleToMSBuild="true" StandardOutputImportance="low"
+          ContinueOnError="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="CommitNumber" />
+      <Output TaskParameter="ExitCode" PropertyName="CommitNumberExit" />
+    </Exec>
     <ItemGroup Condition="'$(CommitHashExit)' == '0' And '$(CommitHash)' != ''">
       <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
         <_Parameter1>CommitHash</_Parameter1>
@@ -91,6 +108,12 @@
       <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
         <_Parameter1>CommitDate</_Parameter1>
         <_Parameter2>$(CommitDate.Trim())</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+    <ItemGroup Condition="'$(CommitNumberExit)' == '0' And '$(CommitNumber)' != ''">
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>CommitNumber</_Parameter1>
+        <_Parameter2>$(CommitNumber.Trim())</_Parameter2>
       </AssemblyAttribute>
     </ItemGroup>
   </Target>

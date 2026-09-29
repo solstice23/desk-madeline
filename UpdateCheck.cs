@@ -38,6 +38,8 @@ namespace DeskMadeline
             /// <summary>The commit that release was built from, full length, or empty.</summary>
             public readonly string Commit;
             public readonly DateTimeOffset? Made;
+            /// <summary>Its build number, or 0 when the notes do not say -- older ones do not.</summary>
+            public readonly int Number;
             /// <summary>The release's own page.</summary>
             public readonly string Page;
             /// <summary>The file itself, which is what the download button opens.</summary>
@@ -48,15 +50,15 @@ namespace DeskMadeline
             public readonly string Error;
 
             Result(string commit, DateTimeOffset? made, string page, string download,
-                string fileName, long bytes, string error)
+                string fileName, long bytes, string error, int number = 0)
             {
-                Commit = commit; Made = made; Page = page;
+                Commit = commit; Made = made; Page = page; Number = number;
                 Download = download; FileName = fileName; Bytes = bytes; Error = error;
             }
 
             public static Result Found(string commit, DateTimeOffset? made, string page,
-                string download = "", string fileName = "", long bytes = 0)
-                => new Result(commit, made, page, download, fileName, bytes, null);
+                string download = "", string fileName = "", long bytes = 0, int number = 0)
+                => new Result(commit, made, page, download, fileName, bytes, null, number);
             public static Result Failed(string why)
                 => new Result("", null, "", "", "", 0, why);
 
@@ -136,8 +138,10 @@ namespace DeskMadeline
                         break;
                     }
 
+                // Only shown, never compared: the hash and date above decide what is newer.
+                int number = BuildStamp.ParseNumber(Labelled(body, "number"));
                 return Result.Found(commit, made, Text(release, "html_url"),
-                    download, fileName, bytes);
+                    download, fileName, bytes, number);
             }
             catch (Exception ex) { return Result.Failed(ex.Message); }
         }
@@ -252,7 +256,7 @@ namespace DeskMadeline
                 }
 
                 string yours = BuildStamp.Known
-                    ? BuildStamp.Describe(BuildStamp.Commit, BuildStamp.Made)
+                    ? BuildStamp.Describe(BuildStamp.Commit, BuildStamp.Made, BuildStamp.Number)
                     : Loc.T("Update.Unknown");
 
                 if (!result.Newer)
@@ -269,7 +273,7 @@ namespace DeskMadeline
                 TaskDialogPage there = Blank(Loc.T("Update.Available"),
                     TaskDialogIcon.Information);
                 there.Text = string.Format(Loc.T("Update.Newest"),
-                        BuildStamp.Describe(result.Short, result.Made))
+                        BuildStamp.Describe(result.Short, result.Made, result.Number))
                     + Environment.NewLine + string.Format(Loc.T("Update.Yours"), yours);
                 there.Footnote = new TaskDialogFootnote(result.Describe());
 
