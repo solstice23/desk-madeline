@@ -8,7 +8,8 @@ with no Celeste on it. See `CLAUDE.md` for the two builds.
 An ordinary Steam install is found by looking, and the first run writes the result to
 `CelestePath` in `settings.txt` — the setting is what a copy somewhere unexpected, or one of
 several, is named in, whether by the folder picker the first run puts up when looking finds
-nothing, by the tray menu's **Celeste folder…** afterwards, or by hand. `CELESTE_PATH`
+nothing, by **Detect Celeste** or **Choose folder…** on the menu's App tab afterwards,
+or by hand. `CELESTE_PATH`
 overrides it. A build takes the same from `-p:CelestePath=…`, `CELESTE_PATH` or
 `celeste-path.txt`, the last of which is a development file the app itself never reads.
 

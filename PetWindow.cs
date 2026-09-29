@@ -16,7 +16,7 @@ namespace DeskMadeline
     /// Desktop pet main window: layered transparent window + 60 FPS game loop + window-platform polling + tray menu.
     /// All desktop coordinates are physical pixels (process is PerMonitorV2); physics runs in game-pixel space (1 game px = S physical px).
     /// </summary>
-    public class PetWindow : Form
+    public partial class PetWindow : Form
     {
         // ===== Tunable parameters =====
         public int GameScale = 6;               // integer nearest-neighbor scale (vanilla 1080p is 6x)
@@ -298,6 +298,9 @@ namespace DeskMadeline
             player.SuperDashing = settings.SuperDashing;
             player.SetDashMode(settings.DashMode);
             grabInput.SetMode((GrabModes)settings.GrabMode);
+            flyoutTab = settings.FlyoutTab;
+            foreach (string key in settings.FlyoutOpen.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                flyoutOpen.Add(key.Trim());
             player.NormalSurfaceSoundIndex = settings.SurfaceSoundIndex;
             player.Holdables = holdables;
             Loc.SetLanguage(Loc.DetectDefault(settings.Language));
@@ -507,7 +510,10 @@ namespace DeskMadeline
             player.Pos = new PointF(ToGamePixels((wa.Left + wa.Right) / 2), ToGamePixels(wa.Bottom) - 2);
 
             // ---- Tray ----
-            trayMenu = BuildMenu();
+            // With her sprites, both right-clicks -- on her and on the tray icon -- open the
+            // flyout; without them there is nothing for it to be about, and the tray keeps a
+            // plain menu of the two things that still matter.
+            trayMenu = Sprites.LoadedFromCeleste == 0 ? BuildFallbackMenu() : null;
             tray = new NotifyIcon
             {
                 Text = Loc.T("App.Name"),
@@ -515,6 +521,11 @@ namespace DeskMadeline
                 ContextMenuStrip = trayMenu,
                 Visible = true
             };
+            if (trayMenu == null)
+                tray.MouseUp += (_, e) =>
+                {
+                    if (e.Button == MouseButtons.Right || e.Button == MouseButtons.Left) OpenFlyout(Cursor.Position);
+                };
         }
 
         protected override CreateParams CreateParams
@@ -1993,7 +2004,7 @@ namespace DeskMadeline
             };
         }
 
-        bool IsPetInputWindow(IntPtr hwnd)
+        internal bool IsPetInputWindow(IntPtr hwnd)
         {
             if (hwnd == Handle) return true;
             lock (gliderWindowLock)
@@ -4251,7 +4262,8 @@ namespace DeskMadeline
                     }
                     break;
                 case WM_RBUTTONUP:
-                    trayMenu.Show(Cursor.Position);
+                    if (trayMenu != null) trayMenu.Show(Cursor.Position);
+                    else OpenFlyout(Cursor.Position);
                     break;
             }
             base.WndProc(ref m);
@@ -4259,7 +4271,7 @@ namespace DeskMadeline
 
         // ================= Tray =================
 
-        void SaveSettings()
+        internal void SaveSettings()
         {
             settings.Scale = pendingScale > 0 ? pendingScale : GameScale;
             settings.InputEnabled = InputEnabled;
@@ -4274,6 +4286,8 @@ namespace DeskMadeline
             settings.SuperDashing = player.SuperDashing;
             settings.DashMode = player.DashMode;
             settings.GrabMode = (int)grabInput.Mode;
+            settings.FlyoutTab = flyoutTab;
+            settings.FlyoutOpen = string.Join(",", flyoutOpen);
             settings.Language = Loc.CurrentCode;
             settings.Skin = skinManager.Active?.Id ?? SkinManager.DefaultId;
             settings.CatTailEnabled = catTailEnabled;
@@ -4439,824 +4453,27 @@ namespace DeskMadeline
             if (Loc.CurrentCode.Equals(code, StringComparison.OrdinalIgnoreCase)) return;
             Loc.SetLanguage(code);
             SaveSettings();
-            // Rebuild after the menu click unwinds so we do not dispose the menu WinForms is still dispatching.
+            // After the click unwinds, so the control that asked is not disposed mid-dispatch.
+            // The flyout's text is fixed when it is built, so it is made again in the new
+            // language, where it was and on the tab it was showing.
             BeginInvoke(new Action(() =>
             {
-                var old = trayMenu;
-                trayMenu = BuildMenu();
-                tray.ContextMenuStrip = trayMenu;
                 tray.Text = Loc.T("App.Name");
-                old?.Dispose();
+                RebuildFlyout();
             }));
         }
 
-        string ActionName(PetAction action)
-        {
-            return action switch
-            {
-                PetAction.Left => Loc.T("Action.Left"),
-                PetAction.Right => Loc.T("Action.Right"),
-                PetAction.Up => Loc.T("Action.Up"),
-                PetAction.Down => Loc.T("Action.Down"),
-                PetAction.Jump => Loc.T("Action.Jump"),
-                PetAction.Dash => Loc.T("Action.Dash"),
-                PetAction.Grab => Loc.T("Action.Grab"),
-                PetAction.CrouchDash => Loc.T("Action.CrouchDash"),
-                PetAction.DeployElytra => Loc.T("Action.DeployElytra"),
-                _ => action.ToString()
-            };
-        }
-
-        string KeyName(int virtualKey)
-            => virtualKey == 0 ? Loc.T("Keys.Unbound") : ((Keys)virtualKey).ToString();
-
-        void RefreshBindingItems(ToolStripMenuItem actionItem, PetAction action)
-        {
-            int[] values = bindings.Get(action);
-            for (int i = 0; i < 3; i++)
-                actionItem.DropDownItems[i].Text = (i + 1) + ": " + KeyName(values[i]);
-        }
-
-        ToolStripMenuItem BuildBindingsMenu()
-        {
-            var root = new ToolStripMenuItem(Loc.T("Keys.Root"));
-            foreach (PetAction action in KeyBindings.Actions)
-            {
-                var actionItem = new ToolStripMenuItem(ActionName(action));
-                int[] values = bindings.Get(action);
-                for (int i = 0; i < 3; i++)
-                {
-                    int slot = i;
-                    var slotItem = new ToolStripMenuItem((i + 1) + ": " + KeyName(values[i]));
-                    slotItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.Change"), null, (_, __) =>
-                    {
-                        using var capture = new KeyCaptureDialog(
-                            Loc.Format("Keys.BindTitle", ActionName(action)),
-                            Loc.T("Keys.CaptureHint"));
-                        if (capture.ShowDialog(this) == DialogResult.OK)
-                        {
-                            bindings.Set(action, slot, capture.CapturedKey);
-                            RefreshBindingItems(actionItem, action);
-                        }
-                    }));
-                    slotItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.Unbind"), null, (_, __) =>
-                    {
-                        bindings.Set(action, slot, 0);
-                        RefreshBindingItems(actionItem, action);
-                    }));
-                    actionItem.DropDownItems.Add(slotItem);
-                }
-                root.DropDownItems.Add(actionItem);
-            }
-            root.DropDownItems.Add(new ToolStripSeparator());
-            root.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.ResetDefaults"), null, (_, __) =>
-            {
-                bindings.ResetDefaults();
-                // Rebuild so every open slot label reflects the reset values.
-                RebuildTrayMenu();
-            }));
-            return root;
-        }
-
-        static string PadButtonName(PadButton button)
-        {
-            return button switch
-            {
-                PadButton.None => Loc.T("Keys.Unbound"),
-                PadButton.A => Loc.T("Pad.A"),
-                PadButton.B => Loc.T("Pad.B"),
-                PadButton.X => Loc.T("Pad.X"),
-                PadButton.Y => Loc.T("Pad.Y"),
-                PadButton.LeftShoulder => Loc.T("Pad.LeftShoulder"),
-                PadButton.RightShoulder => Loc.T("Pad.RightShoulder"),
-                PadButton.LeftTrigger => Loc.T("Pad.LeftTrigger"),
-                PadButton.RightTrigger => Loc.T("Pad.RightTrigger"),
-                PadButton.LeftStick => Loc.T("Pad.LeftStick"),
-                PadButton.RightStick => Loc.T("Pad.RightStick"),
-                PadButton.Start => Loc.T("Pad.Start"),
-                PadButton.Back => Loc.T("Pad.Back"),
-                PadButton.DPadUp => Loc.T("Pad.DPadUp"),
-                PadButton.DPadDown => Loc.T("Pad.DPadDown"),
-                PadButton.DPadLeft => Loc.T("Pad.DPadLeft"),
-                PadButton.DPadRight => Loc.T("Pad.DPadRight"),
-                PadButton.LeftThumbstickUp => Loc.T("Pad.LeftStickUp"),
-                PadButton.LeftThumbstickDown => Loc.T("Pad.LeftStickDown"),
-                PadButton.LeftThumbstickLeft => Loc.T("Pad.LeftStickLeft"),
-                PadButton.LeftThumbstickRight => Loc.T("Pad.LeftStickRight"),
-                PadButton.RightThumbstickUp => Loc.T("Pad.RightStickUp"),
-                PadButton.RightThumbstickDown => Loc.T("Pad.RightStickDown"),
-                PadButton.RightThumbstickLeft => Loc.T("Pad.RightStickLeft"),
-                PadButton.RightThumbstickRight => Loc.T("Pad.RightStickRight"),
-                _ => button.ToString()
-            };
-        }
-
-        void RefreshPadBindingItems(ToolStripMenuItem actionItem, PetAction action)
-        {
-            PadButton[] values = padBindings.Get(action);
-            for (int i = 0; i < 3; i++)
-                actionItem.DropDownItems[i].Text = (i + 1) + ": " + PadButtonName(values[i]);
-        }
-
-        ToolStripMenuItem BuildPadBindingsMenu()
-        {
-            var root = new ToolStripMenuItem(Loc.T("Pad.Root"));
-            foreach (PetAction action in KeyBindings.Actions)
-            {
-                var actionItem = new ToolStripMenuItem(ActionName(action));
-                PadButton[] values = padBindings.Get(action);
-                for (int i = 0; i < 3; i++)
-                {
-                    int slot = i;
-                    var slotItem = new ToolStripMenuItem((i + 1) + ": " + PadButtonName(values[i]));
-                    slotItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.Change"), null, (_, __) =>
-                    {
-                        using var capture = new PadCaptureDialog(
-                            Loc.Format("Keys.BindTitle", ActionName(action)),
-                            Loc.T("Pad.CaptureHint"));
-                        if (capture.ShowDialog(this) == DialogResult.OK)
-                        {
-                            padBindings.Set(action, slot, capture.CapturedButton);
-                            RefreshPadBindingItems(actionItem, action);
-                        }
-                    }));
-                    slotItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.Unbind"), null, (_, __) =>
-                    {
-                        padBindings.Set(action, slot, PadButton.None);
-                        RefreshPadBindingItems(actionItem, action);
-                    }));
-                    actionItem.DropDownItems.Add(slotItem);
-                }
-                root.DropDownItems.Add(actionItem);
-            }
-            root.DropDownItems.Add(new ToolStripSeparator());
-            root.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Keys.ResetDefaults"), null, (_, __) =>
-            {
-                padBindings.ResetDefaults();
-                // Rebuild so every open slot label reflects the reset values.
-                RebuildTrayMenu();
-            }));
-            return root;
-        }
-
-        /// <summary>Rebuild after the menu click unwinds so WinForms is not mid-dispatch on the old strip.</summary>
-        void RebuildTrayMenu()
-        {
-            BeginInvoke(new Action(() =>
-            {
-                var old = trayMenu;
-                trayMenu = BuildMenu();
-                tray.ContextMenuStrip = trayMenu;
-                old?.Dispose();
-            }));
-        }
-
-        ContextMenuStrip BuildMenu()
+        /// <summary>
+        /// The tray's menu when nothing was found to draw her from: with no Madeline on the
+        /// desktop, none of the flyout -- skins, hair, what to spawn -- is about anything. Two
+        /// things still are: where the game is, and the way out.
+        /// </summary>
+        ContextMenuStrip BuildFallbackMenu()
         {
             var menu = new ContextMenuStrip();
-
-            // Nothing was found to draw her from, so there is no Madeline on the desktop and
-            // none of the rest of this -- skins, hair, scale, what to spawn -- is about
-            // anything. Two things still are: where the game is, and the way out.
-            if (Sprites.LoadedFromCeleste == 0)
-            {
-                if (NeedsCelesteInstall) menu.Items.Add(BuildCelesteMenu());
-                menu.Items.Add(new ToolStripSeparator());
-                menu.Items.Add(new ToolStripMenuItem(Loc.T("Common.Exit"), null, (_, __) => ExitApp()));
-                return menu;
-            }
-
-            var languageItem = new ToolStripMenuItem(Loc.T("Menu.Language"));
-            foreach (LanguageInfo lang in Loc.Languages)
-            {
-                string code = lang.Code;
-                var choice = new ToolStripMenuItem(lang.NativeName)
-                {
-                    Checked = Loc.CurrentCode.Equals(code, StringComparison.OrdinalIgnoreCase),
-                    Tag = code
-                };
-                choice.Click += (_, __) => ChangeLanguage(code);
-                languageItem.DropDownItems.Add(choice);
-            }
-
-            var skinItem = new ToolStripMenuItem(Loc.T("Menu.Skin"));
-            void AddSkinChoice(string id, string label)
-            {
-                var choice = new ToolStripMenuItem(label)
-                {
-                    Checked = (pendingSkinId ?? skinManager.Active?.Id ?? SkinManager.DefaultId)
-                        .Equals(id, StringComparison.OrdinalIgnoreCase),
-                    Tag = id
-                };
-                choice.Click += (_, __) =>
-                {
-                    pendingSkinId = id;
-                    foreach (ToolStripItem raw in skinItem.DropDownItems)
-                        if (raw is ToolStripMenuItem item && item.Tag is string)
-                            item.Checked = ((string)item.Tag).Equals(id, StringComparison.OrdinalIgnoreCase);
-                };
-                skinItem.DropDownItems.Add(choice);
-            }
-            AddSkinChoice(SkinManager.DefaultId, Loc.T("Skin.Default"));
-            foreach (var skin in skinManager.Skins) AddSkinChoice(skin.Id, skin.DisplayName);
-            skinItem.DropDownItems.Add(new ToolStripSeparator());
-            skinItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Skin.Refresh"), null, (_, __) =>
-            {
-                // Re-scan archives and reload the selected skin as well.  Reloading
-                // matters when an existing zip was replaced, not just when a new one
-                // was added.  Rebuild after the click unwinds so WinForms is not asked
-                // to dispose the menu currently dispatching this event.
-                string activeId = skinManager.Active?.Id ?? SkinManager.DefaultId;
-                skinManager.Discover();
-                pendingSkinId = skinManager.Find(activeId)?.Id ?? SkinManager.DefaultId;
-                Log("skins refreshed: " + skinManager.Skins.Count);
-                BeginInvoke(new Action(() =>
-                {
-                    var old = trayMenu;
-                    trayMenu = BuildMenu();
-                    tray.ContextMenuStrip = trayMenu;
-                    old?.Dispose();
-                }));
-            }));
-            skinItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Skin.OpenFolder"), null, (_, __) =>
-            {
-                string skinsDirectory = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "skins");
-                try
-                {
-                    System.IO.Directory.CreateDirectory(skinsDirectory);
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = skinsDirectory,
-                        UseShellExecute = true
-                    });
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(ex.Message, Loc.T("Skin.OpenFolderFailed"),
-                        MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            }));
-
-            var cosmeticsItem = new ToolStripMenuItem(Loc.T("Menu.Cosmetics"));
-            var catTailItem = new ToolStripMenuItem(Loc.T("Cosmetics.CatTail")) { Checked = catTailEnabled };
-            catTailItem.Click += (_, __) =>
-            {
-                catTailEnabled = !catTailEnabled;
-                catTailItem.Checked = catTailEnabled;
-                catTailStarted = false;
-                SaveSettings();
-            };
-            cosmeticsItem.DropDownItems.Add(catTailItem);
-            var catBangsItem = new ToolStripMenuItem(Loc.T("Cosmetics.CatBangs")) { Checked = catBangsEnabled };
-            catBangsItem.Click += (_, __) =>
-            {
-                catBangsEnabled = !catBangsEnabled;
-                catBangsItem.Checked = catBangsEnabled;
-                SaveSettings();
-            };
-            cosmeticsItem.DropDownItems.Add(catBangsItem);
-
-            var hairColorsItem = new ToolStripMenuItem(Loc.T("Menu.HairColors"));
-            var hairColorsEnabledItem = new ToolStripMenuItem(Loc.T("Hair.UseCustom"))
-                { Checked = customHairColorsEnabled };
-            hairColorsEnabledItem.Click += (_, __) =>
-            {
-                customHairColorsEnabled = !customHairColorsEnabled;
-                hairColorsEnabledItem.Checked = customHairColorsEnabled;
-                SaveSettings();
-            };
-            hairColorsItem.DropDownItems.Add(hairColorsEnabledItem);
-            hairColorsItem.DropDownItems.Add(new ToolStripSeparator());
-            string[] colorNames = { Loc.T("Hair.NoDashes"), Loc.T("Hair.OneDash"), Loc.T("Hair.TwoDashes") };
-            var colorItems = new ToolStripMenuItem[3];
-            void RefreshColorLabels()
-            {
-                for (int i = 0; i < colorItems.Length; i++)
-                    colorItems[i].Text = colorNames[i] + ": #" + RgbValue(customHairColors[i]).ToString("X6");
-            }
-            for (int i = 0; i < 3; i++)
-            {
-                int index = i;
-                colorItems[i] = new ToolStripMenuItem();
-                colorItems[i].Click += (_, __) =>
-                {
-                    using var dialog = new ColorDialog
-                    {
-                        Color = customHairColors[index],
-                        FullOpen = true,
-                        AnyColor = true
-                    };
-                    if (dialog.ShowDialog(this) == DialogResult.OK)
-                    {
-                        customHairColors[index] = dialog.Color;
-                        RefreshColorLabels();
-                        SaveSettings();
-                    }
-                };
-                hairColorsItem.DropDownItems.Add(colorItems[i]);
-            }
-            RefreshColorLabels();
-            hairColorsItem.DropDownItems.Add(new ToolStripSeparator());
-            hairColorsItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Hair.ResetCeleste"), null, (_, __) =>
-            {
-                customHairColors[0] = Player.UsedHairColor;
-                customHairColors[1] = Player.NormalHairColor;
-                customHairColors[2] = Player.TwoDashesHairColor;
-                RefreshColorLabels();
-                SaveSettings();
-            }));
-
-            var scaleItem = new ToolStripMenuItem(Loc.T("Menu.Scale"));
-            foreach (var v in new[] { 2, 3, 4, 5, 6, 8 })
-            {
-                var item = new ToolStripMenuItem(v + "x") { Tag = v, Checked = v == GameScale };
-                item.Click += (_, __) =>
-                {
-                    pendingScale = v;
-                    SaveSettings();
-                    foreach (ToolStripMenuItem s in scaleItem.DropDownItems) s.Checked = (int)s.Tag == v;
-                };
-                scaleItem.DropDownItems.Add(item);
-            }
-
-            ToolStripMenuItem inputItem = null;
-            inputItem = new ToolStripMenuItem(Loc.T("Menu.KeyboardControls"), null, (_, __) =>
-            { InputEnabled = !InputEnabled; inputItem.Checked = InputEnabled; SaveSettings(); })
-            { Checked = InputEnabled };
-            ToolStripMenuItem padInputItem = null;
-            padInputItem = new ToolStripMenuItem(Loc.T("Menu.ControllerControls"), null, (_, __) =>
-            { PadInputEnabled = !PadInputEnabled; padInputItem.Checked = PadInputEnabled; SaveSettings(); })
-            { Checked = PadInputEnabled };
-            ToolStripMenuItem unfocusedInputItem = null;
-            unfocusedInputItem = new ToolStripMenuItem(Loc.T("Menu.RespondUnfocused"), null, (_, __) =>
-            {
-                InputWhenUnfocused = !InputWhenUnfocused;
-                unfocusedInputItem.Checked = InputWhenUnfocused;
-                SaveSettings();
-            }) { Checked = InputWhenUnfocused };
-
-            ToolStripMenuItem topItem = null;
-            topItem = new ToolStripMenuItem(Loc.T("Menu.AlwaysOnTop"), null, (_, __) =>
-            {
-                AlwaysOnTop = !AlwaysOnTop;
-                topItem.Checked = AlwaysOnTop;
-                SaveSettings();
-                Win32.SetWindowPos(Handle, AlwaysOnTop ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST,
-                    0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
-                if (compositionHost != null)
-                    Win32.SetWindowPos(compositionHost.Handle, AlwaysOnTop ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST,
-                        0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
-            })
-            { Checked = AlwaysOnTop };
-
-            var startupItem = new ToolStripMenuItem(Loc.T("Menu.LaunchAtSignIn"))
-            {
-                Checked = StartupRegistration.IsEnabled()
-            };
-            startupItem.Click += (_, __) =>
-            {
-                try
-                {
-                    StartupRegistration.SetEnabled(!startupItem.Checked);
-                    startupItem.Checked = StartupRegistration.IsEnabled();
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(ex.Message,
-                        Loc.T("Startup.ChangeFailed"),
-                        MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            };
-
-            var sfxItem = new ToolStripMenuItem(Loc.T("Menu.SoundEffects"));
-            // Silence has a reason, and the menu is where it is looked for: the line saying
-            // which of the two halves of sound this machine has not got, and -- where it is the
-            // runtime, which is the half that can be fetched -- the offer to go and get it.
-            // Both are read when the menu opens rather than when it is built, since a download
-            // in between changes the answer.
-            var sfxTroubleItem = new ToolStripMenuItem { Enabled = false };
-            var sfxGetItem = new ToolStripMenuItem(Loc.T("Sfx.Get"), null,
-                (_, __) => FmodDownload.Ask(this, () => { restartAfterExit = true; ExitApp(); }));
-            var sfxTroubleSeparator = new ToolStripSeparator();
-            sfxItem.DropDownItems.Add(sfxTroubleItem);
-            sfxItem.DropDownItems.Add(sfxGetItem);
-            sfxItem.DropDownItems.Add(sfxTroubleSeparator);
-            sfxItem.DropDownOpening += (_, __) =>
-            {
-                bool silent = !soundEffects.Available;
-                sfxTroubleItem.Text = Loc.T(soundEffects.Trouble ?? "Sfx.WhyUnavailable");
-                sfxTroubleItem.Visible = silent;
-                sfxGetItem.Visible = silent && FmodDownload.Wanted;
-                sfxTroubleSeparator.Visible = silent;
-            };
-            foreach (var option in new[]
-            {
-                new KeyValuePair<int, string>(0, Loc.T("Common.Off")),
-                new KeyValuePair<int, string>(1, Loc.T("Sfx.OnlyWhenFocused")),
-                new KeyValuePair<int, string>(2, Loc.T("Common.On"))
-            })
-            {
-                int mode = option.Key;
-                var choice = new ToolStripMenuItem(option.Value)
-                {
-                    Checked = soundEffects.Mode == mode,
-                    Tag = mode
-                };
-                choice.Click += (_, __) =>
-                {
-                    soundEffects.Mode = mode;
-                    SaveSettings();
-                    foreach (ToolStripItem raw in sfxItem.DropDownItems)
-                        if (raw is ToolStripMenuItem item && item.Tag is int)
-                            item.Checked = (int)item.Tag == mode;
-                };
-                sfxItem.DropDownItems.Add(choice);
-            }
-            sfxItem.DropDownItems.Add(new ToolStripSeparator());
-            var volumeItem = new ToolStripMenuItem();
-            void RefreshVolumeLabel() => volumeItem.Text =
-                Loc.T("Sfx.Volume") + ": " + soundEffects.Volume + "%";
-            for (int volume = 0; volume <= 100; volume += 10)
-            {
-                int value = volume;
-                var choice = new ToolStripMenuItem(value + "%")
-                {
-                    Checked = soundEffects.Volume == value,
-                    Tag = "volume"
-                };
-                choice.Click += (_, __) =>
-                {
-                    soundEffects.Volume = value;
-                    RefreshVolumeLabel();
-                    SaveSettings();
-                    foreach (ToolStripMenuItem item in volumeItem.DropDownItems)
-                        item.Checked = item.Text == value + "%";
-                };
-                volumeItem.DropDownItems.Add(choice);
-            }
-            RefreshVolumeLabel();
-            sfxItem.DropDownItems.Add(volumeItem);
-            sfxItem.DropDownItems.Add(new ToolStripSeparator());
-            var surfaceItem = new ToolStripMenuItem(Loc.T("Sfx.SurfaceMaterial"));
-            foreach (var option in new[]
-            {
-                new KeyValuePair<int, string>(1, Loc.T("Surface.Asphalt")),
-                new KeyValuePair<int, string>(2, Loc.T("Surface.Car")),
-                new KeyValuePair<int, string>(3, Loc.T("Surface.Dirt")),
-                new KeyValuePair<int, string>(4, Loc.T("Surface.Snow")),
-                new KeyValuePair<int, string>(5, Loc.T("Surface.Wood")),
-                new KeyValuePair<int, string>(6, Loc.T("Surface.StoneBridge")),
-                new KeyValuePair<int, string>(7, Loc.T("Surface.Girder")),
-                new KeyValuePair<int, string>(8, Loc.T("Surface.BrickDefault")),
-                new KeyValuePair<int, string>(9, Loc.T("Surface.ZipMover")),
-                new KeyValuePair<int, string>(11, Loc.T("Surface.InactiveDreamBlock")),
-                new KeyValuePair<int, string>(12, Loc.T("Surface.ActiveDreamBlock")),
-                new KeyValuePair<int, string>(13, Loc.T("Surface.ResortWood")),
-                new KeyValuePair<int, string>(14, Loc.T("Surface.ResortRoof")),
-                new KeyValuePair<int, string>(15, Loc.T("Surface.ResortSinkingPlatform")),
-                new KeyValuePair<int, string>(16, Loc.T("Surface.ResortBasementTile")),
-                new KeyValuePair<int, string>(17, Loc.T("Surface.ResortLinens")),
-                new KeyValuePair<int, string>(18, Loc.T("Surface.ResortBoxes")),
-                new KeyValuePair<int, string>(19, Loc.T("Surface.ResortBooks")),
-                new KeyValuePair<int, string>(20, Loc.T("Surface.ClutterDoor")),
-                new KeyValuePair<int, string>(21, Loc.T("Surface.ClutterSwitch")),
-                new KeyValuePair<int, string>(22, Loc.T("Surface.ResortElevator")),
-                new KeyValuePair<int, string>(23, Loc.T("Surface.CliffsideSnow")),
-                new KeyValuePair<int, string>(25, Loc.T("Surface.CliffsideGrass")),
-                new KeyValuePair<int, string>(27, Loc.T("Surface.CliffsideWhiteBlock")),
-                new KeyValuePair<int, string>(28, Loc.T("Surface.Gondola")),
-                new KeyValuePair<int, string>(32, Loc.T("Surface.AuroraGlass")),
-                new KeyValuePair<int, string>(33, Loc.T("Surface.Grass")),
-                new KeyValuePair<int, string>(35, Loc.T("Surface.CassetteBlock")),
-                new KeyValuePair<int, string>(36, Loc.T("Surface.CoreIce")),
-                new KeyValuePair<int, string>(37, Loc.T("Surface.CoreMoltenRock")),
-                new KeyValuePair<int, string>(40, Loc.T("Surface.Glitch")),
-                new KeyValuePair<int, string>(42, Loc.T("Surface.MoonCafe")),
-                new KeyValuePair<int, string>(43, Loc.T("Surface.DreamClouds")),
-                new KeyValuePair<int, string>(44, Loc.T("Surface.Moon"))
-            })
-            {
-                int index = option.Key;
-                var choice = new ToolStripMenuItem(index + " — " + option.Value)
-                {
-                    Checked = player.NormalSurfaceSoundIndex == index,
-                    Tag = index
-                };
-                choice.Click += (_, __) =>
-                {
-                    player.NormalSurfaceSoundIndex = index;
-                    SaveSettings();
-                    foreach (ToolStripMenuItem item in surfaceItem.DropDownItems)
-                        item.Checked = (int)item.Tag == index;
-                };
-                surfaceItem.DropDownItems.Add(choice);
-            }
-            sfxItem.DropDownItems.Add(surfaceItem);
-
-            var particleItem = new ToolStripMenuItem(Loc.T("Menu.ParticleEffects"), null, (sender, __) =>
-            {
-                ParticlesEnabled = !ParticlesEnabled;
-                ((ToolStripMenuItem)sender).Checked = ParticlesEnabled;
-                SaveSettings();
-            })
-            { Checked = ParticlesEnabled };
-
-            var freezeItem = new ToolStripMenuItem(Loc.T("Menu.FreezeFrames"), null, (sender, __) =>
-            {
-                player.SetFreezeFramesEnabled(!player.FreezeFramesEnabled);
-                ((ToolStripMenuItem)sender).Checked = player.FreezeFramesEnabled;
-                SaveSettings();
-            })
-            { Checked = player.FreezeFramesEnabled };
-
-            var respawnReversalItem = new ToolStripMenuItem(
-                Loc.T("Menu.RespawnReversal"), null, (sender, __) =>
-            {
-                player.RespawnReversalEnabled = !player.RespawnReversalEnabled;
-                ((ToolStripMenuItem)sender).Checked = player.RespawnReversalEnabled;
-                SaveSettings();
-            }) { Checked = player.RespawnReversalEnabled };
-
-            var ignoreMaximizedItem = new ToolStripMenuItem(
-                Loc.T("Menu.IgnoreMaximizedWindows"), null, (sender, __) =>
-            {
-                ignoreMaximizedWindows = !ignoreMaximizedWindows;
-                ((ToolStripMenuItem)sender).Checked = ignoreMaximizedWindows;
-                pollCounter = 999;
-                SaveSettings();
-            }) { Checked = ignoreMaximizedWindows };
-
-            // One question with three answers, rather than a toggle per answer: a window is
-            // solid, or a dream block, or full of water, and it cannot be two of them.
-            var dreamItem = new ToolStripMenuItem(Loc.T("Menu.WindowsAre"));
-            foreach (var option in new[]
-            {
-                new KeyValuePair<int, string>(WindowsSolid, Loc.T("Windows.Solid")),
-                new KeyValuePair<int, string>(WindowsDream, Loc.T("Windows.DreamBlocks")),
-                new KeyValuePair<int, string>(WindowsWater, Loc.T("Windows.Water")),
-                new KeyValuePair<int, string>(WindowsMoon, Loc.T("Windows.MoonBlocks")),
-                new KeyValuePair<int, string>(WindowsKevin, Loc.T("Windows.KevinBlocks"))
-            })
-            {
-                int mode = option.Key;
-                var choice = new ToolStripMenuItem(option.Value)
-                {
-                    Checked = windowMode == mode,
-                    Tag = mode
-                };
-                choice.Click += (_, __) =>
-                {
-                    if (windowMode == WindowsMoon && mode != WindowsMoon) moonWindows.Restore();
-                    if (windowMode == WindowsKevin && mode != WindowsKevin) kevinWindows.Restore();
-                    windowMode = mode;
-                    pollCounter = 999;
-                    SaveSettings();
-                    foreach (ToolStripMenuItem item in dreamItem.DropDownItems)
-                        item.Checked = (int)item.Tag == mode;
-                };
-                dreamItem.DropDownItems.Add(choice);
-            }
-
-            var edgeWrapItem = new ToolStripMenuItem(
-                Loc.T("Menu.EdgeWrap"));
-            foreach (var option in new[]
-            {
-                new KeyValuePair<int, string>(0, Loc.T("Common.Off")),
-                new KeyValuePair<int, string>(1, Loc.T("Common.Horizontal")),
-                new KeyValuePair<int, string>(2, Loc.T("Common.Vertical")),
-                new KeyValuePair<int, string>(3, Loc.T("EdgeWrap.Both"))
-            })
-            {
-                int mode = option.Key;
-                var choice = new ToolStripMenuItem(option.Value)
-                {
-                    Checked = edgeWrapMode == mode,
-                    Tag = mode
-                };
-                choice.Click += (_, __) =>
-                {
-                    edgeWrapMode = mode;
-                    pollCounter = 999;
-                    SaveSettings();
-                    foreach (ToolStripMenuItem item in edgeWrapItem.DropDownItems)
-                        item.Checked = (int)item.Tag == mode;
-                };
-                edgeWrapItem.DropDownItems.Add(choice);
-            }
-
-            var elytraItem = new ToolStripMenuItem(
-                Loc.T("Menu.Elytra"), null, (sender, __) =>
-            {
-                player.ElytraEnabled = !player.ElytraEnabled;
-                ((ToolStripMenuItem)sender).Checked = player.ElytraEnabled;
-                SaveSettings();
-            }) { Checked = player.ElytraEnabled };
-
-            var overlaysItem = new ToolStripMenuItem(Loc.T("Menu.ExtraOverlays"));
-            var speedometerItem = new ToolStripMenuItem(Loc.T("Menu.Speedometer"));
-            foreach (var option in new[]
-            {
-                new KeyValuePair<int, string>(0, Loc.T("Common.Off")),
-                new KeyValuePair<int, string>(1, Loc.T("Common.Horizontal")),
-                new KeyValuePair<int, string>(2, Loc.T("Common.Vertical")),
-                new KeyValuePair<int, string>(3, Loc.T("Speedometer.Both"))
-            })
-            {
-                int mode = option.Key;
-                var choice = new ToolStripMenuItem(option.Value)
-                {
-                    Checked = speedometerMode == mode,
-                    Tag = mode
-                };
-                choice.Click += (_, __) =>
-                {
-                    speedometerMode = mode;
-                    SaveSettings();
-                    foreach (ToolStripMenuItem item in speedometerItem.DropDownItems)
-                        item.Checked = (int)item.Tag == mode;
-                };
-                speedometerItem.DropDownItems.Add(choice);
-            }
-            overlaysItem.DropDownItems.Add(speedometerItem);
-            var hitboxesItem = new ToolStripMenuItem(Loc.T("Menu.Hitboxes")) { Checked = hitboxesEnabled };
-            hitboxesItem.Click += (_, __) =>
-            {
-                hitboxesEnabled = !hitboxesEnabled;
-                hitboxesItem.Checked = hitboxesEnabled;
-                SaveSettings();
-            };
-            overlaysItem.DropDownItems.Add(hitboxesItem);
-
-            var staminaItem = new ToolStripMenuItem(Loc.T("Menu.InfiniteStamina"), null, (sender, __) =>
-            {
-                player.InfiniteStamina = !player.InfiniteStamina;
-                ((ToolStripMenuItem)sender).Checked = player.InfiniteStamina;
-                SaveSettings();
-            }) { Checked = player.InfiniteStamina };
-
-            var invincibleItem = new ToolStripMenuItem(Loc.T("Menu.Invincible"), null, (sender, __) =>
-            {
-                player.Invincible = !player.Invincible;
-                ((ToolStripMenuItem)sender).Checked = player.Invincible;
-                SaveSettings();
-            }) { Checked = player.Invincible };
-
-            var superDashItem = new ToolStripMenuItem(Loc.T("Menu.SuperDash"), null, (sender, __) =>
-            {
-                player.SuperDashing = !player.SuperDashing;
-                ((ToolStripMenuItem)sender).Checked = player.SuperDashing;
-                SaveSettings();
-            }) { Checked = player.SuperDashing };
-
-            var dashItem = new ToolStripMenuItem(Loc.T("Menu.DashCount"));
-            foreach (var option in new[]
-            {
-                new KeyValuePair<int, string>(0, "0"),
-                new KeyValuePair<int, string>(1, "1"),
-                new KeyValuePair<int, string>(2, "2"),
-                new KeyValuePair<int, string>(-1, "∞")
-            })
-            {
-                int mode = option.Key;
-                var choice = new ToolStripMenuItem(option.Value)
-                {
-                    Checked = player.DashMode == mode,
-                    Tag = mode
-                };
-                choice.Click += (_, __) =>
-                {
-                    player.SetDashMode(mode);
-                    SaveSettings();
-                    foreach (ToolStripMenuItem item in dashItem.DropDownItems)
-                        item.Checked = (int)item.Tag == mode;
-                };
-                dashItem.DropDownItems.Add(choice);
-            }
-
-            // MenuOptions.CreateGrabMode: Hold, Invert, Toggle, and a change resets the latch.
-            var grabModeItem = new ToolStripMenuItem(Loc.T("Menu.GrabMode"));
-            foreach (var option in new[]
-            {
-                new KeyValuePair<GrabModes, string>(GrabModes.Hold, Loc.T("GrabMode.Hold")),
-                new KeyValuePair<GrabModes, string>(GrabModes.Invert, Loc.T("GrabMode.Invert")),
-                new KeyValuePair<GrabModes, string>(GrabModes.Toggle, Loc.T("GrabMode.Toggle"))
-            })
-            {
-                GrabModes mode = option.Key;
-                var choice = new ToolStripMenuItem(option.Value)
-                {
-                    Checked = grabInput.Mode == mode,
-                    Tag = mode
-                };
-                choice.Click += (_, __) =>
-                {
-                    grabInput.SetMode(mode);
-                    SaveSettings();
-                    foreach (ToolStripMenuItem item in grabModeItem.DropDownItems)
-                        item.Checked = (GrabModes)item.Tag == mode;
-                };
-                grabModeItem.DropDownItems.Add(choice);
-            }
-
-            var wakeUpItem = new ToolStripMenuItem(Loc.T("Menu.ReplayWakeUp"), null, (_, __) =>
-            {
-                introWakeUp = true;
-                animator.Play("wakeUp", true);
-            });
-            var autonomyItem = new ToolStripMenuItem(Loc.T("Menu.Autonomy"))
-            { CheckOnClick = true, Checked = IdleAutonomyEnabled };
-            autonomyItem.CheckedChanged += (_, __) =>
-            {
-                IdleAutonomyEnabled = autonomyItem.Checked;
-                SaveSettings();
-            };
-            var autonomyDebugItem = new ToolStripMenuItem(Loc.T("Menu.AutonomyDebug"))
-            { CheckOnClick = true };
-            autonomyDebugItem.CheckedChanged += (_, __) =>
-            {
-                IdleDebugWanted = autonomyDebugItem.Checked;
-                if (autonomyDebugItem.Checked)
-                {
-                    if (idleDebugWindow == null || idleDebugWindow.IsDisposed)
-                    {
-                        idleDebugWindow = new IdleDebugWindow();
-                        idleDebugWindow.Hidden = () => autonomyDebugItem.Checked = false;
-                    }
-                    idleDebugWindow.Show();
-                }
-                else idleDebugWindow?.Hide();
-            };
-            // A developer's item: it appears only when the menu is opened with Shift
-            // held, so the everyday right-click stays a user's menu.
-            menu.Opening += (_, __) =>
-                autonomyDebugItem.Visible = (Control.ModifierKeys & Keys.Shift) == Keys.Shift;
-            var resetItem = new ToolStripMenuItem(Loc.T("Menu.ResetPosition"), null, (_, __) => ResetPosition());
-            var spawnGliderItem = new ToolStripMenuItem(Loc.T("Menu.SpawnJellyfish"), null, (_, __) =>
-                Interlocked.Increment(ref pendingGliderSpawns));
-            var spawnSeekerItem = new ToolStripMenuItem(Loc.T("Menu.SpawnSeeker"), null, (_, __) =>
-                Interlocked.Increment(ref pendingSeekerSpawns));
-            var spawnBumperItem = new ToolStripMenuItem(Loc.T("Menu.SpawnBumper"), null, (_, __) =>
-                Interlocked.Increment(ref pendingBumperSpawns));
-            var spawnPufferItem = new ToolStripMenuItem(Loc.T("Menu.SpawnPuffer"), null, (_, __) =>
-                Interlocked.Increment(ref pendingPufferSpawns));
-            var spawnTheoItem = new ToolStripMenuItem(Loc.T("Menu.SpawnTheo"), null, (_, __) =>
-                Interlocked.Increment(ref pendingTheoSpawns));
-            // The five spawns grouped under one entry: they are all the same gesture, they
-            // grew to outnumber everything else in the section, and unlike a setting a spawn
-            // is chosen from the list rather than toggled -- the same reasoning as Windows Are.
-            var spawnItem = new ToolStripMenuItem(Loc.T("Menu.Spawn"));
-            spawnItem.DropDownItems.Add(spawnGliderItem);
-            spawnItem.DropDownItems.Add(spawnSeekerItem);
-            spawnItem.DropDownItems.Add(spawnTheoItem);
-            spawnItem.DropDownItems.Add(spawnBumperItem);
-            spawnItem.DropDownItems.Add(spawnPufferItem);
-            var removeEntitiesItem = new ToolStripMenuItem(Loc.T("Menu.RemoveEntities"));
-            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllJellyfish"), null,
-                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 1)));
-            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllSeekers"), null,
-                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 2)));
-            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllTheo"), null,
-                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 4)));
-            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllBumpers"), null,
-                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 8)));
-            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveAllPuffers"), null,
-                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 16)));
-            removeEntitiesItem.DropDownItems.Add(new ToolStripSeparator());
-            removeEntitiesItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Menu.RemoveEverything"), null,
-                (_, __) => Interlocked.Or(ref pendingRemoveAllEntities, 31)));
-            var helpItem = new ToolStripMenuItem(Loc.T("Menu.Controls"), null, (_, __) =>
-                MessageBox.Show(
-                    Loc.T("Help.ControlsBody"),
-                    Loc.T("App.Title"), MessageBoxButtons.OK, MessageBoxIcon.Information));
-            var updateItem = new ToolStripMenuItem(Loc.T("Menu.CheckUpdate"), null,
-                (_, __) => CheckForUpdate());
-            var aboutItem = new ToolStripMenuItem(Loc.T("Menu.About"), null, (_, __) => ShowAbout());
-            var exitItem = new ToolStripMenuItem(Loc.T("Common.Exit"), null, (_, __) => ExitApp());
-
-            // Everything above only makes the items; this is the menu. Six headed sections and
-            // an unheaded tail, in the order they are wanted rather than the order they were
-            // easiest to write, so that what is done often is near the top and what is set once
-            // is further down. Flat: a submenu here would cost a hover on things that are one
-            // click today, and the drop-down cannot do columns -- it scrolls instead.
-            Section(menu, "Section.Madeline");
-            AddAll(menu, resetItem, wakeUpItem, autonomyItem, autonomyDebugItem, spawnItem, removeEntitiesItem);
-            Section(menu, "Section.Input");
-            AddAll(menu, inputItem, padInputItem, unfocusedInputItem,
-                BuildBindingsMenu(), BuildPadBindingsMenu(), grabModeItem,
-                dashItem, superDashItem, staminaItem, invincibleItem, freezeItem, elytraItem);
-            Section(menu, "Section.Appearance");
-            AddAll(menu, skinItem, cosmeticsItem, hairColorsItem, scaleItem,
-                particleItem, respawnReversalItem, sfxItem, overlaysItem);
-            Section(menu, "Section.Desktop");
-            AddAll(menu, ignoreMaximizedItem, dreamItem, edgeWrapItem);
-            // Where the window sits and whether it comes back tomorrow are about the app, not
-            // about her, so they belong down here with the rest of the app's own affairs.
+            if (NeedsCelesteInstall) menu.Items.Add(BuildCelesteMenu());
             menu.Items.Add(new ToolStripSeparator());
-            AddAll(menu, topItem, startupItem, languageItem);
-            if (NeedsCelesteInstall) AddAll(menu, BuildCelesteMenu());
-            AddAll(menu, helpItem, updateItem, aboutItem);
-            menu.Items.Add(new ToolStripSeparator());
-            AddAll(menu, exitItem);
+            menu.Items.Add(new ToolStripMenuItem(Loc.T("Common.Exit"), null, (_, __) => ExitApp()));
             return menu;
         }
 
@@ -5265,19 +4482,7 @@ namespace DeskMadeline
         /// hovered or reached with the keyboard, which is what makes them read as headings
         /// rather than as options that happen to be unavailable.
         /// </summary>
-        static void Section(ContextMenuStrip menu, string key)
-        {
-            if (menu.Items.Count > 0) menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripLabel(Loc.T(key))
-            {
-                ForeColor = SystemColors.GrayText,
-                Font = new Font(menu.Font, FontStyle.Bold),
-                Margin = new Padding(0, 2, 0, 2)
-            });
-        }
 
-        static void AddAll(ContextMenuStrip menu, params ToolStripItem[] items)
-            => menu.Items.AddRange(items);
 
         /// <summary>Open the About window once the menu click has unwound.</summary>
         void ShowAbout() => BeginInvoke(new Action(() =>

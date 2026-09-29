@@ -22,6 +22,9 @@ namespace DeskMadeline
         public int DashMode = 1;
         /// <summary>Celeste's <c>GrabModes</c>: 0 hold, 1 invert, 2 toggle.</summary>
         public int GrabMode;
+        /// <summary>The flyout tab last shown, and its fold-outs left open (comma-separated keys).</summary>
+        public int FlyoutTab;
+        public string FlyoutOpen = "";
         public string Language;
         public string Skin = "default";
         public bool CatTailEnabled;
@@ -86,6 +89,9 @@ namespace DeskMadeline
                     result.DashMode = dashValue < 0 ? -1 : Math.Max(0, Math.Min(2, dashValue));
                 if (values.TryGetValue("GrabMode", out string grab) && int.TryParse(grab, out int grabValue))
                     result.GrabMode = Math.Max(0, Math.Min(2, grabValue));
+                if (values.TryGetValue("FlyoutTab", out string tab) && int.TryParse(tab, out int tabValue))
+                    result.FlyoutTab = Math.Max(0, tabValue);
+                if (values.TryGetValue("FlyoutOpen", out string flyoutOpen)) result.FlyoutOpen = flyoutOpen;
                 if (values.TryGetValue("Language", out string language) && language.Length > 0)
                     result.Language = language.Trim();
                 if (values.TryGetValue("Skin", out string skin) && skin.Length > 0) result.Skin = skin;
@@ -164,6 +170,8 @@ namespace DeskMadeline
                     "SuperDashing=" + SuperDashing,
                     "DashMode=" + DashMode,
                     "GrabMode=" + GrabMode,
+                    "FlyoutTab=" + FlyoutTab,
+                    "FlyoutOpen=" + FlyoutOpen,
                     "Language=" + (Language ?? ""),
                     "Skin=" + (Skin ?? "default"),
                     "CatTailEnabled=" + CatTailEnabled,
