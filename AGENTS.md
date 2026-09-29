@@ -185,15 +185,19 @@ parts in afterwards, one user report at a time.
 
 ## Commit messages
 
-Name the change, plainly. A subject is lowercase, leads with the verb where a verb fits,
-and says what the commit does in the fewest words that stay specific: `port celeste's super
-dashing variant`, `update strings`. No conventional-commit prefixes, no ticket numbers, no
-trailing period.
+Describe the change, in the active voice. The subject is an imperative sentence that says what
+the commit does, specifically enough to be understood without the diff: `Add Celeste's Invert
+and Toggle grab modes with the GrabbyIcon glove`, `Port the Super Dashing variant`. It starts
+with a capital and a verb -- Add, Port, Fix, Remove, Draw, Keep -- and ends without a period.
+No conventional-commit prefixes, no ticket numbers.
 
-- Much of the existing log is figurative — `up is the point`, `a lip with a border standing
-  on it is not a lip`. That register is history, not the house style; do not imitate it.
-- A body carries only what the subject cannot: which reference method the port came from,
-  why a constant is that number, what was deliberately left out and why. When there is none
-  of that, the subject is the whole message.
-- Say what changed, not how it went. "fix", "improve" and "properly" carry no information,
-  and neither does a subject that praises the work it describes.
+- The body says what changed, also in imperative sentences: what was ported and from which
+  reference members, which desktop-specific adaptations were made and why, what was left out
+  and why, and which checks were added. A reader of `git log` should learn what the commit
+  does without opening it. Only a change that is fully described by its subject goes without one.
+- Much of the existing log is figurative or terse -- `up is the point`, `a lip with a border
+  standing on it is not a lip`, `grab can hold, invert or toggle`. That register is history,
+  not the house style; do not imitate it.
+- Say what changed, not how it went. "improve", "properly" and "clean up" carry no information
+  unless the sentence says what became better, and neither does a subject that praises the work
+  it describes.
