@@ -303,49 +303,38 @@ namespace DeskMadeline
         }
 
         /// <summary>
-        /// Offer it, fetch it if it is taken up, and say how it went -- one dialog that turns
+        /// Offer it, fetch it if it is taken up, and say how it went -- one window that turns
         /// into its next state, as the update's does. Modal; call it on the UI thread.
         /// </summary>
         /// <param name="restart">
         /// How to start the pet again, for the end where it worked: the runtime is read once,
         /// at startup, so a new one only really takes over at the next.
         /// </param>
-        public static void Ask(Control ui, Action restart) => new Conversation(ui, restart).Run();
-
-        sealed class Conversation
+        public static void Ask(Control ui, Action restart)
         {
-            readonly Control ui;
-            readonly Action restart;
-            TaskDialogPage showing;
-            CancellationTokenSource fetching;
             bool leaving;
-
-            public Conversation(Control ui, Action restart)
-            { this.ui = ui; this.restart = restart; }
-
-            public void Run()
+            using (var window = new FmodWindow())
             {
-                showing = Offer();
-                TaskDialog.ShowDialog(showing);
+                if (ui != null && ui.IsHandleCreated) window.ShowDialog(ui); else window.ShowDialog();
+                leaving = window.Leaving;
+            }
+            // Only once the window is off the screen.
+            if (leaving) restart();
+        }
+
+        sealed class FmodWindow : StatusWindow
+        {
+            CancellationTokenSource fetching;
+
+            public bool Leaving { get; private set; }
+
+            public FmodWindow() : base(Loc.T("App.Title"), 26) => Offer();
+
+            protected override void OnFormClosed(FormClosedEventArgs e)
+            {
                 fetching?.Cancel();
-                if (leaving) restart();
+                base.OnFormClosed(e);
             }
-
-            void Turn(TaskDialogPage next)
-            {
-                if (showing == null) return;
-                showing.Navigate(next);
-                showing = next;
-            }
-
-            TaskDialogPage Blank(string heading, TaskDialogIcon icon) => new TaskDialogPage
-            {
-                Caption = Loc.T("App.Title"),
-                Heading = heading,
-                Icon = icon,
-                AllowCancel = true,
-                SizeToContent = true
-            };
 
             /// <summary>
             /// What is missing, and the three ways out of it: install Everest, which gives the
@@ -355,104 +344,66 @@ namespace DeskMadeline
             /// <remarks>
             /// Three buttons rather than a yes and a no, because declining is a real answer
             /// here and not a failure to decide -- everything except sound works without any of
-            /// this. So the last button says what it does rather than "cancel", and the text
-            /// says where the offer will be waiting.
+            /// this. So that button says what it does rather than "cancel", and the text says
+            /// where the offer will be waiting.
             /// </remarks>
-            TaskDialogPage Offer()
-            {
-                TaskDialogPage page = Blank(Loc.T("Sfx.GetTitle"), TaskDialogIcon.Information);
-                page.Text = Loc.T("Sfx.GetWhy");
-                page.Footnote = new TaskDialogFootnote(Loc.T("Sfx.GetFrom"));
-                var everest = new TaskDialogButton(Loc.T("Sfx.InstallEverest"));
-                everest.Click += (_, _) => Open(EverestPage);
-                var get = new TaskDialogButton(Loc.T("Update.Download"))
-                { AllowCloseDialog = false };
-                get.Click += (_, _) => Turn(Fetching());
-                page.Buttons.Add(everest);
-                page.Buttons.Add(get);
-                page.Buttons.Add(new TaskDialogButton(Loc.T("Sfx.StaySilent")));
-                page.DefaultButton = get;
-                return page;
-            }
+            void Offer() => ShowState("", P.AccentInk, Loc.T("Sfx.GetTitle"), Loc.T("Sfx.GetWhy"),
+                s => s.Add(new FlyoutNote(P, Loc.T("Sfx.GetFrom"))),
+                b =>
+                {
+                    b.Add(Loc.T("Sfx.StaySilent"), Close);
+                    b.Add(Loc.T("Sfx.InstallEverest"), () => Open(EverestPage));
+                    b.Add(Loc.T("Update.Download"), Fetching, accent: true);
+                });
 
-            TaskDialogPage Fetching()
+            void Fetching()
             {
-                var bar = new TaskDialogProgressBar(TaskDialogProgressBarState.Normal);
-                TaskDialogPage page = Blank(Loc.T("Sfx.Getting"), TaskDialogIcon.Information);
-                page.ProgressBar = bar;
-                page.Text = new SelfUpdate.Fetched(0, 0).ToString();
-                page.Buttons.Add(new TaskDialogButton(Loc.T("Common.Cancel")));
+                FlyoutProgress bar = null;
+                ShowState("", P.AccentInk, Loc.T("Sfx.Getting"), new SelfUpdate.Fetched(0, 0).ToString(),
+                    s => bar = s.Add(new FlyoutProgress(P)),
+                    b => b.Add(Loc.T("Common.Cancel"), Close));
 
                 fetching = new CancellationTokenSource();
                 CancellationToken cancel = fetching.Token;
                 var progress = new Progress<SelfUpdate.Fetched>(fetched =>
                 {
-                    if (showing != page) return;
-                    bar.Value = Math.Clamp(fetched.Percent, 0, 100);
-                    page.Text = fetched.ToString();
+                    if (IsDisposed || bar.IsDisposed) return;
+                    bar.SetPercent(fetched.Percent);
+                    Status.SetDetail(fetched.ToString());
                 });
 
-                page.Created += (_, _) => Task.Run(async () =>
+                Task.Run(async () =>
                 {
                     try
                     {
                         await Fetch(progress, cancel);
                         cancel.ThrowIfCancellationRequested();
-                        Back(() => Turn(Done()));
+                        Back(Done);
                     }
                     catch (OperationCanceledException) { }
                     catch (Exception ex)
                     {
                         PetWindow.Log("FMOD download failed: " + ex.Message);
-                        Back(() => Turn(Broke(ex.Message)));
+                        Back(() => Broke(ex.Message));
                     }
                 });
-                page.Destroyed += (_, _) => { if (showing == page) showing = null; };
-                return page;
             }
 
             /// <summary>It is in place, and the pet has to come up again to read it.</summary>
-            TaskDialogPage Done()
-            {
-                TaskDialogPage page = Blank(Loc.T("Sfx.GetDone"), TaskDialogIcon.None);
-                page.Text = Loc.T("Sfx.RestartToApply");
-                page.Footnote = new TaskDialogFootnote(Destination);
-                var now = new TaskDialogButton(Loc.T("Sfx.RestartNow"));
-                now.Click += (_, _) => leaving = true;
-                var later = new TaskDialogButton(Loc.T("Update.Later"));
-                page.Buttons.Add(later);
-                page.Buttons.Add(now);
-                page.DefaultButton = now;
-                return page;
-            }
+            void Done() => ShowState("", P.AccentInk, Loc.T("Sfx.GetDone"), Loc.T("Sfx.RestartToApply"),
+                s => s.Add(new FlyoutNote(P, Destination)),
+                b =>
+                {
+                    b.Add(Loc.T("Update.Later"), Close);
+                    b.Add(Loc.T("Sfx.RestartNow"), () => { Leaving = true; Close(); }, accent: true);
+                });
 
             /// <summary>It did not come off; Everest's own page is the way round it.</summary>
-            TaskDialogPage Broke(string why)
+            void Broke(string why) => ShowState("", Warn, Loc.T("Sfx.GetFailed"), why, null, b =>
             {
-                TaskDialogPage page = Blank(Loc.T("Sfx.GetFailed"), TaskDialogIcon.Warning);
-                page.Text = why;
-                var everest = new TaskDialogButton(Loc.T("Sfx.OnEverest"));
-                everest.Click += (_, _) => Open(EverestPage);
-                var close = new TaskDialogButton(Loc.T("Common.Close"));
-                page.Buttons.Add(everest);
-                page.Buttons.Add(close);
-                page.DefaultButton = close;
-                return page;
-            }
-
-            void Back(Action what)
-            {
-                if (!ui.IsHandleCreated || ui.IsDisposed) return;
-                try
-                {
-                    ui.BeginInvoke(new Action(() =>
-                    {
-                        try { what(); }
-                        catch (Exception ex) { PetWindow.Log("FMOD download: " + ex.Message); }
-                    }));
-                }
-                catch (InvalidOperationException) { }   // closing underneath us
-            }
+                b.Add(Loc.T("Sfx.OnEverest"), () => Open(EverestPage));
+                b.Add(Loc.T("Common.Close"), Close, accent: true);
+            });
         }
 
         static void Open(string url)

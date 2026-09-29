@@ -50,6 +50,7 @@ namespace DeskMadeline
         {
             this.keys = keys;
             this.pad = pad;
+            Motion.Refresh();
             Text = Loc.T("Settings.Bindings");
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
@@ -59,7 +60,7 @@ namespace DeskMadeline
             Font = SystemFonts.MessageBoxFont;
             BackColor = p.Back;
             Padding = new Padding(Em);
-            if (PetWindow.Instance?.Icon != null) Icon = PetWindow.Instance.Icon;
+            if (PetWindow.Instance?.AppIcon is Icon icon) Icon = icon;
 
             stack = new FlyoutStack(p) { Width = Em * 20, Location = new Point(Em, Em), Font = Font };
             Controls.Add(stack);

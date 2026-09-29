@@ -47,7 +47,8 @@ namespace DeskMadeline
         readonly Animator sweatAnimator;
         readonly Dictionary<string, Anim> anims;
         readonly NotifyIcon tray;
-        ContextMenuStrip trayMenu;
+        // No sprites to draw her from: the tray offers only what still matters then.
+        bool withoutMadeline;
 
         Thread loopThread;
         volatile bool running;
@@ -299,6 +300,7 @@ namespace DeskMadeline
             player.SetDashMode(settings.DashMode);
             grabInput.SetMode((GrabModes)settings.GrabMode);
             flyoutTab = settings.FlyoutTab;
+            FlyoutPalette.Theme = settings.Theme;
             foreach (string key in settings.FlyoutOpen.Split(',', StringSplitOptions.RemoveEmptyEntries))
                 flyoutOpen.Add(key.Trim());
             player.NormalSurfaceSoundIndex = settings.SurfaceSoundIndex;
@@ -513,19 +515,19 @@ namespace DeskMadeline
             // With her sprites, both right-clicks -- on her and on the tray icon -- open the
             // flyout; without them there is nothing for it to be about, and the tray keeps a
             // plain menu of the two things that still matter.
-            trayMenu = Sprites.LoadedFromCeleste == 0 ? BuildFallbackMenu() : null;
+            withoutMadeline = Sprites.LoadedFromCeleste == 0;
             tray = new NotifyIcon
             {
                 Text = Loc.T("App.Name"),
                 Icon = BuildTrayIcon(),
-                ContextMenuStrip = trayMenu,
                 Visible = true
             };
-            if (trayMenu == null)
-                tray.MouseUp += (_, e) =>
-                {
-                    if (e.Button == MouseButtons.Right || e.Button == MouseButtons.Left) OpenFlyout(Cursor.Position);
-                };
+            tray.MouseUp += (_, e) =>
+            {
+                if (e.Button != MouseButtons.Right && e.Button != MouseButtons.Left) return;
+                if (withoutMadeline) ShowFallbackMenu(Cursor.Position);
+                else OpenFlyout(Cursor.Position);
+            };
         }
 
         protected override CreateParams CreateParams
@@ -2003,6 +2005,9 @@ namespace DeskMadeline
                 Windows = idleWindowsScratch,
             };
         }
+
+        /// <summary>Her portrait as an icon, for the app's own windows' title bars.</summary>
+        internal Icon AppIcon => tray?.Icon;
 
         internal bool IsPetInputWindow(IntPtr hwnd)
         {
@@ -4262,7 +4267,7 @@ namespace DeskMadeline
                     }
                     break;
                 case WM_RBUTTONUP:
-                    if (trayMenu != null) trayMenu.Show(Cursor.Position);
+                    if (withoutMadeline) ShowFallbackMenu(Cursor.Position);
                     else OpenFlyout(Cursor.Position);
                     break;
             }
@@ -4287,6 +4292,7 @@ namespace DeskMadeline
             settings.DashMode = player.DashMode;
             settings.GrabMode = (int)grabInput.Mode;
             settings.FlyoutTab = flyoutTab;
+            settings.Theme = FlyoutPalette.Theme;
             settings.FlyoutOpen = string.Join(",", flyoutOpen);
             settings.Language = Loc.CurrentCode;
             settings.Skin = skinManager.Active?.Id ?? SkinManager.DefaultId;
@@ -4328,15 +4334,15 @@ namespace DeskMadeline
             string found = CelesteInstall.Directory;   // the setting first, then the usual places
             if (found == null)
             {
-                if (MessageBox.Show(Loc.T("Celeste.Why") + "\n\n" + Loc.T("Celeste.NotFound"),
-                        Loc.T("App.Title"), MessageBoxButtons.OKCancel,
-                        MessageBoxIcon.Information) == DialogResult.OK)
+                if (FlyoutDialog.Ask(null, FlyoutDialog.Kind.Question, Loc.T("Celeste.NoneFound"),
+                        Loc.T("Celeste.Why") + Environment.NewLine + Loc.T("Celeste.PickFolder"),
+                        new[] { Loc.T("Common.Cancel"), Loc.T("Menu.CelesteChoose") }) == 1)
                     found = AskForCelesteFolder();
                 if (found == null)
                 {
                     Log("no Celeste install: running without her sprites or sounds");
-                    MessageBox.Show(Loc.T("Celeste.Why") + "\n\n" + Loc.T("Celeste.Without"),
-                        Loc.T("App.Title"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    FlyoutDialog.Tell(null, FlyoutDialog.Kind.Warning, Loc.T("Celeste.NoneFound"),
+                        Loc.T("Celeste.Without"));
                 }
             }
             else if (!CelesteInstall.IsComplete(found) &&
@@ -4346,9 +4352,7 @@ namespace DeskMadeline
                 // otherwise comes up as missing sprites or silence with nothing said about why.
                 Log("incomplete Celeste at " + found + ": missing " +
                     string.Join(", ", CelesteInstall.MissingFrom(found)));
-                if (MessageBox.Show(DescribeIncomplete(found) + "\n\n" + Loc.T("Celeste.ChooseAnother"),
-                        Loc.T("App.Title"), MessageBoxButtons.YesNo,
-                        MessageBoxIcon.Warning) == DialogResult.Yes)
+                if (AskIncomplete(found, Loc.T("Celeste.UseAnywayButton"), Loc.T("Menu.CelesteChoose")) == 1)
                     found = AskForCelesteFolder() ?? found;
             }
             if (found == null || found.Equals(settings.CelestePath, StringComparison.OrdinalIgnoreCase))
@@ -4359,15 +4363,19 @@ namespace DeskMadeline
             Log("Celeste install: " + found);
         }
 
-        /// <summary>An install and the files it lacks, for a message box.</summary>
-        static string DescribeIncomplete(string folder)
+        /// <summary>
+        /// An install that lacks files: which ones, in a card, and the two ways on. The answer
+        /// is the index of the button pressed, <paramref name="second"/> being the accent one.
+        /// </summary>
+        int AskIncomplete(string folder, string first, string second)
         {
             var missing = CelesteInstall.MissingFrom(folder);
             int shown = Math.Min(missing.Count, 6);
             string list = string.Join("\n", missing.GetRange(0, shown));
             if (missing.Count > shown)
                 list += "\n" + Loc.Format("Celeste.AndMore", missing.Count - shown);
-            return Loc.Format("Celeste.Incomplete", folder) + "\n\n" + list;
+            return FlyoutDialog.Ask(null, FlyoutDialog.Kind.Warning, Loc.T("Celeste.IncompleteTitle"),
+                Loc.Format("Celeste.Incomplete", folder), new[] { first, second }, list);
         }
 
         /// <summary>Ask for the folder Celeste is in, until it is one or the user gives up.</summary>
@@ -4387,15 +4395,13 @@ namespace DeskMadeline
                 if (CelesteInstall.IsComplete(folder)) return folder;
                 if (!CelesteInstall.IsInstall(folder))
                 {
-                    if (MessageBox.Show(Loc.T("Celeste.NoExeThere"), Loc.T("App.Title"),
-                            MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning) != DialogResult.Retry)
+                    if (FlyoutDialog.Ask(null, FlyoutDialog.Kind.Warning, Loc.T("Celeste.NoExeThere"),
+                            folder, new[] { Loc.T("Common.Cancel"), Loc.T("Celeste.ChooseAgain") }) != 1)
                         return null;
                     continue;
                 }
                 // Celeste, but not all of it: theirs to decide, since some of her beats none.
-                if (MessageBox.Show(DescribeIncomplete(folder) + "\n\n" + Loc.T("Celeste.UseAnyway"),
-                        Loc.T("App.Title"), MessageBoxButtons.YesNo,
-                        MessageBoxIcon.Warning) == DialogResult.Yes)
+                if (AskIncomplete(folder, Loc.T("Celeste.ChooseAgain"), Loc.T("Celeste.UseAnywayButton")) == 1)
                     return folder;
             }
         }
@@ -4410,9 +4416,8 @@ namespace DeskMadeline
             // Her sprites and the sound banks are both read once, at startup, so a new folder
             // only really takes over at the next one. Named in the asking, since detecting one
             // can change it to a folder the user never typed or picked.
-            if (MessageBox.Show(folder + "\n\n" + Loc.T("Celeste.RestartToApply"),
-                    Loc.T("App.Title"), MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Question) == DialogResult.Yes)
+            if (FlyoutDialog.Ask(null, FlyoutDialog.Kind.Question, Loc.T("Celeste.RestartToApply"),
+                    folder, new[] { Loc.T("Update.Later"), Loc.T("Sfx.RestartNow") }) == 1)
             {
                 restartAfterExit = true;
                 ExitApp();
@@ -4425,14 +4430,11 @@ namespace DeskMadeline
             string found = CelesteInstall.Detected();
             if (found == null)
             {
-                MessageBox.Show(Loc.T("Celeste.Why") + "\n\n" + Loc.T("Celeste.NoneFound"),
-                    Loc.T("App.Title"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                FlyoutDialog.Tell(null, FlyoutDialog.Kind.Warning, Loc.T("Celeste.NoneFound"), Loc.T("Celeste.Why"));
                 return;
             }
             if (!CelesteInstall.IsComplete(found) &&
-                MessageBox.Show(DescribeIncomplete(found) + "\n\n" + Loc.T("Celeste.UseAnyway"),
-                    Loc.T("App.Title"), MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning) != DialogResult.Yes)
+                AskIncomplete(found, Loc.T("Common.Cancel"), Loc.T("Celeste.UseAnywayButton")) != 1)
                 return;
             if (found.Equals(CelesteInstall.Directory, StringComparison.OrdinalIgnoreCase))
             {
@@ -4440,8 +4442,7 @@ namespace DeskMadeline
                 // was found by looking today may not be found by looking tomorrow.
                 settings.CelestePath = found;
                 SaveSettings();
-                MessageBox.Show(Loc.Format("Celeste.FoundAt", found), Loc.T("App.Title"),
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                FlyoutDialog.Tell(null, FlyoutDialog.Kind.Info, Loc.T("Celeste.FoundTitle"), found);
                 return;
             }
             UseCelesteFolder(found);
@@ -4468,13 +4469,29 @@ namespace DeskMadeline
         /// desktop, none of the flyout -- skins, hair, what to spawn -- is about anything. Two
         /// things still are: where the game is, and the way out.
         /// </summary>
-        ContextMenuStrip BuildFallbackMenu()
+        /// <remarks>
+        /// Where it is reading from is read as the menu opens rather than kept: looking involves
+        /// the registry and every drive, and the answer can change while the pet is running.
+        /// </remarks>
+        void ShowFallbackMenu(Point at)
         {
-            var menu = new ContextMenuStrip();
-            if (NeedsCelesteInstall) menu.Items.Add(BuildCelesteMenu());
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripMenuItem(Loc.T("Common.Exit"), null, (_, __) => ExitApp()));
-            return menu;
+            var menu = new FlyoutMenu();
+            if (NeedsCelesteInstall)
+            {
+                menu.Note(Loc.T("Celeste.Why"));
+                menu.Note(Loc.Format("Celeste.InUse", CelesteInstall.Directory ?? Loc.T("Celeste.None")), path: true);
+                menu.Item("\uE721", Loc.T("Menu.CelesteDetect"), DetectCeleste);
+                menu.Item("\uE8B7", Loc.T("Menu.CelesteChoose"), () =>
+                {
+                    string folder = AskForCelesteFolder();
+                    if (folder == null ||
+                        folder.Equals(CelesteInstall.Directory, StringComparison.OrdinalIgnoreCase)) return;
+                    UseCelesteFolder(folder);
+                });
+                menu.Separator();
+            }
+            menu.Item("\uE7E8", Loc.T("Common.Exit"), ExitApp);
+            menu.ShowAt(at);
         }
 
         /// <summary>
@@ -4514,45 +4531,6 @@ namespace DeskMadeline
         /// </summary>
         static bool NeedsCelesteInstall
             => !CelesteInstall.HasBundledContent || !CelesteInstall.HasBundledAudio;
-
-        /// <summary>Where the artwork and sound are read from, and how to point that elsewhere.</summary>
-        ToolStripMenuItem BuildCelesteMenu()
-        {
-            var celesteFolderItem = new ToolStripMenuItem(Loc.T("Menu.CelesteFolder"))
-            { ToolTipText = Loc.T("Celeste.Why") };
-            // Why the pet wants to know, and where it is reading from -- the first two things
-            // to ask when she has no sprites or no sound. Both are shown rather than offered,
-            // so neither is clickable.
-            celesteFolderItem.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Celeste.Why"))
-            { Enabled = false });
-            celesteFolderItem.DropDownItems.Add(new ToolStripSeparator());
-            var celestePathItem = new ToolStripMenuItem { Enabled = false };
-            celesteFolderItem.DropDownItems.Add(celestePathItem);
-            celesteFolderItem.DropDownItems.Add(new ToolStripSeparator());
-            var celesteDetectItem = new ToolStripMenuItem(
-                Loc.T("Menu.CelesteDetect"), null, (_, __) => DetectCeleste());
-            celesteFolderItem.DropDownItems.Add(celesteDetectItem);
-            // Read when the submenu opens rather than when the menu is built: looking involves
-            // the registry and every drive, and the answer can change while the pet is running.
-            // What looking finds is worth seeing before asking for it, but not worth a line of
-            // its own -- it is the same folder as the one in use except when something is up.
-            celesteFolderItem.DropDownOpening += (_, __) =>
-            {
-                celestePathItem.Text = Loc.Format("Celeste.InUse",
-                    CelesteInstall.Directory ?? Loc.T("Celeste.None"));
-                celesteDetectItem.ToolTipText = Loc.Format("Celeste.Detected",
-                    CelesteInstall.Detected() ?? Loc.T("Celeste.None"));
-            };
-            celesteFolderItem.DropDownItems.Add(new ToolStripMenuItem(
-                Loc.T("Menu.CelesteChoose"), null, (_, __) =>
-                {
-                    string folder = AskForCelesteFolder();
-                    if (folder == null ||
-                        folder.Equals(CelesteInstall.Directory, StringComparison.OrdinalIgnoreCase)) return;
-                    UseCelesteFolder(folder);
-                }));
-            return celesteFolderItem;
-        }
 
         Icon BuildTrayIcon()
         {
@@ -4856,159 +4834,5 @@ namespace DeskMadeline
         [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint uMilliseconds);
         public static void Begin(uint ms) => timeBeginPeriod(ms);
         public static void End(uint ms) => timeEndPeriod(ms);
-    }
-
-    /// <summary>Small modal key-capture window used by the tray binding editor.</summary>
-    sealed class KeyCaptureDialog : Form
-    {
-        public int CapturedKey { get; private set; }
-
-        public KeyCaptureDialog(string title, string instructions)
-        {
-            Text = title;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            StartPosition = FormStartPosition.CenterScreen;
-            ShowInTaskbar = false;
-            MinimizeBox = false;
-            MaximizeBox = false;
-            TopMost = true;
-            KeyPreview = true;
-            ClientSize = new Size(430, 100);
-            Controls.Add(new Label
-            {
-                Dock = DockStyle.Fill,
-                Text = instructions,
-                TextAlign = ContentAlignment.MiddleCenter,
-                Font = SystemFonts.MessageBoxFont,
-                Padding = new Padding(16)
-            });
-        }
-
-        protected override void OnKeyDown(KeyEventArgs e)
-        {
-            e.SuppressKeyPress = true;
-            e.Handled = true;
-            if (e.KeyCode == Keys.Escape)
-            {
-                DialogResult = DialogResult.Cancel;
-            }
-            else
-            {
-                CapturedKey = (e.KeyCode == Keys.Back || e.KeyCode == Keys.Delete)
-                    ? 0
-                    : (int)e.KeyCode;
-                DialogResult = DialogResult.OK;
-            }
-            Close();
-        }
-    }
-
-    /// <summary>Modal controller-button capture window used by the tray binding editor.</summary>
-    sealed class PadCaptureDialog : Form
-    {
-        // Capture-only: a bind must be deliberate, so a stick or trigger has to travel
-        // well past the gameplay thresholds before it counts as a press.
-        const float CaptureThreshold = 0.5f;
-
-        static readonly PadButton[] Candidates = (PadButton[])Enum.GetValues(typeof(PadButton));
-
-        readonly System.Windows.Forms.Timer poll;
-        readonly HashSet<PadButton> heldOnOpen = new HashSet<PadButton>();
-        readonly Label hint;
-        readonly string instructionText;
-        bool sampledOpenState;
-        bool showingDisconnected;
-
-        public PadButton CapturedButton { get; private set; }
-
-        public PadCaptureDialog(string title, string instructions)
-        {
-            Text = title;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            StartPosition = FormStartPosition.CenterScreen;
-            ShowInTaskbar = false;
-            MinimizeBox = false;
-            MaximizeBox = false;
-            TopMost = true;
-            KeyPreview = true;
-            ClientSize = new Size(430, 120);
-            instructionText = instructions;
-            hint = new Label
-            {
-                Dock = DockStyle.Fill,
-                Text = instructions,
-                TextAlign = ContentAlignment.MiddleCenter,
-                Font = SystemFonts.MessageBoxFont,
-                Padding = new Padding(16)
-            };
-            Controls.Add(hint);
-            poll = new System.Windows.Forms.Timer { Interval = 16 };
-            poll.Tick += (_, __) => Sample();
-            poll.Start();
-        }
-
-        void Sample()
-        {
-            PadState state = XInputPad.Poll();
-            if (!state.Connected)
-            {
-                // Otherwise an unplugged controller just looks like a dialog that ignores input.
-                if (!showingDisconnected)
-                {
-                    showingDisconnected = true;
-                    hint.Text = Loc.T("Pad.NoController") + "\n\n" + instructionText;
-                }
-                return;
-            }
-            if (showingDisconnected)
-            {
-                showingDisconnected = false;
-                hint.Text = instructionText;
-            }
-            // Buttons already held when the dialog opened (a trigger still down from the
-            // menu click, a resting stick) only arm once they have been released.
-            if (!sampledOpenState)
-            {
-                sampledOpenState = true;
-                foreach (PadButton button in Candidates)
-                    if (button != PadButton.None && state.Check(button, CaptureThreshold))
-                        heldOnOpen.Add(button);
-                return;
-            }
-            foreach (PadButton button in Candidates)
-            {
-                if (button == PadButton.None) continue;
-                if (!state.Check(button, CaptureThreshold)) { heldOnOpen.Remove(button); continue; }
-                if (heldOnOpen.Contains(button)) continue;
-                CapturedButton = button;
-                DialogResult = DialogResult.OK;
-                Close();
-                return;
-            }
-        }
-
-        protected override void OnKeyDown(KeyEventArgs e)
-        {
-            e.SuppressKeyPress = true;
-            e.Handled = true;
-            if (e.KeyCode == Keys.Back || e.KeyCode == Keys.Delete)
-            {
-                CapturedButton = PadButton.None;
-                DialogResult = DialogResult.OK;
-            }
-            else if (e.KeyCode == Keys.Escape)
-            {
-                DialogResult = DialogResult.Cancel;
-            }
-            else return;
-            Close();
-        }
-
-        protected override void OnFormClosed(FormClosedEventArgs e)
-        {
-            poll.Stop();
-            poll.Dispose();
-            base.OnFormClosed(e);
-        }
     }
 }

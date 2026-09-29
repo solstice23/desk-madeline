@@ -26,12 +26,6 @@ namespace DeskMadeline
             Opacity = PetWindow.HitTestOpacity;
             Size = new Size(1, 1);
             Location = new Point(-10000, -10000);
-
-            var menu = new ContextMenuStrip();
-            menu.Items.Add(new ToolStripMenuItem(
-                ownerWindow.Localize("Common.Remove"), null,
-                (_, __) => ownerWindow.RequestGliderRemoval(Glider)));
-            ContextMenuStrip = menu;
         }
 
         protected override CreateParams CreateParams
@@ -64,6 +58,10 @@ namespace DeskMadeline
         {
             base.OnMouseUp(e);
             if (e.Button == MouseButtons.Left) ownerWindow.EndGliderDrag(Glider);
+            // Right-click: the one thing to do to a toy, in the flyout's style.
+            else if (e.Button == MouseButtons.Right)
+                new FlyoutMenu().Item("\uE74D", ownerWindow.Localize("Common.Remove"),
+                    () => ownerWindow.RequestGliderRemoval(Glider)).ShowAt(Cursor.Position);
         }
     }
 }

@@ -24,6 +24,8 @@ namespace DeskMadeline
         public int GrabMode;
         /// <summary>The flyout tab last shown, and its fold-outs left open (comma-separated keys).</summary>
         public int FlyoutTab;
+        /// <summary>0 follows Windows' app theme, 1 light, 2 dark.</summary>
+        public int Theme;
         public string FlyoutOpen = "";
         public string Language;
         public string Skin = "default";
@@ -92,6 +94,8 @@ namespace DeskMadeline
                 if (values.TryGetValue("FlyoutTab", out string tab) && int.TryParse(tab, out int tabValue))
                     result.FlyoutTab = Math.Max(0, tabValue);
                 if (values.TryGetValue("FlyoutOpen", out string flyoutOpen)) result.FlyoutOpen = flyoutOpen;
+                if (values.TryGetValue("Theme", out string theme) && int.TryParse(theme, out int themeValue))
+                    result.Theme = Math.Max(0, Math.Min(2, themeValue));
                 if (values.TryGetValue("Language", out string language) && language.Length > 0)
                     result.Language = language.Trim();
                 if (values.TryGetValue("Skin", out string skin) && skin.Length > 0) result.Skin = skin;
@@ -172,6 +176,7 @@ namespace DeskMadeline
                     "GrabMode=" + GrabMode,
                     "FlyoutTab=" + FlyoutTab,
                     "FlyoutOpen=" + FlyoutOpen,
+                    "Theme=" + Theme,
                     "Language=" + (Language ?? ""),
                     "Skin=" + (Skin ?? "default"),
                     "CatTailEnabled=" + CatTailEnabled,

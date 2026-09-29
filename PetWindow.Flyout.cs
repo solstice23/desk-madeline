@@ -58,6 +58,10 @@ namespace DeskMadeline
             });
             page.Add(new FlyoutSwitch(p, Loc.T("Menu.Autonomy"), () => IdleAutonomyEnabled,
                 on => { IdleAutonomyEnabled = on; Save(); }));
+            // A developer's switch, beside what it debugs: there only when the flyout is opened
+            // with Shift held, so the everyday right-click stays a user's.
+            if (developer)
+                page.Add(new FlyoutSwitch(p, Loc.T("Menu.AutonomyDebug"), () => IdleDebugWanted, SetIdleDebug));
             // Celeste's own two menus of changes to how she plays, under its own names.
             page.Add(new FlyoutHeader(p, Loc.T("Flyout.Assists")));
             int[] dashModes = { 0, 1, 2, -1 };
@@ -238,13 +242,23 @@ namespace DeskMadeline
                 try { StartupRegistration.SetEnabled(on); }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(ex.Message, Loc.T("Startup.ChangeFailed"), MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    FlyoutDialog.Tell(f, FlyoutDialog.Kind.Error, Loc.T("Startup.ChangeFailed"), ex.Message);
                 }
             }));
             var languages = Loc.Languages.ToList();
             page.Add(new FlyoutSegmented(p, Loc.T("Menu.Language"), languages.Select(l => l.NativeName).ToArray(),
                 () => languages.FindIndex(l => l.Code.Equals(Loc.CurrentCode, StringComparison.OrdinalIgnoreCase)),
                 i => ChangeLanguage(languages[i].Code)));
+            // Every window reads the palette as it opens, so the flyout is built again to show
+            // the change at once; the others pick it up the next time they open.
+            page.Add(new FlyoutSegmented(p, Loc.T("Flyout.Theme"),
+                new[] { Loc.T("Theme.System"), Loc.T("Theme.Light"), Loc.T("Theme.Dark") },
+                () => FlyoutPalette.Theme, i =>
+                {
+                    FlyoutPalette.Theme = i;
+                    Save();
+                    BeginInvoke(new Action(RebuildFlyout));
+                }));
             if (NeedsCelesteInstall)
             {
                 // Why the pet wants to know, and where it is reading from: the first two things
@@ -261,10 +275,6 @@ namespace DeskMadeline
                     UseCelesteFolder(folder);
                 });
             }
-            // A developer's switch: there only when the flyout is opened with Shift held, so the
-            // everyday right-click stays a user's.
-            if (developer)
-                page.Add(new FlyoutSwitch(p, Loc.T("Menu.AutonomyDebug"), () => IdleDebugWanted, SetIdleDebug));
 
             // ---- Under every page ----
             f.AddFooterItem("\uE946", Loc.T("Menu.About"), ShowAbout);
@@ -317,7 +327,7 @@ namespace DeskMadeline
             }
             catch (Exception ex)
             {
-                MessageBox.Show(ex.Message, Loc.T("Skin.OpenFolderFailed"), MessageBoxButtons.OK, MessageBoxIcon.Error);
+                FlyoutDialog.Tell(flyout, FlyoutDialog.Kind.Error, Loc.T("Skin.OpenFolderFailed"), ex.Message);
             }
         }
 

@@ -164,10 +164,10 @@ namespace DeskMadeline
 
         /// <summary>
         /// Ask, with the asking on screen, and then say what came of it. Blocks the caller the
-        /// way any modal dialog does; call it on the UI thread.
+        /// way any modal window does; call it on the UI thread.
         /// </summary>
         /// <remarks>
-        /// One dialog rather than two. It opens saying that it is asking, and turns into the
+        /// One window rather than two. It opens saying that it is asking, and turns into the
         /// answer where it stands -- a window that appears only once a request over the network
         /// has come back leaves the click looking like it did nothing, and for as long as the
         /// server takes to answer there is nothing on screen to cancel either.
@@ -176,150 +176,119 @@ namespace DeskMadeline
         /// How to close the pet, for the one ending where it has to: a build cannot write over
         /// itself, so the last thing an update does here is leave and let the new one start.
         /// </param>
-        public static void Ask(Control ui, Action quit) => new Conversation(ui, quit).Run();
+        public static void Ask(Control ui, Action quit)
+        {
+            bool leaving;
+            using (var window = new UpdateWindow())
+            {
+                window.ShowDialog(ui);
+                leaving = window.Leaving;
+            }
+            // Only once the window is off the screen: closing the pet underneath it while it is
+            // still up is not something to ask of either of them.
+            if (leaving) quit();
+        }
 
         /// <summary>
-        /// The dialog, as one thing that changes rather than a series of them: asking, then the
+        /// The window, as one thing that changes rather than a series of them: asking, then the
         /// answer, then -- if the answer is taken up -- the fetching, and then the pet is gone
         /// and the new one is starting.
         /// </summary>
-        sealed class Conversation
+        sealed class UpdateWindow : StatusWindow
         {
-            readonly Control ui;
-            readonly Action quit;
-            TaskDialogPage showing;
             CancellationTokenSource fetching;
             bool leaving;
 
-            public Conversation(Control ui, Action quit) { this.ui = ui; this.quit = quit; }
-
-            public void Run()
+            public UpdateWindow() : base(Loc.T("Update.Title"))
             {
-                showing = Waiting();
-                TaskDialog.ShowDialog(showing);
+                ShowState(null, P.AccentInk, Loc.T("Update.Title"), Loc.T("Update.Checking"), null,
+                    b => b.Add(Loc.T("Common.Cancel"), Close));
+            }
+
+            /// <summary>Whether this ended by handing over to a new build, which means quitting.</summary>
+            public bool Leaving => leaving;
+
+            // Asked once it is up, so the click has something to show for it straight away;
+            // answered back on this thread. Gone means cancelled while the server thought.
+            protected override void Started() => Task.Run(async () =>
+            {
+                Result result = await Newest();
+                Back(() => Answer(result));
+            });
+
+            protected override void OnFormClosed(FormClosedEventArgs e)
+            {
                 fetching?.Cancel();
-                // Only once the dialog is off the screen: closing the window underneath it
-                // while it is still up is not something to ask of either of them.
-                if (leaving) quit();
+                base.OnFormClosed(e);
             }
 
-            /// <summary>Move the dialog on to its next state, if it is still there to move.</summary>
-            void Turn(TaskDialogPage next)
-            {
-                if (showing == null) return;
-                showing.Navigate(next);
-                showing = next;
-            }
-
-            TaskDialogPage Blank(string heading, TaskDialogIcon icon) => new TaskDialogPage
-            {
-                Caption = Loc.T("Update.Title"),
-                Heading = heading,
-                Icon = icon,
-                AllowCancel = true,
-                SizeToContent = true
-            };
-
-            /// <summary>Asking. Up before the request, so the click has something to show for it.</summary>
-            TaskDialogPage Waiting()
-            {
-                TaskDialogPage page = Blank(Loc.T("Update.Checking"), TaskDialogIcon.Information);
-                page.ProgressBar = new TaskDialogProgressBar(TaskDialogProgressBarState.Marquee);
-                page.Buttons.Add(new TaskDialogButton(Loc.T("Common.Cancel")));
-                // Started once it is up, and answered back on this thread; the modal loop pumps
-                // the post. Gone means cancelled while the server was still thinking.
-                page.Created += (_, _) => Task.Run(async () =>
-                {
-                    Result result = await Newest();
-                    Back(() => Turn(Answer(result)));
-                });
-                page.Destroyed += (_, _) => { if (showing == page) showing = null; };
-                return page;
-            }
+            static string Yours => BuildStamp.Known
+                ? BuildStamp.Describe(BuildStamp.Commit, BuildStamp.Made, BuildStamp.Number)
+                : Loc.T("Update.Unknown");
 
             /// <summary>What came of asking.</summary>
-            TaskDialogPage Answer(Result result)
+            void Answer(Result result)
             {
                 if (result.Error != null)
                 {
-                    TaskDialogPage failed = Blank(Loc.T("Update.Failed"), TaskDialogIcon.Warning);
-                    failed.Text = result.Error;
                     // Nothing here can say what went wrong on GitHub's side, so the way to find
                     // out is offered instead of guessed at.
-                    var byHand = new TaskDialogButton(Loc.T("Update.Manually"));
-                    byHand.Click += (_, _) => Open(ReleasePage);
-                    var close = new TaskDialogButton(Loc.T("Common.Close"));
-                    failed.Buttons.Add(byHand);
-                    failed.Buttons.Add(close);
-                    failed.DefaultButton = close;
-                    return failed;
+                    ShowState("", Warn, Loc.T("Update.Failed"), result.Error, null, b =>
+                    {
+                        b.Add(Loc.T("Update.Manually"), () => Open(ReleasePage));
+                        b.Add(Loc.T("Common.Close"), Close, accent: true);
+                    });
+                    return;
                 }
-
-                string yours = BuildStamp.Known
-                    ? BuildStamp.Describe(BuildStamp.Commit, BuildStamp.Made, BuildStamp.Number)
-                    : Loc.T("Update.Unknown");
 
                 if (!result.Newer)
                 {
-                    TaskDialogPage current = Blank(Loc.T("Update.Current"),
-                        TaskDialogIcon.Information);
-                    current.Text = string.Format(Loc.T("Update.Yours"), yours);
-                    current.Buttons.Add(new TaskDialogButton(Loc.T("Common.Ok")));
-                    return current;
+                    ShowState("", P.AccentInk, Loc.T("Update.Current"), null, s =>
+                    {
+                        var card = s.Add(new FlyoutCard(P));
+                        card.Add(new FlyoutInfoRow(P, Loc.T("Update.YoursLabel"), Yours, accent: false));
+                    }, b => b.Add(Loc.T("Common.Ok"), Close, accent: true));
+                    return;
                 }
 
-                // Plain, not one of the shields: those paint the whole head of the dialog in a
-                // colour, and a desktop pet having a new build is not a security matter.
-                TaskDialogPage there = Blank(Loc.T("Update.Available"),
-                    TaskDialogIcon.Information);
-                there.Text = string.Format(Loc.T("Update.Newest"),
-                        BuildStamp.Describe(result.Short, result.Made, result.Number))
-                    + Environment.NewLine + string.Format(Loc.T("Update.Yours"), yours);
-                there.Footnote = new TaskDialogFootnote(result.Describe());
-
-                var page = new TaskDialogButton(Loc.T("Update.OnGitHub"));
-                page.Click += (_, _) => Open(result.Page);
-                there.Buttons.Add(page);
-
-                // Only where there is a file to fetch and somewhere to put it.
-                if (result.Download.Length > 0 && SelfUpdate.Possible)
+                ShowState("", P.AccentInk, Loc.T("Update.Available"), null, s =>
                 {
-                    // It does not close the dialog: the dialog is where the fetching is shown.
-                    var install = new TaskDialogButton(Loc.T("Update.Install"))
-                    { AllowCloseDialog = false };
-                    install.Click += (_, _) => Turn(Fetching(result));
-                    there.Buttons.Add(install);
-                    there.DefaultButton = install;
-                }
-                else there.DefaultButton = page;
-                return there;
+                    var card = s.Add(new FlyoutCard(P));
+                    card.Add(new FlyoutInfoRow(P, Loc.T("Update.NewestLabel"),
+                        BuildStamp.Describe(result.Short, result.Made, result.Number), accent: true));
+                    card.Add(new FlyoutInfoRow(P, Loc.T("Update.YoursLabel"), Yours, accent: false));
+                    s.Add(new FlyoutNote(P, result.Describe()));
+                }, b =>
+                {
+                    // Only where there is a file to fetch and somewhere to put it.
+                    bool install = result.Download.Length > 0 && SelfUpdate.Possible;
+                    b.Add(Loc.T("Update.OnGitHub"), () => Open(result.Page), accent: !install);
+                    if (install) b.Add(Loc.T("Update.Install"), () => Fetching(result), accent: true);
+                });
             }
 
             /// <summary>Fetching it, and then leaving so that it can take this one's place.</summary>
-            TaskDialogPage Fetching(Result result)
+            void Fetching(Result result)
             {
-                var bar = new TaskDialogProgressBar(TaskDialogProgressBarState.Normal);
-                TaskDialogPage page = Blank(Loc.T("Update.Downloading"),
-                    TaskDialogIcon.Information);
-                page.ProgressBar = bar;
-                page.Text = new SelfUpdate.Fetched(0, result.Bytes).ToString();
-                page.Footnote = new TaskDialogFootnote(result.Describe());
-                // Held on to: this is the one the dialog is closed by when the fetch is done,
-                // and a button can only be clicked from code while it is bound to a page.
-                var stop = new TaskDialogButton(Loc.T("Common.Cancel"));
-                page.Buttons.Add(stop);
+                FlyoutProgress bar = null;
+                ShowState("", P.AccentInk, Loc.T("Update.Downloading"),
+                    new SelfUpdate.Fetched(0, result.Bytes).ToString(), s =>
+                    {
+                        bar = s.Add(new FlyoutProgress(P));
+                        s.Add(new FlyoutNote(P, result.Describe()));
+                    }, b => b.Add(Loc.T("Common.Cancel"), Close));
 
                 fetching = new CancellationTokenSource();
                 CancellationToken cancel = fetching.Token;
                 // Progress<T> was made here, so it comes back here to be shown.
                 var progress = new Progress<SelfUpdate.Fetched>(fetched =>
                 {
-                    if (showing != page) return;
-                    bar.Value = Math.Clamp(fetched.Percent, 0, 100);
-                    page.Text = fetched.ToString();
+                    if (IsDisposed || bar.IsDisposed) return;
+                    bar.SetPercent(fetched.Percent);
+                    Status.SetDetail(fetched.ToString());
                 });
 
-                page.Created += (_, _) => Task.Run(async () =>
+                Task.Run(async () =>
                 {
                     try
                     {
@@ -328,48 +297,25 @@ namespace DeskMadeline
                         Back(() =>
                         {
                             if (!SelfUpdate.Handover(unpacked))
-                            { Turn(Broke(Loc.T("Update.HandoverFailed"), result)); return; }
+                            { Broke(Loc.T("Update.HandoverFailed"), result); return; }
                             // The script is waiting for this process to end, so end it: close
-                            // the dialog, and Run does the rest once it is off the screen.
+                            // the window, and Ask does the rest once it is off the screen.
                             leaving = true;
-                            stop.PerformClick();
+                            Close();
                         });
                     }
                     catch (OperationCanceledException) { }
-                    catch (Exception ex) { Back(() => Turn(Broke(ex.Message, result))); }
+                    catch (Exception ex) { Back(() => Broke(ex.Message, result)); }
                 });
-                page.Destroyed += (_, _) => { if (showing == page) showing = null; };
-                return page;
             }
 
             /// <summary>The fetch did not come off; the page it is on is still there to be had.</summary>
-            TaskDialogPage Broke(string why, Result result)
-            {
-                TaskDialogPage page = Blank(Loc.T("Update.DownloadFailed"), TaskDialogIcon.Warning);
-                page.Text = why;
-                var byHand = new TaskDialogButton(Loc.T("Update.OnGitHub"));
-                byHand.Click += (_, _) => Open(result.Page);
-                var close = new TaskDialogButton(Loc.T("Common.Close"));
-                page.Buttons.Add(byHand);
-                page.Buttons.Add(close);
-                page.DefaultButton = close;
-                return page;
-            }
-
-            /// <summary>Onto the thread the dialog lives on, if there is still one to go to.</summary>
-            void Back(Action what)
-            {
-                if (!ui.IsHandleCreated || ui.IsDisposed) return;
-                try
+            void Broke(string why, Result result) =>
+                ShowState("", Warn, Loc.T("Update.DownloadFailed"), why, null, b =>
                 {
-                    ui.BeginInvoke(new Action(() =>
-                    {
-                        try { what(); }
-                        catch (Exception ex) { PetWindow.Log("update: " + ex.Message); }
-                    }));
-                }
-                catch (InvalidOperationException) { }   // closing underneath us
-            }
+                    b.Add(Loc.T("Update.OnGitHub"), () => Open(result.Page));
+                    b.Add(Loc.T("Common.Close"), Close, accent: true);
+                });
         }
 
         static void Open(string url)
