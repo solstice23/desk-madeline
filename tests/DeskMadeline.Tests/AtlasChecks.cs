@@ -200,9 +200,12 @@ static class AtlasChecks
             "idle00", "runFast00", "climb00", "jumpFast00", "dash00", "hair00", "bangs00",
             "dangling00", "deadside00", "wakeUp00", "sweatIdle00",
             "glider/idle0", "seeker/Shockwave00", "theoCrystal/idle00", "pico8/font",
-            "smoke0", "zappysmoke00", "slash00", Sprites.PortraitId,
+            "smoke0", "zappysmoke00", "slash00", "glove", Sprites.PortraitId,
         })
             Check($"id \"{id}\" resolves", Sprites.Get(id, false) != null);
+        // util/glove, at the untrimmed 16x16 GrabbyIcon justifies it against.
+        Bitmap glove = Sprites.Get("glove", false);
+        Check("the glove is its whole 16x16 frame", glove != null && glove.Width == 16 && glove.Height == 16);
 
         // The hair painted into the poses that carry no hair of their own, lifted out so it
         // can be tinted with the rest of her. Counted against the frame it came from: every

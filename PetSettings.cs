@@ -20,6 +20,8 @@ namespace DeskMadeline
         public bool Invincible;
         public bool SuperDashing;
         public int DashMode = 1;
+        /// <summary>Celeste's <c>GrabModes</c>: 0 hold, 1 invert, 2 toggle.</summary>
+        public int GrabMode;
         public string Language;
         public string Skin = "default";
         public bool CatTailEnabled;
@@ -82,6 +84,8 @@ namespace DeskMadeline
                 ReadBool(values, "SuperDashing", ref result.SuperDashing);
                 if (values.TryGetValue("DashMode", out string dash) && int.TryParse(dash, out int dashValue))
                     result.DashMode = dashValue < 0 ? -1 : Math.Max(0, Math.Min(2, dashValue));
+                if (values.TryGetValue("GrabMode", out string grab) && int.TryParse(grab, out int grabValue))
+                    result.GrabMode = Math.Max(0, Math.Min(2, grabValue));
                 if (values.TryGetValue("Language", out string language) && language.Length > 0)
                     result.Language = language.Trim();
                 if (values.TryGetValue("Skin", out string skin) && skin.Length > 0) result.Skin = skin;
@@ -159,6 +163,7 @@ namespace DeskMadeline
                     "Invincible=" + Invincible,
                     "SuperDashing=" + SuperDashing,
                     "DashMode=" + DashMode,
+                    "GrabMode=" + GrabMode,
                     "Language=" + (Language ?? ""),
                     "Skin=" + (Skin ?? "default"),
                     "CatTailEnabled=" + CatTailEnabled,

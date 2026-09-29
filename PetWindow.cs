@@ -87,6 +87,10 @@ namespace DeskMadeline
         public volatile string IdleDebugText = "";
         public bool IdleAutonomyEnabled;
         bool realInputThisFrame;
+        // Input.GrabCheck as the player's hands gave it this frame, read before UpdateGrab.
+        readonly GrabInput grabInput = new GrabInput();
+        readonly GrabbyIcon grabbyIcon = new GrabbyIcon();
+        bool grabCheck;
         bool wakeUpPending;
         bool foregroundFullscreen;
         readonly List<KeyValuePair<IntPtr, RectangleF>> idleWindowsScratch
@@ -293,6 +297,7 @@ namespace DeskMadeline
             player.Invincible = settings.Invincible;
             player.SuperDashing = settings.SuperDashing;
             player.SetDashMode(settings.DashMode);
+            grabInput.SetMode((GrabModes)settings.GrabMode);
             player.NormalSurfaceSoundIndex = settings.SurfaceSoundIndex;
             player.Holdables = holdables;
             Loc.SetLanguage(Loc.DetectDefault(settings.Language));
@@ -969,6 +974,8 @@ namespace DeskMadeline
             bool playerRespawningNow = player.IsRespawning;
             if (playerRespawningNow && !observedPlayerRespawning)
             {
+                // Level.Reload makes a new Player, and its constructor calls Input.ResetGrab.
+                grabInput.Reset();
                 // Level.Reload recreates room entities in Celeste. Menu-spawned
                 // desktop entities have no map loader, so reset them explicitly.
                 seekerRespawnDormant = true;
@@ -989,6 +996,10 @@ namespace DeskMadeline
                 UpdateDashCoreVisuals(0f); // observe the dash, but do not spawn/age FX
                 return;
             }
+
+            // An entity of the scene, so behind the freeze-frame return like the rest of them.
+            grabbyIcon.Update(!player.IsDead && !player.IsPreDeath &&
+                grabInput.Mode == GrabModes.Toggle && grabCheck, dt);
 
             // UpdateSprite selects animations after component advancement. A newly
             // selected animation stays on frame zero until the next game frame.
@@ -1810,6 +1821,9 @@ namespace DeskMadeline
             prevPad = pad;
             realInputThisFrame = dragging || draggedGlider != null || draggedTheo != null ||
                 draggedSeeker != null || draggedBumper != null || draggedPuffer != null;
+            // A gated frame gives her nothing of the player's, a latched Toggle included: the
+            // latch waits for focus to come back, as a held key would be read again.
+            grabCheck = false;
             if (!useKeys && !usePad) return AutonomyOr(input);
             // Keyboard bindings are digital, so the threshold only ever affects the controller;
             // it reproduces Celeste's per-virtual-input deadzones.
@@ -1843,7 +1857,8 @@ namespace DeskMadeline
             input.FeatherY = featherY.Update(Held(PetAction.Up, PadBindings.AimThreshold),
                 Held(PetAction.Down, PadBindings.AimThreshold));
             input.JumpHeld = jump;
-            input.GrabHeld = grab;
+            grabCheck = grabInput.Check(grab);
+            input.GrabHeld = grabCheck;
             input.ElytraHeld = elytra;
 
             // Binding.Pressed, which asks each bound key and button for its own edge rather than
@@ -1862,6 +1877,11 @@ namespace DeskMadeline
 
             input.JumpPressed = player.HasJumpBuffer;
             input.DashPressed = player.HasDashBuffer;
+            // Input.UpdateGrab runs after the scene has, so Check above already had its answer:
+            // a Toggle press reaches her the frame after it.
+            grabInput.Update(Pressed(PetAction.Grab, PadBindings.ButtonThreshold));
+            // The keys are what say someone is there, not what the grab mode makes of them:
+            // an Invert grab is every idle moment, and would keep the director away for good.
             realInputThisFrame |= left || right || up || down || jump || dash || grab ||
                 crouchDash || elytra;
             return AutonomyOr(input);
@@ -1889,10 +1909,20 @@ namespace DeskMadeline
                 return real;
             }
             idleDirector.DebugEnabled = IdleDebugWanted;
+            bool wasEngaged = idleDirector.Engaged;
             PetInput auto = idleDirector.Drive(1f / 60f, BuildIdleContext());
             if (IdleDebugWanted) IdleDebugText = idleDirector.DebugText;
             // Waking on her own -- the nap ran out -- gets the stretch too.
             if (idleDirector.ConsumeWakeRequest()) wakeUpPending = true;
+            // Until the director takes her, a quiet frame is still the player's, and under
+            // Invert or a latched Toggle a quiet frame is a grab: she stays on the wall she was
+            // left on rather than dropping the moment the keys go still. Not engaged, the
+            // director has nothing to say -- its input is empty.
+            if (!idleDirector.Engaged) return real;
+            // Taking her over is the player gone. Their latch goes with them, so that nobody
+            // comes back to a grab they did not know was on, and so the glove does not hang
+            // over an outing that is not theirs.
+            if (!wasEngaged) grabInput.Reset();
             return auto;
         }
 
@@ -3124,6 +3154,7 @@ namespace DeskMadeline
                 }
 
                 if (ParticlesEnabled) particles.Draw(g, camX, camY);
+                DrawGrabbyIcon(g, bodyAnchorX, bodyAnchorY);
                 DrawSpeedometer(g, camX, camY);
                 DrawHitboxes(g, camX, camY);
             }
@@ -3761,6 +3792,23 @@ namespace DeskMadeline
             }
         }
 
+        /// <summary>
+        /// <c>GrabbyIcon.Render</c>: util/glove justified (0.5, 1) at 16px above her feet, scaled
+        /// by the wiggler. Depth -1000001 puts it over everything, particles included. A dead
+        /// player is no longer in the tracker, so nothing is drawn for one.
+        /// </summary>
+        void DrawGrabbyIcon(Graphics g, float anchorX, float anchorY)
+        {
+            if (!grabbyIcon.Enabled || player.IsDead || player.IsPreDeath) return;
+            Bitmap glove = Sprites.Get("glove", false);
+            if (glove == null) return;
+            float scale = grabbyIcon.Scale;
+            float w = glove.Width * scale, h = glove.Height * scale;
+            // Snapped the way DrawBody snaps a squashed frame.
+            g.DrawImage(glove, SnapPx(SnapPx(anchorX) - w * 0.5f), SnapPx(SnapPx(anchorY) - 16f - h),
+                SnapPx(w), SnapPx(h));
+        }
+
         void DrawDeathEffect(Graphics g, float camX, float camY,
             PointF effectPosition, Color effectColor, float effectPercent)
         {
@@ -4225,6 +4273,7 @@ namespace DeskMadeline
             settings.Invincible = player.Invincible;
             settings.SuperDashing = player.SuperDashing;
             settings.DashMode = player.DashMode;
+            settings.GrabMode = (int)grabInput.Mode;
             settings.Language = Loc.CurrentCode;
             settings.Skin = skinManager.Active?.Id ?? SkinManager.DefaultId;
             settings.CatTailEnabled = catTailEnabled;
@@ -5084,6 +5133,31 @@ namespace DeskMadeline
                 dashItem.DropDownItems.Add(choice);
             }
 
+            // MenuOptions.CreateGrabMode: Hold, Invert, Toggle, and a change resets the latch.
+            var grabModeItem = new ToolStripMenuItem(Loc.T("Menu.GrabMode"));
+            foreach (var option in new[]
+            {
+                new KeyValuePair<GrabModes, string>(GrabModes.Hold, Loc.T("GrabMode.Hold")),
+                new KeyValuePair<GrabModes, string>(GrabModes.Invert, Loc.T("GrabMode.Invert")),
+                new KeyValuePair<GrabModes, string>(GrabModes.Toggle, Loc.T("GrabMode.Toggle"))
+            })
+            {
+                GrabModes mode = option.Key;
+                var choice = new ToolStripMenuItem(option.Value)
+                {
+                    Checked = grabInput.Mode == mode,
+                    Tag = mode
+                };
+                choice.Click += (_, __) =>
+                {
+                    grabInput.SetMode(mode);
+                    SaveSettings();
+                    foreach (ToolStripMenuItem item in grabModeItem.DropDownItems)
+                        item.Checked = (GrabModes)item.Tag == mode;
+                };
+                grabModeItem.DropDownItems.Add(choice);
+            }
+
             var wakeUpItem = new ToolStripMenuItem(Loc.T("Menu.ReplayWakeUp"), null, (_, __) =>
             {
                 introWakeUp = true;
@@ -5168,7 +5242,7 @@ namespace DeskMadeline
             AddAll(menu, resetItem, wakeUpItem, autonomyItem, autonomyDebugItem, spawnItem, removeEntitiesItem);
             Section(menu, "Section.Input");
             AddAll(menu, inputItem, padInputItem, unfocusedInputItem,
-                BuildBindingsMenu(), BuildPadBindingsMenu(),
+                BuildBindingsMenu(), BuildPadBindingsMenu(), grabModeItem,
                 dashItem, superDashItem, staminaItem, invincibleItem, freezeItem, elytraItem);
             Section(menu, "Section.Appearance");
             AddAll(menu, skinItem, cosmeticsItem, hairColorsItem, scaleItem,

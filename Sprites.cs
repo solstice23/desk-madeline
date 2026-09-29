@@ -199,6 +199,9 @@ namespace DeskMadeline
                     // particles/smoke0 is the id smoke0, effects/slash/00 is slash00.
                     ("particles/", ""),
                     ("effects/", ""),
+                    // One sprite rather than a folder: the rest of util/ is whole-screen
+                    // textures. The empty remainder makes its id the prefix alone.
+                    ("util/glove", "glove"),
                 };
                 if (!string.IsNullOrEmpty(skinAtlasFolder))
                     folders.Add((skinAtlasFolder.TrimEnd('/') + "/", ""));
