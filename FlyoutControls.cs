@@ -733,7 +733,9 @@ namespace DeskMadeline
         protected override bool FadesOnHover => false;
 
         readonly List<(string Text, string Glyph, string Full)> tabs = new List<(string, string, string)>();
-        readonly ToolTip tip = new ToolTip();
+        // Slow to appear: the icon and label say it already, and the tip is only for the rare
+        // tab whose label is a short form -- a reminder for someone lingering, not a label.
+        readonly ToolTip tip = new ToolTip { InitialDelay = 1500, ReshowDelay = 1500 };
         Font iconFont, labelFont;
         int selected;
         readonly HoverSet hover;
@@ -832,6 +834,11 @@ namespace DeskMadeline
             return -1;
         }
 
+        /// <summary>Whether a tab's label leaves out some of its name: a short form, or cut off.</summary>
+        bool Shortened(int i)
+            => tabs[i].Full != tabs[i].Text ||
+               TextRenderer.MeasureText(tabs[i].Text, labelFont).Width > Width / Math.Max(1, tabs.Count);
+
         void Select(int i)
         {
             if (i < 0 || i == selected) return;
@@ -847,7 +854,7 @@ namespace DeskMadeline
             if (now != hover.Hot)
             {
                 hover.Set(now);
-                tip.SetToolTip(this, now >= 0 ? tabs[now].Full : null);
+                tip.SetToolTip(this, now >= 0 && Shortened(now) ? tabs[now].Full : null);
             }
         }
 
