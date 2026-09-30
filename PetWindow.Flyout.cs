@@ -89,8 +89,8 @@ namespace DeskMadeline
             page.Add(new FlyoutSwitch(p, Loc.T("Menu.IgnoreMaximizedWindows"), () => ignoreMaximizedWindows,
                 on => { ignoreMaximizedWindows = on; pollCounter = 999; Save(); }));
             // Which screen she wraps around only means anything while she wraps, so the switch
-            // is there only then, the way the hair swatches follow their own switch.
-            Control oneMonitor = null;
+            // is there only then, folding out under the choice the way the hair swatches do.
+            Action<bool> showOneMonitor = null;
             page.Add(new FlyoutSegmented(p, Loc.T("Menu.EdgeWrap"),
                 new[] { Loc.T("Common.Off"), Loc.T("Common.Horizontal"), Loc.T("Common.Vertical"), Loc.T("EdgeWrap.Both") },
                 () => edgeWrapMode, i =>
@@ -98,12 +98,11 @@ namespace DeskMadeline
                     edgeWrapMode = i;
                     pollCounter = 999;
                     Save();
-                    oneMonitor.Visible = i != 0;
-                    f.Refit();
+                    showOneMonitor(i != 0);
                 }));
-            oneMonitor = page.Add(new FlyoutSwitch(p, Loc.T("Menu.EdgeWrapOneMonitor"), () => edgeWrapOneMonitor,
+            f.Revealed(page, edgeWrapMode != 0, out showOneMonitor).Add(new FlyoutSwitch(p,
+                Loc.T("Menu.EdgeWrapOneMonitor"), () => edgeWrapOneMonitor,
                 on => { edgeWrapOneMonitor = on; pollCounter = 999; Save(); }));
-            oneMonitor.Visible = edgeWrapMode != 0;
             page.Add(new FlyoutHeader(p, Loc.T("Menu.Spawn")));
             var spawn = page.Add(new FlyoutButtons(p));
             spawn.Add(Loc.T("Entity.Jellyfish"), () => Interlocked.Increment(ref pendingGliderSpawns));
@@ -183,38 +182,36 @@ namespace DeskMadeline
 
             page.Add(new FlyoutHeader(p, Loc.T("Menu.HairColors")));
             // The three swatches only mean anything while custom colours are on, so they are
-            // only there then -- shown by the switch, not by a click of their own.
-            var hairRows = new List<Control>();
+            // only there then -- folded out by the switch, not by a click of their own.
+            Action<bool> showHairRows = null;
             page.Add(new FlyoutSwitch(p, Loc.T("Hair.UseCustom"), () => customHairColorsEnabled, on =>
             {
                 customHairColorsEnabled = on;
                 Save();
-                foreach (Control row in hairRows) row.Visible = on;
-                f.Refit();
+                showHairRows(on);
             }));
+            FlyoutStack hairRows = f.Revealed(page, customHairColorsEnabled, out showHairRows);
             string[] colorNames = { Loc.T("Hair.NoDashes"), Loc.T("Hair.OneDash"), Loc.T("Hair.TwoDashes") };
             for (int i = 0; i < 3; i++)
             {
                 int index = i;
-                hairRows.Add(page.Add(new FlyoutSwatch(p, colorNames[i], () => customHairColors[index], () =>
+                hairRows.Add(new FlyoutSwatch(p, colorNames[i], () => customHairColors[index], () =>
                 {
                     using var dialog = new ColorDialog { Color = customHairColors[index], FullOpen = true, AnyColor = true };
                     if (dialog.ShowDialog(f) != DialogResult.OK) return;
                     customHairColors[index] = dialog.Color;
                     Save();
-                })));
+                }));
             }
-            var hairReset = page.Add(new FlyoutButtons(p));
+            var hairReset = hairRows.Add(new FlyoutButtons(p));
             hairReset.Add(Loc.T("Hair.ResetCeleste"), () =>
             {
                 customHairColors[0] = Player.UsedHairColor;
                 customHairColors[1] = Player.NormalHairColor;
                 customHairColors[2] = Player.TwoDashesHairColor;
                 Save();
-                foreach (Control row in hairRows) row.Invalidate();
+                foreach (Control row in hairRows.Controls) row.Invalidate();
             });
-            hairRows.Add(hairReset);
-            foreach (Control row in hairRows) row.Visible = customHairColorsEnabled;
 
             page.Add(new FlyoutHeader(p, Loc.T("Menu.ExtraOverlays")));
             page.Add(new FlyoutSegmented(p, Loc.T("Menu.Speedometer"),

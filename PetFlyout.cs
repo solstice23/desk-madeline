@@ -180,6 +180,34 @@ namespace DeskMadeline
             return body;
         }
 
+        /// <summary>Rows that are there only while another control says so.</summary>
+        /// <remarks>
+        /// They fold in and out the way an expander's body does, with the same tween and
+        /// timing, only driven by <paramref name="show"/> -- which the controlling row calls --
+        /// rather than a row of their own.
+        /// </remarks>
+        public FlyoutStack Revealed(FlyoutStack page, bool shown, out Action<bool> show)
+        {
+            var body = new FlyoutStack(P) { Width = RowWidth, Visible = shown };
+            page.Add(body);
+            Tween reveal = null;
+            reveal = new Tween(body, shown ? 1f : 0f, Ease.OutQuint)
+            {
+                Stepped = () =>
+                {
+                    if (reveal.Value <= 0f && reveal.Target <= 0f) body.Visible = false;
+                    Refit();
+                },
+            };
+            page.Reveal(body, reveal);
+            show = on =>
+            {
+                if (on) body.Visible = true;
+                reveal.To(on ? 1f : 0f, on ? 280f : 220f);
+            };
+            return body;
+        }
+
         /// <summary>Show a tab, as a click on it would with <paramref name="animate"/>, or at once.</summary>
         public void SelectPage(int index, bool animate = false)
         {
