@@ -21,7 +21,8 @@ namespace DeskMadeline
     /// taken from Deactivate, which does not come again once she has been clicked.
     ///
     /// Its height follows the page on show; a page taller than the screen allows scrolls, and
-    /// remembers where it was scrolled to. It is not topmost, so Madeline stays in front of it.
+    /// remembers where it was scrolled to. It sits above every other window but under Madeline,
+    /// who is lifted back over it whenever it comes to the front.
     ///
     /// It fades in sliding out of the pointer's corner and fades out when sent away; switching
     /// tabs eases its height to the new page while the page fades through. Every motion is
@@ -89,8 +90,7 @@ namespace DeskMadeline
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
             ShowInTaskbar = false;
-            // Not topmost: Madeline and her entities are, and they belong in front of it.
-            TopMost = false;
+            // Topmost or not is the opener's to say: it matches her, and she is lifted back over it.
             KeyPreview = true;
             AutoScaleMode = AutoScaleMode.None;
             Font = SystemFonts.MessageBoxFont;

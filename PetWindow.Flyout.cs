@@ -38,8 +38,40 @@ namespace DeskMadeline
             opened.SelectPage(flyoutTab);
             opened.TabChanged += tab => { if (flyoutTab != tab) { flyoutTab = tab; SaveSettings(); } };
             opened.FormClosed += (_, __) => { if (flyout == opened) flyout = null; };
+            // Above every other window, and under her alone: in the topmost band with her when
+            // she is always on top, and she and her things lifted back over it whenever it comes
+            // to the front -- which showing it, and every click on it, does.
+            opened.TopMost = AlwaysOnTop;
+            opened.Activated += (_, __) => BeginInvoke(new Action(RaisePetWindows));
             old?.Close();
             opened.Show();
+            RaisePetWindows();
+        }
+
+        /// <summary>Her windows, back to the top of their band, without taking the focus.</summary>
+        /// <remarks>
+        /// The picture of her and every entity is the one composition window, so they come
+        /// above together; the input windows follow, so she can still be grabbed where she is
+        /// drawn over the flyout.
+        /// </remarks>
+        void RaisePetWindows()
+        {
+            IntPtr top = AlwaysOnTop ? Win32.HWND_TOPMOST : IntPtr.Zero;   // IntPtr.Zero is HWND_TOP
+            const uint flags = Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE;
+            var handles = new List<IntPtr>();
+            if (compositionHost != null && compositionHost.IsHandleCreated) handles.Add(compositionHost.Handle);
+            if (IsHandleCreated) handles.Add(Handle);
+            void Collect<T>(IEnumerable<T> windows) where T : Control
+            {
+                foreach (T window in windows)
+                    if (window.IsHandleCreated) handles.Add(window.Handle);
+            }
+            lock (gliderWindowLock) Collect(gliderWindows.Values);
+            lock (seekerWindowLock) Collect(seekerWindows.Values);
+            lock (pufferWindowLock) Collect(pufferWindows.Values);
+            lock (bumperWindowLock) Collect(bumperWindows.Values);
+            lock (theoWindowLock) Collect(theoWindows.Values);
+            foreach (IntPtr handle in handles) Win32.SetWindowPos(handle, top, 0, 0, 0, 0, flags);
         }
 
         void BuildFlyoutPages(PetFlyout f, bool developer)
@@ -310,6 +342,12 @@ namespace DeskMadeline
             if (compositionHost != null)
                 Win32.SetWindowPos(compositionHost.Handle, AlwaysOnTop ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST,
                     0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+            // The switch is on the flyout: it follows her into or out of the topmost band.
+            if (flyout != null && !flyout.IsDisposed)
+            {
+                flyout.TopMost = on;
+                RaisePetWindows();
+            }
         }
 
         void SetIdleDebug(bool on)
