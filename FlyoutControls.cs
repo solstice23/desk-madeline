@@ -734,7 +734,7 @@ namespace DeskMadeline
 
         readonly List<(string Text, string Glyph, string Full)> tabs = new List<(string, string, string)>();
         readonly ToolTip tip = new ToolTip();
-        readonly Font iconFont, labelFont;
+        Font iconFont, labelFont;
         int selected;
         readonly HoverSet hover;
         // The chosen tab's backing and underline glide from the old tab to the new one.
@@ -744,13 +744,27 @@ namespace DeskMadeline
 
         public event Action<int> Changed;
 
-        public FlyoutTabs(FlyoutPalette palette, Font font) : base(palette)
+        public FlyoutTabs(FlyoutPalette palette) : base(palette)
         {
-            Font = font;
             hover = new HoverSet(this);
             slide = new Tween(this, 1f, Ease.OutQuint);
-            labelFont = new Font(font.FontFamily, font.Size * .85f);
-            iconFont = IconFont(font.Size * 1.3f);
+            MakeFonts();
+        }
+
+        // Derived from the font it has rather than one handed over once: the flyout's font is
+        // rescaled when it opens on a monitor of another scale, and the tabs inherit that.
+        void MakeFonts()
+        {
+            labelFont?.Dispose();
+            iconFont?.Dispose();
+            labelFont = new Font(Font.FontFamily, Font.Size * .85f);
+            iconFont = IconFont(Font.Size * 1.3f);
+        }
+
+        protected override void OnFontChanged(EventArgs e)
+        {
+            base.OnFontChanged(e);
+            MakeFonts();
         }
 
         /// <param name="full">The whole name, shown on hover, where the label is a short form of it.</param>
@@ -1588,6 +1602,14 @@ namespace DeskMadeline
             TextRenderer.DrawText(g, Text, title, new Rectangle(TextLeft, y, w, th), P.Text, Wrap);
             if (detail.Length > 0)
                 TextRenderer.DrawText(g, detail, Font, new Rectangle(TextLeft, y + th + Em / 6, w, dh), P.Secondary, Wrap);
+        }
+
+        // Made again at the next paint when a move to a monitor of another scale changes the font.
+        protected override void OnFontChanged(EventArgs e)
+        {
+            base.OnFontChanged(e);
+            icons?.Dispose();
+            icons = null;
         }
 
         protected override void Dispose(bool disposing)

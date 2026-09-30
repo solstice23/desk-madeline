@@ -96,20 +96,21 @@ namespace DeskMadeline
             Font = SystemFonts.MessageBoxFont;
             BackColor = P.Back;
 
-            tabs = new FlyoutTabs(P, Font) { Dock = DockStyle.Top };
-            tabs.Height = tabs.GetPreferredSize(Size.Empty).Height;
+            // The tabs, the strip and the pages take the window's font rather than a copy of it:
+            // opened on a monitor of another scale than the main one, Windows rescales the
+            // window's font, and a copy would keep them all at the main monitor's size.
+            tabs = new FlyoutTabs(P) { Dock = DockStyle.Top };
             tabs.Changed += ShowPage;
-            top = new Panel { Dock = DockStyle.Top, Height = Em * 3 / 4, BackColor = P.Back };
+            top = new Panel { Dock = DockStyle.Top, BackColor = P.Back };
             scroller = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = P.Back };
             // The tabs and pages sit inside a margin; the footer runs edge to edge under them.
-            body = new Panel { Dock = DockStyle.Fill, BackColor = P.Back, Padding = new Padding(Em / 2) };
+            body = new Panel { Dock = DockStyle.Fill, BackColor = P.Back };
             body.Controls.Add(scroller);
             body.Controls.Add(top);
             body.Controls.Add(tabs);
             cover = new FadeCover(P.Back) { Visible = false };
             body.Controls.Add(cover);
-            footer = new FlyoutFooter(P) { Dock = DockStyle.Bottom, Font = Font };
-            footer.Height = footer.GetPreferredSize(Size.Empty).Height;
+            footer = new FlyoutFooter(P) { Dock = DockStyle.Bottom };
 
             // Everything the flyout shows is in one panel: the whole window when it opens
             // downward, the part of a taller window in use when it opens upward -- see Place.
@@ -117,12 +118,30 @@ namespace DeskMadeline
             frame.Controls.Add(body);
             frame.Controls.Add(footer);
             Controls.Add(frame);
+            SizeChrome();
             Orient(fromBottom);
 
             presence = new Tween(this, 0f, Ease.OutCubic) { Stepped = Appear };
             switching = new Tween(this, 1f, Ease.OutQuint) { Stepped = Switching };
             fade = new Tween(this, 1f, Ease.Linear) { Stepped = () => cover.Progress = fade.Value };
             watch.Tick += (_, _) => Watch();
+        }
+
+        /// <summary>The tabs, the strip and the margins, in lines of the font it has now.</summary>
+        void SizeChrome()
+        {
+            tabs.Height = tabs.GetPreferredSize(Size.Empty).Height;
+            top.Height = Em * 3 / 4;
+            body.Padding = new Padding(Em / 2);
+            footer.Height = footer.GetPreferredSize(Size.Empty).Height;
+        }
+
+        protected override void OnFontChanged(EventArgs e)
+        {
+            base.OnFontChanged(e);
+            if (tabs == null) return;   // the constructor setting it, before there is chrome
+            SizeChrome();
+            if (placed) Refit();
         }
 
         /// <summary>
@@ -157,7 +176,7 @@ namespace DeskMadeline
         public FlyoutStack AddPage(string title, string glyph, string full = null)
         {
             tabs.Add(title, glyph, full);
-            var page = new FlyoutStack(P) { Width = RowWidth, Font = Font };
+            var page = new FlyoutStack(P) { Width = RowWidth };
             pages.Add(page);
             scrolls.Add(Point.Empty);
             return page;
