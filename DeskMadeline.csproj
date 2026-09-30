@@ -8,6 +8,8 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>DeskMadeline</AssemblyName>
     <RootNamespace>DeskMadeline</RootNamespace>
+    <!-- GameCanvas keeps its pixels in write-watched native memory. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Version>1.0.0</Version>
 
     <!--

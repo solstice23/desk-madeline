@@ -73,7 +73,7 @@ namespace DeskMadeline
         bool introWakeUp = true;   // On startup play the wake-up animation (wakeUp 00-14), then switch to idle
 
         // Rendering
-        Bitmap small;           // 1x game-pixel buffer (CanvasW x CanvasH); draw at integer coords then integer upscale
+        GameCanvas canvas;      // 1x game-pixel buffer (CanvasW x CanvasH); draw at integer coords then integer upscale
         readonly TrailStamp[] trailStamps = new TrailStamp[1024];
         D3DPresenter presenter;
         CompositionHost compositionHost;
@@ -3246,8 +3246,7 @@ namespace DeskMadeline
         void Render()
         {
             int s = GameScale;
-            if (small == null)
-                small = new Bitmap(CanvasW, CanvasH, PixelFormat.Format32bppPArgb);
+            canvas ??= new GameCanvas(CanvasW, CanvasH);
 
             // Calculate and quantize the camera once. Previously drawing and window
             // presentation recomputed it independently, then rounded in different
@@ -3256,9 +3255,9 @@ namespace DeskMadeline
             float camY = player.Pos.Y - AnchorY;
 
             // 1x game-pixel buffer: integer coords land on pixels (no subpixel drift); then integer nearest-neighbor upscale
-            using (var g = Graphics.FromImage(small))
+            canvas.Clear();
+            using (var g = Graphics.FromImage(canvas.Bitmap))
             {
-                g.Clear(Color.Transparent);
                 g.InterpolationMode = InterpolationMode.NearestNeighbor;
                 g.PixelOffsetMode = PixelOffsetMode.Half;
                 g.SmoothingMode = SmoothingMode.None;
@@ -3310,6 +3309,7 @@ namespace DeskMadeline
                 DrawHitboxes(g, camX, camY);
             }
 
+            Rectangle canvasChanged = canvas.Measure();
             int left = (int)Math.Round(camX * s);
             int top = (int)Math.Round(camY * s);
             entityStamps.Clear();
@@ -3408,7 +3408,7 @@ namespace DeskMadeline
             AppendPufferOverlays(trailStamps, ref trailCount, burstScratch);
             AppendDeathBursts(1f / 60f, trailStamps, ref trailCount, burstScratch);
             if (hitboxesEnabled) AppendActorDebugStamps(ref trailCount);
-            presenter.Present(small, left, top, trailStamps, trailCount, foregroundStart);
+            presenter.Present(canvas, canvasChanged, left, top, trailStamps, trailCount, foregroundStart);
             // Present uploads what it was given, so the burst frames can go now.
             foreach (Bitmap burst in burstScratch) burst.Dispose();
             burstScratch.Clear();
@@ -3423,8 +3423,7 @@ namespace DeskMadeline
                     if (!pair.Value.IsHandleCreated) continue;
                     int jellyLeft = ((int)Math.Round(pair.Key.Pos.X) - 10) * s;
                     int jellyTop = ((int)Math.Round(pair.Key.Pos.Y) - 16) * s;
-                    Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, jellyLeft, jellyTop,
-                        20 * s, 22 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                    PlaceWindow(pair.Value.Handle, jellyLeft, jellyTop, 20 * s, 22 * s);
                     pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
                         jellyLeft, jellyTop, 20, 22, s, pair.Value.HitMask);
                 }
@@ -3436,8 +3435,7 @@ namespace DeskMadeline
                     if (!pair.Value.IsHandleCreated) continue;
                     int seekerLeft = ((int)Math.Round(pair.Key.Pos.X) - 16) * s;
                     int seekerTop = ((int)Math.Round(pair.Key.Pos.Y) - 16) * s;
-                    Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, seekerLeft, seekerTop,
-                        32 * s, 32 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                    PlaceWindow(pair.Value.Handle, seekerLeft, seekerTop, 32 * s, 32 * s);
                     pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
                         seekerLeft, seekerTop, 32, 32, s, pair.Value.HitMask);
                 }
@@ -3449,8 +3447,7 @@ namespace DeskMadeline
                     if (!pair.Value.IsHandleCreated) continue;
                     int pufferLeft = ((int)Math.Round(pair.Key.Pos.X) - 12) * s;
                     int pufferTop = ((int)Math.Round(pair.Key.Pos.Y) - 12) * s;
-                    Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, pufferLeft, pufferTop,
-                        24 * s, 24 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                    PlaceWindow(pair.Value.Handle, pufferLeft, pufferTop, 24 * s, 24 * s);
                     pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
                         pufferLeft, pufferTop, 24, 24, s, pair.Value.HitMask);
                 }
@@ -3462,8 +3459,7 @@ namespace DeskMadeline
                     if (!pair.Value.IsHandleCreated) continue;
                     int bumperLeft = ((int)Math.Round(pair.Key.Pos.X) - 16) * s;
                     int bumperTop = ((int)Math.Round(pair.Key.Pos.Y) - 16) * s;
-                    Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, bumperLeft, bumperTop,
-                        32 * s, 32 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                    PlaceWindow(pair.Value.Handle, bumperLeft, bumperTop, 32 * s, 32 * s);
                     pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
                         bumperLeft, bumperTop, 32, 32, s, pair.Value.HitMask);
                 }
@@ -3475,8 +3471,7 @@ namespace DeskMadeline
                     if (!pair.Value.IsHandleCreated) continue;
                     int theoLeft = ((int)Math.Round(pair.Key.Pos.X) - 8) * s;
                     int theoTop = ((int)Math.Round(pair.Key.Pos.Y) - 16) * s;
-                    Win32.SetWindowPos(pair.Value.Handle, IntPtr.Zero, theoLeft, theoTop,
-                        16 * s, 22 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                    PlaceWindow(pair.Value.Handle, theoLeft, theoTop, 16 * s, 22 * s);
                     pair.Value.HitMask = ShapeEntityWindow(pair.Value.Handle, pair.Key,
                         theoLeft, theoTop, 16, 22, s, pair.Value.HitMask);
                 }
@@ -3486,12 +3481,11 @@ namespace DeskMadeline
             // click-through composition host, so window movement cannot shake pixels.
             int inputLeft = (int)Math.Round(player.Pos.X * s) - 12 * s;
             int inputTop = (int)Math.Round(player.Pos.Y * s) - 30 * s;
-            Win32.SetWindowPos(Handle, IntPtr.Zero, inputLeft, inputTop,
-                24 * s, 33 * s, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+            PlaceWindow(Handle, inputLeft, inputTop, 24 * s, 33 * s);
             // ...and then loses every part of itself she is not drawn on. The canvas the frame
             // was drawn into is the same picture the screen just got, so the window's own
             // corner of it is the shape to take. See HitRegion.
-            HitRegion.Apply(Handle, small,
+            HitRegion.Apply(Handle, canvas.Bitmap,
                 new Rectangle((inputLeft - left) / s, (inputTop - top) / s, 24, 33), s,
                 ref playerHitMask);
             // Log position + speed + state every 5 seconds
@@ -3499,6 +3493,25 @@ namespace DeskMadeline
                 PetWindow.Log("frame " + renderFrameCount + " pos=" + player.Pos.X.ToString("F1") + "," + player.Pos.Y.ToString("F1") +
                     " sp=" + player.Speed.X.ToString("F0") + "," + player.Speed.Y.ToString("F0") +
                     " st=" + player.State + " duck=" + (player.Ducking ? 1 : 0) + " anim=" + player.AnimId);
+        }
+
+        /// <summary>
+        /// Put an input window at a rectangle, unless it is exactly there already.
+        /// </summary>
+        /// <remarks>
+        /// Most frames nothing has moved, and a SetWindowPos that changes nothing still costs a
+        /// round trip to the thread that owns the window for its WM_WINDOWPOSCHANGING and
+        /// WM_WINDOWPOSCHANGED. Asking where the window is costs no messages at all. A window
+        /// that is anywhere else -- including one something other than this moved -- is put
+        /// back exactly as before.
+        /// </remarks>
+        static void PlaceWindow(IntPtr window, int left, int top, int width, int height)
+        {
+            if (Win32.GetWindowRect(window, out Win32.RECT at) && at.Left == left && at.Top == top &&
+                at.Right == left + width && at.Bottom == top + height)
+                return;
+            Win32.SetWindowPos(window, IntPtr.Zero, left, top, width, height,
+                Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
         }
 
         float ComputeCameraX()

@@ -56,6 +56,22 @@ namespace DeskMadeline
         IDXGISwapChain1 swapChain;
         ID2D1Bitmap1 targetBitmap;
         ID2D1Bitmap1 sourceBitmap;
+        // A new sourceBitmap's pixels are undefined until something is copied into all of it;
+        // after that it only ever needs the part of the canvas that changed.
+        bool sourceUndefined;
+        byte[] uploadScratch = Array.Empty<byte>();
+
+        // What the swap chain's buffers hold. A flip-model buffer keeps what was drawn into it
+        // the last time it was the back buffer, and the only non-transparent pixels in it are
+        // the ones drawn then. So instead of clearing the whole desktop-sized target, clearing
+        // what the last few frames drew leaves a buffer bit for bit as a full clear would.
+        // BufferCount frames back is where this buffer was last drawn; one more is kept in
+        // case a present ever does not rotate them. A new swap chain's buffers hold nothing
+        // known, so its first frames are cleared whole.
+        const int BufferCount = 2;
+        readonly Rectangle[] drawnBefore = new Rectangle[BufferCount + 1];
+        int wholeClears;
+        Rectangle drawnNow;
         readonly Dictionary<Bitmap, ID2D1Bitmap1> trailBitmaps = new Dictionary<Bitmap, ID2D1Bitmap1>();
         readonly HashSet<Bitmap> liveTrailBitmaps = new HashSet<Bitmap>();
         readonly List<Bitmap> deadTrailBitmaps = new List<Bitmap>();
@@ -63,8 +79,6 @@ namespace DeskMadeline
         int scale;
         int targetWidth;
         int targetHeight;
-        int visualWidth;
-        int visualHeight;
         bool logged;
 
         public D3DPresenter(IntPtr hwnd, int sourceWidth, int sourceHeight, int scale, Rectangle virtualDesktop)
@@ -117,8 +131,6 @@ namespace DeskMadeline
         public void Resize(int newScale)
         {
             scale = Math.Max(1, newScale);
-            visualWidth = sourceWidth * scale;
-            visualHeight = sourceHeight * scale;
             // The swap chain is fixed to the virtual desktop. Nothing in the visual
             // tree moves per frame, so a present can never race a transform commit.
             targetWidth = virtualDesktop.Width;
@@ -127,9 +139,10 @@ namespace DeskMadeline
 
             var desc = new SwapChainDescription1(
                 (uint)targetWidth, (uint)targetHeight, Format.B8G8R8A8_UNorm,
-                false, Usage.RenderTargetOutput, 2, Scaling.Stretch,
+                false, Usage.RenderTargetOutput, BufferCount, Scaling.Stretch,
                 SwapEffect.FlipSequential, Vortice.DXGI.AlphaMode.Premultiplied, SwapChainFlags.None);
             swapChain = dxgiFactory.CreateSwapChainForComposition(d3dDevice, desc, null);
+            wholeClears = drawnBefore.Length;
 
             using (var surface = swapChain.GetBuffer<IDXGISurface>(0))
             {
@@ -145,15 +158,31 @@ namespace DeskMadeline
             sourceBitmap = d2dContext.CreateBitmap(
                 new SizeI(sourceWidth, sourceHeight), IntPtr.Zero,
                 (uint)(sourceWidth * 4), sourceProps);
+            sourceUndefined = true;
             d2dContext.Target = targetBitmap;
             compositionVisual.SetContent(swapChain).CheckError();
             compositionDevice.Commit().CheckError();
         }
 
-        public void Present(Bitmap bitmap, int screenLeft, int screenTop,
+        /// <param name="changed">
+        /// Every canvas pixel that differs from the last frame presented lies inside this;
+        /// the GPU copy of the canvas is brought up to date there and nowhere else.
+        /// </param>
+        public void Present(GameCanvas canvas, Rectangle changed, int screenLeft, int screenTop,
             TrailStamp[] trails, int trailCount, int foregroundStart = int.MaxValue)
         {
-            Upload(sourceBitmap, bitmap);
+            if (sourceUndefined)
+            {
+                changed = new Rectangle(0, 0, sourceWidth, sourceHeight);
+                sourceUndefined = false;
+            }
+            if (changed.Width > 0 && changed.Height > 0)
+            {
+                int bytes = changed.Width * changed.Height * 4;
+                if (uploadScratch.Length < bytes) uploadScratch = new byte[bytes];
+                canvas.CopyTo(changed, uploadScratch);
+                sourceBitmap.CopyFromMemory(changed, uploadScratch, (uint)(changed.Width * 4)).CheckError();
+            }
 
             // TrailManager snapshots are immutable. Upload each tiny 64x64 stamp once
             // and keep it in GPU memory until that snapshot expires.
@@ -185,21 +214,50 @@ namespace DeskMadeline
             }
 
             d2dContext.BeginDraw();
-            d2dContext.Clear(new Color4(0, 0, 0, 0));
+            if (wholeClears > 0)
+            {
+                wholeClears--;
+                d2dContext.Clear(new Color4(0, 0, 0, 0));
+            }
+            else
+            {
+                Rectangle stale = Rectangle.Empty;
+                foreach (Rectangle before in drawnBefore) stale = Union(stale, before);
+                if (!stale.IsEmpty)
+                {
+                    d2dContext.PushAxisAlignedClip(new Vortice.RawRectF(stale.Left, stale.Top,
+                        stale.Right, stale.Bottom), AntialiasMode.Aliased);
+                    d2dContext.Clear(new Color4(0, 0, 0, 0));
+                    d2dContext.PopAxisAlignedClip();
+                }
+            }
+            drawnNow = Rectangle.Empty;
             int foreground = Math.Max(0, Math.Min(trailCount, foregroundStart));
             for (int i = 0; i < foreground; i++)
             {
                 DrawStamp(trails[i]);
             }
-            var destination = new Vortice.RawRectF(
-                screenLeft - virtualDesktop.Left,
-                screenTop - virtualDesktop.Top,
-                screenLeft - virtualDesktop.Left + visualWidth,
-                screenTop - virtualDesktop.Top + visualHeight);
-            d2dContext.DrawBitmap(sourceBitmap, destination, 1f,
-                Vortice.Direct2D1.InterpolationMode.NearestNeighbor, null, null);
+            // Only the part of the canvas anything was drawn on: the rest is transparent, and
+            // drawing transparent pixels over the target leaves it exactly as it was. Whole
+            // source pixels onto whole scale-sized blocks, so the sampling is the same as for
+            // the full square.
+            Rectangle content = canvas.Content;
+            if (content.Width > 0 && content.Height > 0)
+            {
+                float originX = screenLeft - virtualDesktop.Left;
+                float originY = screenTop - virtualDesktop.Top;
+                var destination = new Vortice.RawRectF(
+                    originX + content.Left * scale, originY + content.Top * scale,
+                    originX + content.Right * scale, originY + content.Bottom * scale);
+                var source = new Vortice.RawRectF(content.Left, content.Top, content.Right, content.Bottom);
+                d2dContext.DrawBitmap(sourceBitmap, destination, 1f,
+                    Vortice.Direct2D1.InterpolationMode.NearestNeighbor, source, null);
+                Touch(destination);
+            }
             for (int i = foreground; i < trailCount; i++) DrawStamp(trails[i]);
             d2dContext.EndDraw().CheckError();
+            for (int i = drawnBefore.Length - 1; i > 0; i--) drawnBefore[i] = drawnBefore[i - 1];
+            drawnBefore[0] = drawnNow;
             swapChain.Present(1, PresentFlags.None).CheckError();
 
             if (!logged)
@@ -221,7 +279,24 @@ namespace DeskMadeline
                     centerX + width / 2f, centerY + height / 2f);
                 d2dContext.DrawBitmap(gpu, target, trail.Opacity,
                     Vortice.Direct2D1.InterpolationMode.NearestNeighbor, null, null);
+                Touch(target);
             }
+
+            // Whole target pixels covering everything a draw can have reached, with a pixel
+            // to spare: a stamp's edges can fall on half pixels.
+            void Touch(Vortice.RawRectF area)
+            {
+                drawnNow = Union(drawnNow, Rectangle.FromLTRB(
+                    (int)Math.Floor(area.Left) - 1, (int)Math.Floor(area.Top) - 1,
+                    (int)Math.Ceiling(area.Right) + 1, (int)Math.Ceiling(area.Bottom) + 1));
+            }
+        }
+
+        static Rectangle Union(Rectangle a, Rectangle b)
+        {
+            if (a.IsEmpty) return b;
+            if (b.IsEmpty) return a;
+            return Rectangle.Union(a, b);
         }
 
         static void Upload(ID2D1Bitmap1 destination, Bitmap bitmap)
