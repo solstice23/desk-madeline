@@ -42,6 +42,8 @@ namespace DeskMadeline
         public bool IgnoreMaximizedWindows = true;
         public bool RespawnReversalEnabled = true;
         public int EdgeWrapMode;
+        /// <summary>With wrapping on, wrap around the monitor she is on rather than all of them.</summary>
+        public bool EdgeWrapOneMonitor;
         public bool ElytraEnabled;
         public int SfxMode = 1;          // 0 off, 1 only when focused, 2 always
         public int SfxVolume = 100;
@@ -123,6 +125,7 @@ namespace DeskMadeline
                 if (values.TryGetValue("EdgeWrapMode", out string edgeWrap) &&
                     int.TryParse(edgeWrap, out int edgeWrapValue))
                     result.EdgeWrapMode = Math.Max(0, Math.Min(3, edgeWrapValue));
+                ReadBool(values, "EdgeWrapOneMonitor", ref result.EdgeWrapOneMonitor);
                 ReadBool(values, "ElytraEnabled", ref result.ElytraEnabled);
                 if (values.TryGetValue("SfxMode", out string sfxMode) &&
                     int.TryParse(sfxMode, out int sfxModeValue))
@@ -191,6 +194,7 @@ namespace DeskMadeline
                     "IgnoreMaximizedWindows=" + IgnoreMaximizedWindows,
                     "RespawnReversalEnabled=" + RespawnReversalEnabled,
                     "EdgeWrapMode=" + EdgeWrapMode,
+                    "EdgeWrapOneMonitor=" + EdgeWrapOneMonitor,
                     "ElytraEnabled=" + ElytraEnabled,
                     "SfxMode=" + SfxMode,
                     "SfxVolume=" + SfxVolume,

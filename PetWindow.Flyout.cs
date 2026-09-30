@@ -88,9 +88,22 @@ namespace DeskMadeline
                 () => Array.IndexOf(windowModes, windowMode), i => SetWindowMode(windowModes[i])));
             page.Add(new FlyoutSwitch(p, Loc.T("Menu.IgnoreMaximizedWindows"), () => ignoreMaximizedWindows,
                 on => { ignoreMaximizedWindows = on; pollCounter = 999; Save(); }));
+            // Which screen she wraps around only means anything while she wraps, so the switch
+            // is there only then, the way the hair swatches follow their own switch.
+            Control oneMonitor = null;
             page.Add(new FlyoutSegmented(p, Loc.T("Menu.EdgeWrap"),
                 new[] { Loc.T("Common.Off"), Loc.T("Common.Horizontal"), Loc.T("Common.Vertical"), Loc.T("EdgeWrap.Both") },
-                () => edgeWrapMode, i => { edgeWrapMode = i; pollCounter = 999; Save(); }));
+                () => edgeWrapMode, i =>
+                {
+                    edgeWrapMode = i;
+                    pollCounter = 999;
+                    Save();
+                    oneMonitor.Visible = i != 0;
+                    f.Refit();
+                }));
+            oneMonitor = page.Add(new FlyoutSwitch(p, Loc.T("Menu.EdgeWrapOneMonitor"), () => edgeWrapOneMonitor,
+                on => { edgeWrapOneMonitor = on; pollCounter = 999; Save(); }));
+            oneMonitor.Visible = edgeWrapMode != 0;
             page.Add(new FlyoutHeader(p, Loc.T("Menu.Spawn")));
             var spawn = page.Add(new FlyoutButtons(p));
             spawn.Add(Loc.T("Entity.Jellyfish"), () => Interlocked.Increment(ref pendingGliderSpawns));

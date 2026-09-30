@@ -36,6 +36,7 @@ namespace DeskMadeline
         static readonly IntPtr FloorId = new IntPtr(-991);
         const int WindowBorderPx = 8;           // hollow window-border thickness (physical pixels)
         const float EdgeWrapMargin = 12f;       // let the sprite clear the display before wrapping
+        const float MaxWrapOvershoot = 20f;     // farther past an edge than a frame's run is a drop, not a run
 
         readonly Player player = new Player();
         readonly KeyBindings bindings;
@@ -187,6 +188,8 @@ namespace DeskMadeline
         readonly KevinWindows kevinWindows = new KevinWindows();
         volatile bool ignoreMaximizedWindows;   // read by the poll on the game-loop thread
         int edgeWrapMode;
+        bool edgeWrapOneMonitor;                // wrap around the monitor she is on, not all of them
+        RectangleF confinedMonitor;             // that monitor in game pixels, while it applies
         readonly List<RectangleF> monitorGameBounds = new List<RectangleF>();
         readonly Bitmap[] picoDigits = new Bitmap[10];
         readonly List<Glider> gliders = new List<Glider>();
@@ -291,6 +294,7 @@ namespace DeskMadeline
             windowMode = settings.WindowMode;
             ignoreMaximizedWindows = settings.IgnoreMaximizedWindows;
             edgeWrapMode = settings.EdgeWrapMode;
+            edgeWrapOneMonitor = settings.EdgeWrapOneMonitor;
             player.ElytraEnabled = settings.ElytraEnabled;
             player.SetFreezeFramesEnabled(settings.FreezeFramesEnabled);
             player.RespawnReversalEnabled = settings.RespawnReversalEnabled;
@@ -979,10 +983,9 @@ namespace DeskMadeline
             // Physics
             int wasState = player.State;
             bool wasDeadOrRespawning = player.IsDead || player.IsRespawning;
-            PointF beforeUpdatePosition = player.Pos;
             player.Update(dt, input);
             UpdateSoundEffects(wasState);
-            if (!wasDeadOrRespawning) ApplyEdgeWrap(beforeUpdatePosition);
+            if (!wasDeadOrRespawning) ApplyEdgeWrap();
 
             bool playerRespawningNow = player.IsRespawning;
             if (playerRespawningNow && !observedPlayerRespawning)
@@ -2861,6 +2864,19 @@ namespace DeskMadeline
                 virtualLeft = Math.Min(virtualLeft, bounds.Left);
                 virtualRight = Math.Max(virtualRight, bounds.Right);
             }
+            // Kept to one monitor, the world is that monitor alone: every edge of it is an edge
+            // of the screen, to wrap across or to stand against, and the others are not there.
+            if (edgeWrapMode != 0 && edgeWrapOneMonitor && screenRects.Count > 1)
+            {
+                int kept = ConfinedMonitorIndex();
+                var only = screenRects[kept];
+                var onlyGame = monitorGameBounds[kept];
+                screenRects.Clear(); screenRects.Add(only);
+                monitorGameBounds.Clear(); monitorGameBounds.Add(onlyGame);
+                virtualLeft = only.Left;
+                virtualRight = only.Right;
+            }
+            else confinedMonitor = RectangleF.Empty;
             int edgeDepth = Math.Max(64, (int)Math.Ceiling(400f * s));
             foreach (var r in screenRects)
             {
@@ -2932,81 +2948,108 @@ namespace DeskMadeline
             foreach (var kv in cur) lastRects[kv.Key] = kv.Value;
         }
 
-        void ApplyEdgeWrap(PointF previous)
+        /// <summary>Which of this poll's monitors she is kept to, in the one-monitor mode.</summary>
+        /// <remarks>
+        /// The one she is on, and then the same one for as long as she stays about it: wrapping
+        /// lets her run a little past an edge before she comes back at the other, and a
+        /// neighbouring monitor there must not take her over. Carrying her somewhere else is
+        /// how she changes monitor, so a drag, or finding herself well away from it, picks again.
+        /// </remarks>
+        int ConfinedMonitorIndex()
+        {
+            if (!dragging && !player.BeingDragged && !confinedMonitor.IsEmpty)
+                for (int i = 0; i < monitorGameBounds.Count; i++)
+                {
+                    RectangleF m = monitorGameBounds[i];
+                    if (m != confinedMonitor) continue;
+                    m.Inflate(EdgeWrapMargin + 16f, EdgeWrapMargin + 16f);
+                    if (m.Contains(player.Pos.X, player.Pos.Y - player.CurrentHitHeight * 0.5f)) return i;
+                }
+            float cx = player.Pos.X, cy = player.Pos.Y - player.CurrentHitHeight * 0.5f;
+            int nearest = 0;
+            float nearestDistance = float.MaxValue;
+            for (int i = 0; i < monitorGameBounds.Count; i++)
+            {
+                RectangleF m = monitorGameBounds[i];
+                float dx = cx - Math.Max(m.Left, Math.Min(m.Right, cx));
+                float dy = cy - Math.Max(m.Top, Math.Min(m.Bottom, cy));
+                float distance = dx * dx + dy * dy;
+                if (distance < nearestDistance) { nearestDistance = distance; nearest = i; }
+            }
+            confinedMonitor = monitorGameBounds[nearest];
+            return nearest;
+        }
+
+        void ApplyEdgeWrap()
         {
             if (edgeWrapMode == 0 || player.IsDead || player.IsRespawning ||
                 player.BeingDragged || monitorGameBounds.Count == 0) return;
 
-            RectangleF source = RectangleF.Empty;
-            foreach (RectangleF monitor in monitorGameBounds)
-                if (previous.X >= monitor.Left && previous.X <= monitor.Right &&
-                    previous.Y >= monitor.Top && previous.Y <= monitor.Bottom)
-                {
-                    source = monitor;
-                    break;
-                }
-            if (source.IsEmpty)
-            {
-                float nearestDistance = float.MaxValue;
-                foreach (RectangleF monitor in monitorGameBounds)
-                {
-                    float nearestX = Math.Max(monitor.Left, Math.Min(monitor.Right, previous.X));
-                    float nearestY = Math.Max(monitor.Top, Math.Min(monitor.Bottom, previous.Y));
-                    float dx = previous.X - nearestX, dy = previous.Y - nearestY;
-                    float distance = dx * dx + dy * dy;
-                    if (distance < nearestDistance)
-                    {
-                        nearestDistance = distance;
-                        source = monitor;
-                    }
-                }
-                float reach = EdgeWrapMargin + 8f;
-                if (nearestDistance > reach * reach) return;
-            }
-
-            bool OnAnyMonitor(float x, float y)
-            {
-                foreach (RectangleF monitor in monitorGameBounds)
-                    if (x >= monitor.Left && x < monitor.Right &&
-                        y >= monitor.Top && y < monitor.Bottom) return true;
-                return false;
-            }
-
             float offsetX = 0f, offsetY = 0f;
-            if ((edgeWrapMode & 1) != 0)
-            {
-                float sampleY = Math.Max(source.Top, Math.Min(source.Bottom - 0.01f,
-                    player.Pos.Y - player.CurrentHitHeight * 0.5f));
-                if (player.Speed.X < 0f && player.Pos.X <= source.Left - EdgeWrapMargin &&
-                    !OnAnyMonitor(source.Left - 0.01f, sampleY))
-                {
-                    float overshoot = source.Left - EdgeWrapMargin - player.Pos.X;
-                    offsetX = source.Right + EdgeWrapMargin - overshoot - player.Pos.X;
-                }
-                else if (player.Speed.X > 0f && player.Pos.X >= source.Right + EdgeWrapMargin &&
-                    !OnAnyMonitor(source.Right + 0.01f, sampleY))
-                {
-                    float overshoot = player.Pos.X - source.Right - EdgeWrapMargin;
-                    offsetX = source.Left - EdgeWrapMargin + overshoot - player.Pos.X;
-                }
-            }
-            if ((edgeWrapMode & 2) != 0)
-            {
-                float sampleX = Math.Max(source.Left, Math.Min(source.Right - 0.01f, player.Pos.X));
-                if (player.Speed.Y < 0f && player.Pos.Y <= source.Top - EdgeWrapMargin &&
-                    !OnAnyMonitor(sampleX, source.Top - 0.01f))
-                {
-                    float overshoot = source.Top - EdgeWrapMargin - player.Pos.Y;
-                    offsetY = source.Bottom + EdgeWrapMargin - overshoot - player.Pos.Y;
-                }
-                else if (player.Speed.Y > 0f && player.Pos.Y >= source.Bottom + EdgeWrapMargin &&
-                    !OnAnyMonitor(sampleX, source.Bottom + 0.01f))
-                {
-                    float overshoot = player.Pos.Y - source.Bottom - EdgeWrapMargin;
-                    offsetY = source.Top - EdgeWrapMargin + overshoot - player.Pos.Y;
-                }
-            }
+            if ((edgeWrapMode & 1) != 0 && WrapAcross(monitorGameBounds, true,
+                    player.Pos.Y - player.CurrentHitHeight * 0.5f, player.Pos.X, player.Speed.X,
+                    EdgeWrapMargin, out float x))
+                offsetX = x - player.Pos.X;
+            if ((edgeWrapMode & 2) != 0 && WrapAcross(monitorGameBounds, false,
+                    player.Pos.X, player.Pos.Y, player.Speed.Y, EdgeWrapMargin, out float y))
+                offsetY = y - player.Pos.Y;
             player.WrapBy(offsetX, offsetY);
+        }
+
+        /// <summary>Where she comes back in, having run off the displays along one axis.</summary>
+        /// <remarks>
+        /// The displays are cut along the line she is running on -- a row for across, a column
+        /// for up and down -- and once she is past the edge she left by, a ray is cast back
+        /// from it along that line, through every display it meets, until it runs off them:
+        /// she comes back in there, with what she had overshot by. One monitor comes out as
+        /// wrapping around itself; several side by side as wrapping around the lot; and a gap on
+        /// the line stops the ray, so each stretch of touching monitors wraps on its own. Two
+        /// monitors on a row with a gap between them, joined by a third below, are two screens
+        /// on that row, not one: off the right of the second is back at its own left, and into
+        /// the gap from the first is back at the first's left. A line no display crosses has
+        /// nowhere to return to, and a position far past the edge was put there rather than
+        /// run to.
+        /// </remarks>
+        internal static bool WrapAcross(List<RectangleF> displays, bool horizontal, float line,
+            float pos, float speed, float margin, out float wrapped)
+        {
+            wrapped = pos;
+            if (speed == 0f) return false;
+            bool forward = speed > 0f;
+            var spans = new List<(float Lo, float Hi)>();
+            foreach (RectangleF d in displays)
+            {
+                float lineLo = horizontal ? d.Top : d.Left, lineHi = horizontal ? d.Bottom : d.Right;
+                if (line < lineLo || line >= lineHi) continue;
+                float lo = horizontal ? d.Left : d.Top, hi = horizontal ? d.Right : d.Bottom;
+                // Still on (or within the margin of) a display on this line: not gone yet.
+                if (pos > lo - margin && pos < hi + margin) return false;
+                spans.Add((lo, hi));
+            }
+
+            // The edge she left by: the nearest one behind her.
+            float exitEdge = forward ? float.MinValue : float.MaxValue;
+            foreach (var span in spans)
+                if (forward ? span.Hi <= pos : span.Lo >= pos)
+                    exitEdge = forward ? Math.Max(exitEdge, span.Hi) : Math.Min(exitEdge, span.Lo);
+            if (exitEdge == float.MinValue || exitEdge == float.MaxValue) return false;
+            float overshoot = forward ? pos - exitEdge - margin : exitEdge - margin - pos;
+            if (overshoot > MaxWrapOvershoot) return false;
+
+            // The ray back: across each display that reaches where it has got to, until none does.
+            float reach = exitEdge;
+            for (bool extended = true; extended; )
+            {
+                extended = false;
+                foreach (var span in spans)
+                    if (forward ? span.Lo < reach && span.Hi >= reach : span.Hi > reach && span.Lo <= reach)
+                    {
+                        reach = forward ? span.Lo : span.Hi;
+                        extended = true;
+                    }
+            }
+            wrapped = forward ? reach - margin + overshoot : reach + margin - overshoot;
+            return true;
         }
 
         static bool CoversWholeMonitor(IntPtr hwnd, in Win32.RECT r)
@@ -4308,6 +4351,7 @@ namespace DeskMadeline
             settings.IgnoreMaximizedWindows = ignoreMaximizedWindows;
             settings.RespawnReversalEnabled = player.RespawnReversalEnabled;
             settings.EdgeWrapMode = edgeWrapMode;
+            settings.EdgeWrapOneMonitor = edgeWrapOneMonitor;
             settings.ElytraEnabled = player.ElytraEnabled;
             settings.SfxMode = soundEffects.Mode;
             settings.SfxVolume = soundEffects.Volume;

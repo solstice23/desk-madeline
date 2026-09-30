@@ -41,6 +41,17 @@ static class SnapChecks
                           (ok ? "" : $"   expected ({expected.X:0.#},{expected.Y:0.#})"));
     }
 
+    static void CheckWrap(string what, List<RectangleF> displays, bool horizontal, float line,
+        float pos, float speed, float? expected)
+    {
+        bool wrapped = PetWindow.WrapAcross(displays, horizontal, line, pos, speed, 12f, out float got);
+        bool ok = expected == null ? !wrapped : wrapped && Math.Abs(got - expected.Value) < 0.01f;
+        if (!ok) failed++;
+        Console.WriteLine($"    {(ok ? "ok  " : "FAIL")}  {what,-46} " +
+                          $"{pos,6:0.#} -> {(wrapped ? got.ToString("0.#") : "stays")}" +
+                          (ok ? "" : $"   expected {(expected == null ? "stays" : expected.Value.ToString("0.#"))}"));
+    }
+
     public static int Run()
     {
         Console.WriteLine();
@@ -88,6 +99,41 @@ static class SnapChecks
             new PointF(900f, 400f), new PointF(596f, 400f), edgeWrapMode: 2);
         Check("both wrap: left alone",
             new PointF(900f, 400f), new PointF(900f, 400f), edgeWrapMode: 3);
+
+        Console.WriteLine();
+        Console.WriteLine("  Wrapping around the displays (margin 12, same two displays)");
+        // Across both: out of the right of the second, back in at the left of the first.
+        CheckWrap("off the right, row both share", Displays, true, 100f, 615f, 1f, -9f);
+        CheckWrap("off the left, row both share", Displays, true, 100f, -15f, -1f, 609f);
+        // Above the shorter display only the taller one is on the row: it wraps around itself,
+        // and the notch beside it counts as off the screen.
+        CheckWrap("off the right, row only the tall one has", Displays, true, -20f, 615f, 1f, 291f);
+        CheckWrap("into the notch, row only the tall one has", Displays, true, -20f, 285f, -1f, 609f);
+        // Up and down go by column, each display its own height.
+        CheckWrap("off the top of the first", Displays, false, 150f, -15f, -1f, 209f);
+        CheckWrap("off the bottom of the second", Displays, false, 450f, 215f, 1f, -59f);
+        // Not yet: within the margin, or moving back in.
+        CheckWrap("inside the margin", Displays, true, 100f, 605f, 1f, null);
+        CheckWrap("past the edge but heading back", Displays, true, 100f, 615f, -1f, null);
+        CheckWrap("seam between displays", Displays, true, 100f, 305f, 1f, null);
+        // Far past an edge was a drop, not a run.
+        CheckWrap("dropped far past the edge", Displays, true, 100f, 700f, 1f, null);
+        // Kept to one monitor, the world is that monitor: the seam is an edge.
+        var one = new List<RectangleF> { Displays[0] };
+        CheckWrap("one monitor: off its right at the seam", one, true, 100f, 315f, 1f, -9f);
+        // Two monitors with a gap between them, joined by a wide one below. On their row the
+        // gap stops the ray back, so each wraps on its own; below, the wide one wraps alone.
+        var gapped = new List<RectangleF>
+        {
+            RectangleF.FromLTRB(0f, 0f, 100f, 100f),
+            RectangleF.FromLTRB(200f, 0f, 300f, 100f),
+            RectangleF.FromLTRB(0f, 100f, 300f, 200f),
+        };
+        CheckWrap("gap: off the right of the second", gapped, true, 50f, 315f, 1f, 191f);
+        CheckWrap("gap: into it from the first", gapped, true, 50f, 115f, 1f, -9f);
+        CheckWrap("gap: into it from the second", gapped, true, 50f, 185f, -1f, 309f);
+        CheckWrap("gap: off the right of the wide one", gapped, true, 150f, 315f, 1f, -9f);
+        CheckWrap("gap: down through its column", gapped, false, 150f, 215f, 1f, 91f);
 
         return failed;
     }
