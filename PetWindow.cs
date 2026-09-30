@@ -35,8 +35,12 @@ namespace DeskMadeline
         const double FixedDt = 1.0 / 60.0;
         static readonly IntPtr FloorId = new IntPtr(-991);
         const int WindowBorderPx = 8;           // hollow window-border thickness (physical pixels)
-        const float EdgeWrapMargin = 12f;       // let the sprite clear the display before wrapping
-        const float MaxWrapOvershoot = 20f;     // farther past an edge than a frame's run is a drop, not a run
+        // SpaceController's margins, the end of Core: past the bottom by 12, past the top by 4.
+        const float SpaceWrapBottom = 12f, SpaceWrapTop = 4f;
+        // It wraps only up and down. Across uses its top's 4 on both sides -- a desktop
+        // adaptation: her hitbox that far past a side has her sprite off the screen.
+        const float EdgeWrapSide = 4f;
+        const float MaxWrapOvershoot = 20f;     // farther past a threshold than a frame's run is a drop, not a run
 
         readonly Player player = new Player();
         readonly KeyBindings bindings;
@@ -2962,7 +2966,7 @@ namespace DeskMadeline
                 {
                     RectangleF m = monitorGameBounds[i];
                     if (m != confinedMonitor) continue;
-                    m.Inflate(EdgeWrapMargin + 16f, EdgeWrapMargin + 16f);
+                    m.Inflate(SpaceWrapBottom + 32f, SpaceWrapBottom + 32f);
                     if (m.Contains(player.Pos.X, player.Pos.Y - player.CurrentHitHeight * 0.5f)) return i;
                 }
             float cx = player.Pos.X, cy = player.Pos.Y - player.CurrentHitHeight * 0.5f;
@@ -2985,70 +2989,86 @@ namespace DeskMadeline
             if (edgeWrapMode == 0 || player.IsDead || player.IsRespawning ||
                 player.BeingDragged || monitorGameBounds.Count == 0) return;
 
+            // Her hitbox: 8 wide about her position, CurrentHitHeight tall above it.
+            float h = player.CurrentHitHeight;
             float offsetX = 0f, offsetY = 0f;
-            if ((edgeWrapMode & 1) != 0 && WrapAcross(monitorGameBounds, true,
-                    player.Pos.Y - player.CurrentHitHeight * 0.5f, player.Pos.X, player.Speed.X,
-                    EdgeWrapMargin, out float x))
-                offsetX = x - player.Pos.X;
-            if ((edgeWrapMode & 2) != 0 && WrapAcross(monitorGameBounds, false,
-                    player.Pos.X, player.Pos.Y, player.Speed.Y, EdgeWrapMargin, out float y))
-                offsetY = y - player.Pos.Y;
+            if ((edgeWrapMode & 1) != 0 && WrapAcross(monitorGameBounds, true, player.Pos.Y - h * 0.5f,
+                    player.Pos.X - 4f, player.Pos.X + 4f, player.Speed.X, EdgeWrapSide, EdgeWrapSide, out float x))
+                offsetX = x;
+            if ((edgeWrapMode & 2) != 0 && WrapAcross(monitorGameBounds, false, player.Pos.X,
+                    player.Pos.Y - h, player.Pos.Y, player.Speed.Y, SpaceWrapTop, SpaceWrapBottom, out float y))
+                offsetY = y;
             player.WrapBy(offsetX, offsetY);
         }
 
-        /// <summary>Where she comes back in, having run off the displays along one axis.</summary>
+        /// <summary>How far to move her, having gone off the displays along one axis.</summary>
         /// <remarks>
-        /// The displays are cut along the line she is running on -- a row for across, a column
-        /// for up and down -- and once she is past the edge she left by, a ray is cast back
-        /// from it along that line, through every display it meets, until it runs off them:
-        /// she comes back in there, with what she had overshot by. One monitor comes out as
-        /// wrapping around itself; several side by side as wrapping around the lot; and a gap on
-        /// the line stops the ray, so each stretch of touching monitors wraps on its own. Two
-        /// monitors on a row with a gap between them, joined by a third below, are two screens
-        /// on that row, not one: off the right of the second is back at its own left, and into
-        /// the gap from the first is back at the first's left. A line no display crosses has
-        /// nowhere to return to, and a position far past the edge was put there rather than
-        /// run to.
+        /// SpaceController, the end of Core, is the rule, laid along a row or a column of the
+        /// desktop instead of the camera: once her hitbox is wholly past an edge by that side's
+        /// margin (<c>Top &gt; Camera.Bottom + 12</c>), she is set -- not carried -- to just
+        /// short of the far edge by the other side's margin (<c>Bottom = Camera.Top - 4</c>),
+        /// and the other way round. The two positions sit exactly on each other's thresholds,
+        /// so she cannot bounce between them.
+        ///
+        /// The far edge is where a ray cast back from the edge she left, along her row or
+        /// column, runs off the displays: one monitor wraps around itself, a row of touching
+        /// ones as one screen, and a gap on the line stops the ray, so each stretch of touching
+        /// monitors wraps on its own. A line no display crosses has nowhere to return to, and a
+        /// position far past a threshold was put there, not run to.
+        ///
+        /// <paramref name="low"/> and <paramref name="high"/> are her hitbox's edges along the
+        /// axis; the margins are how far past the low edge (top, left) and the high edge
+        /// (bottom, right) she goes before she wraps. Speed only settles which edge she left by
+        /// when she is off two at once, in a gap between monitors.
         /// </remarks>
         internal static bool WrapAcross(List<RectangleF> displays, bool horizontal, float line,
-            float pos, float speed, float margin, out float wrapped)
+            float low, float high, float speed, float marginLow, float marginHigh, out float shift)
         {
-            wrapped = pos;
-            if (speed == 0f) return false;
-            bool forward = speed > 0f;
+            shift = 0f;
             var spans = new List<(float Lo, float Hi)>();
             foreach (RectangleF d in displays)
             {
                 float lineLo = horizontal ? d.Top : d.Left, lineHi = horizontal ? d.Bottom : d.Right;
                 if (line < lineLo || line >= lineHi) continue;
                 float lo = horizontal ? d.Left : d.Top, hi = horizontal ? d.Right : d.Bottom;
-                // Still on (or within the margin of) a display on this line: not gone yet.
-                if (pos > lo - margin && pos < hi + margin) return false;
+                // Not yet past this display's thresholds: still on it, or not gone far enough.
+                if (low <= hi + marginHigh && high >= lo - marginLow) return false;
                 spans.Add((lo, hi));
             }
 
-            // The edge she left by: the nearest one behind her.
-            float exitEdge = forward ? float.MinValue : float.MaxValue;
+            // The edge she left by: the nearest behind her on either side, within reach.
+            float leftHigh = float.MinValue, leftLow = float.MaxValue;
             foreach (var span in spans)
-                if (forward ? span.Hi <= pos : span.Lo >= pos)
-                    exitEdge = forward ? Math.Max(exitEdge, span.Hi) : Math.Min(exitEdge, span.Lo);
-            if (exitEdge == float.MinValue || exitEdge == float.MaxValue) return false;
-            float overshoot = forward ? pos - exitEdge - margin : exitEdge - margin - pos;
-            if (overshoot > MaxWrapOvershoot) return false;
+            {
+                if (span.Hi + marginHigh < low && low - (span.Hi + marginHigh) <= MaxWrapOvershoot)
+                    leftHigh = Math.Max(leftHigh, span.Hi);
+                if (span.Lo - marginLow > high && span.Lo - marginLow - high <= MaxWrapOvershoot)
+                    leftLow = Math.Min(leftLow, span.Lo);
+            }
+            bool byHigh = leftHigh != float.MinValue, byLow = leftLow != float.MaxValue;
+            if (byHigh && byLow)
+            {
+                if (speed > 0f) byLow = false;
+                else if (speed < 0f) byHigh = false;
+                else if (low - (leftHigh + marginHigh) <= leftLow - marginLow - high) byLow = false;
+                else byHigh = false;
+            }
+            if (!byHigh && !byLow) return false;
 
             // The ray back: across each display that reaches where it has got to, until none does.
-            float reach = exitEdge;
+            float reach = byHigh ? leftHigh : leftLow;
             for (bool extended = true; extended; )
             {
                 extended = false;
                 foreach (var span in spans)
-                    if (forward ? span.Lo < reach && span.Hi >= reach : span.Hi > reach && span.Lo <= reach)
+                    if (byHigh ? span.Lo < reach && span.Hi >= reach : span.Hi > reach && span.Lo <= reach)
                     {
-                        reach = forward ? span.Lo : span.Hi;
+                        reach = byHigh ? span.Lo : span.Hi;
                         extended = true;
                     }
             }
-            wrapped = forward ? reach - margin + overshoot : reach + margin - overshoot;
+            // Out past the high edge: her high edge to just short of the far low one; and back.
+            shift = byHigh ? reach - marginLow - high : reach + marginHigh - low;
             return true;
         }
 
