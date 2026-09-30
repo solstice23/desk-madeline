@@ -40,6 +40,8 @@ namespace DeskMadeline
         /// <summary>What the windows are: 0 solid, 1 dream blocks, 2 water, 3 moon blocks.</summary>
         public int WindowMode;
         public bool IgnoreMaximizedWindows = true;
+        /// <summary>Drop behind a window that fills a monitor -- a game, a video -- while it is up.</summary>
+        public bool AvoidFullscreen = true;
         public bool RespawnReversalEnabled = true;
         public int EdgeWrapMode;
         /// <summary>With wrapping on, wrap around the monitor she is on rather than all of them.</summary>
@@ -121,6 +123,7 @@ namespace DeskMadeline
                     bool.TryParse(dreamBlocks, out bool dreamBlocksValue) && dreamBlocksValue)
                     result.WindowMode = 1;
                 ReadBool(values, "IgnoreMaximizedWindows", ref result.IgnoreMaximizedWindows);
+                ReadBool(values, "AvoidFullscreen", ref result.AvoidFullscreen);
                 ReadBool(values, "RespawnReversalEnabled", ref result.RespawnReversalEnabled);
                 if (values.TryGetValue("EdgeWrapMode", out string edgeWrap) &&
                     int.TryParse(edgeWrap, out int edgeWrapValue))
@@ -192,6 +195,7 @@ namespace DeskMadeline
                     "HitboxesEnabled=" + HitboxesEnabled,
                     "WindowMode=" + WindowMode,
                     "IgnoreMaximizedWindows=" + IgnoreMaximizedWindows,
+                    "AvoidFullscreen=" + AvoidFullscreen,
                     "RespawnReversalEnabled=" + RespawnReversalEnabled,
                     "EdgeWrapMode=" + EdgeWrapMode,
                     "EdgeWrapOneMonitor=" + EdgeWrapOneMonitor,

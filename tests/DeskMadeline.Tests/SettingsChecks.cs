@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Reflection;
 using DeskMadeline;
@@ -28,6 +29,7 @@ static class SettingsChecks
         Check("sound effects default to only-when-focused (SfxMode 1)", fresh.SfxMode == 1);
         Check("respawn reversal animation defaults to on", fresh.RespawnReversalEnabled);
         Check("ignore maximized/fullscreen windows defaults to on", fresh.IgnoreMaximizedWindows);
+        Check("stepping behind fullscreen windows defaults to on", fresh.AvoidFullscreen);
 
         Console.WriteLine();
         Console.WriteLine("  Existing settings.txt keeps what the user chose");
@@ -162,6 +164,20 @@ static class SettingsChecks
         }
 
         failed += SnapChecks.Run();
+        Console.WriteLine();
+        Console.WriteLine("  What counts as fullscreen, to step behind");
+        var monitor = new Rectangle(0, 0, 3840, 2160);
+        Check("a captionless window exactly on the monitor is fullscreen",
+            FullscreenAvoidance.IsFullscreen(new Rectangle(0, 0, 3840, 2160), false, monitor));
+        Check("a maximized window over an auto-hidden taskbar is not",
+            !FullscreenAvoidance.IsFullscreen(new Rectangle(-8, -8, 3856, 2176), true, monitor));
+        Check("a maximized window that dropped its caption is",
+            FullscreenAvoidance.IsFullscreen(new Rectangle(-8, -8, 3856, 2176), false, monitor));
+        Check("a window stopping short at the taskbar is not",
+            !FullscreenAvoidance.IsFullscreen(new Rectangle(0, 0, 3840, 2088), false, monitor));
+        Check("a window filling the monitor beside this one is not",
+            !FullscreenAvoidance.IsFullscreen(new Rectangle(3840, 0, 2560, 1440), false, monitor));
+
         return failed;
     }
 }

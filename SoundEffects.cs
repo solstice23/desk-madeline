@@ -46,6 +46,7 @@ namespace DeskMadeline
         delegate int BusSetVolume(IntPtr bus, float volume);
 
         readonly Func<bool> focused;
+        readonly Func<bool> hushed;
         readonly Dictionary<string, IntPtr> descriptions =
             new Dictionary<string, IntPtr>(StringComparer.Ordinal);
 
@@ -74,9 +75,10 @@ namespace DeskMadeline
         /// </summary>
         public string Trouble { get; private set; }
 
-        public SoundEffects(Func<bool> focused, int mode, int volume)
+        public SoundEffects(Func<bool> focused, Func<bool> hushed, int mode, int volume)
         {
             this.focused = focused;
+            this.hushed = hushed;
             Mode = Math.Max(0, Math.Min(2, mode));
             Volume = Math.Max(0, Math.Min(100, volume));
             Initialize();
@@ -185,7 +187,7 @@ namespace DeskMadeline
         public void Update()
         {
             if (!Available) return;
-            float target = Mode == 0 || (Mode == 1 && !focused()) ? 0f : Volume / 100f;
+            float target = Mode == 0 || (Mode == 1 && !focused()) || hushed() ? 0f : Volume / 100f;
             if (Math.Abs(target - appliedVolume) > 0.0001f)
             {
                 if (setBusVolume(sfxBus, target) == 0) appliedVolume = target;
@@ -195,7 +197,7 @@ namespace DeskMadeline
 
         public void Play(string eventPath, string parameter = null, float value = 0f)
         {
-            if (!Available || Mode == 0 || Volume == 0 || (Mode == 1 && !focused())) return;
+            if (!Available || Mode == 0 || Volume == 0 || (Mode == 1 && !focused()) || hushed()) return;
             try
             {
                 IntPtr description = Description(eventPath);

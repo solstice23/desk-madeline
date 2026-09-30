@@ -98,7 +98,7 @@ namespace DeskMadeline
         readonly GrabbyIcon grabbyIcon = new GrabbyIcon();
         bool grabCheck;
         bool wakeUpPending;
-        bool foregroundFullscreen;
+        volatile bool foregroundFullscreen;   // also read by the sound hush
         readonly List<KeyValuePair<IntPtr, RectangleF>> idleWindowsScratch
             = new List<KeyValuePair<IntPtr, RectangleF>>();
         // Celeste's MoveX, MoveY, GliderMoveY, Aim and Feather, each its own virtual input.
@@ -297,6 +297,7 @@ namespace DeskMadeline
             hitboxesEnabled = settings.HitboxesEnabled;
             windowMode = settings.WindowMode;
             ignoreMaximizedWindows = settings.IgnoreMaximizedWindows;
+            avoidFullscreen = settings.AvoidFullscreen;
             edgeWrapMode = settings.EdgeWrapMode;
             edgeWrapOneMonitor = settings.EdgeWrapOneMonitor;
             player.ElytraEnabled = settings.ElytraEnabled;
@@ -319,6 +320,8 @@ namespace DeskMadeline
             ResolveCelesteInstall();
             soundEffects = new SoundEffects(
                 () => IsPetInputWindow(Win32.GetForegroundWindow()),
+                // Nothing of hers over a game's or a film's own sound, in any mode.
+                () => avoidFullscreen && foregroundFullscreen,
                 settings.SfxMode, settings.SfxVolume);
             bindings = new KeyBindings(System.IO.Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory, "keybindings.txt"));
@@ -573,6 +576,7 @@ namespace DeskMadeline
             base.OnLoad(e);
             compositionHost = new CompositionHost(virtualDesktop, AlwaysOnTop);
             compositionHost.Show();
+            compositionHostHandle = compositionHost.Handle;
             presenter = new D3DPresenter(compositionHost.Handle, CanvasW, CanvasH, GameScale, virtualDesktop);
             Win32.SetWindowPos(Handle, AlwaysOnTop ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST,
                 0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
@@ -1828,7 +1832,9 @@ namespace DeskMadeline
             // unfocused. No hook is installed and keys are never swallowed from other apps.
             bool blocked = dragging || draggedGlider != null || draggedTheo != null ||
                 draggedSeeker != null || draggedBumper != null || draggedPuffer != null ||
-                (!InputWhenUnfocused && !IsPetInputWindow(Win32.GetForegroundWindow()));
+                (!InputWhenUnfocused && !IsPetInputWindow(Win32.GetForegroundWindow())) ||
+                // Keys pressed in a fullscreen game are the game's, whatever the opt-in says.
+                (avoidFullscreen && foregroundFullscreen);
             bool useKeys = InputEnabled && !blocked;
             bool usePad = PadInputEnabled && !blocked;
 
@@ -2720,13 +2726,20 @@ namespace DeskMadeline
             polledWindows = zorder;
             // Whether the user is watching something: a foreground window covering its whole
             // monitor, taskbar and all, which a maximized window does not.
-            IntPtr foreground = Win32.GetForegroundWindow();
-            string foregroundClass = foreground == IntPtr.Zero ? ""
-                : Win32.GetClassNameString(foreground);
-            foregroundFullscreen = foreground != IntPtr.Zero && foreground != Handle &&
-                foregroundClass != "Progman" && foregroundClass != "WorkerW" &&
-                Win32.TryGetWindowRect(foreground, out Win32.RECT fgRect) &&
-                CoversWholeMonitor(foreground, fgRect);
+            // A dialog the fullscreen window opened is still the fullscreen window's: it is
+            // owned by it, and sits in front of it, so her going behind the owner leaves both
+            // in front of her.
+            IntPtr fullscreen = IntPtr.Zero;
+            for (IntPtr w = Win32.GetForegroundWindow(); w != IntPtr.Zero && fullscreen == IntPtr.Zero;
+                 w = Win32.GetWindow(w, Win32.GW_OWNER))
+                if (IsFullscreenWindow(w)) fullscreen = w;
+            foregroundFullscreen = fullscreen != IntPtr.Zero;
+            IntPtr behind = avoidFullscreen ? fullscreen : IntPtr.Zero;
+            // Anything that activates her -- the flyout, a click on her on another monitor --
+            // brings her back to the front of her band, over the window she was behind. So the
+            // order is checked on every poll, not only when the window changes.
+            if (behind != steppedBehind || (behind != IntPtr.Zero && !IsBehind(behind)))
+                RequestStepAside(behind);
             // Which windows there are, and in what order they stack, has just been decided
             // afresh. Neither shows up as a rectangle moving -- bringing a window to the front
             // changes what occludes what while every rectangle stays exactly where it was --
@@ -3072,11 +3085,70 @@ namespace DeskMadeline
             return true;
         }
 
-        static bool CoversWholeMonitor(IntPtr hwnd, in Win32.RECT r)
+        static Rectangle ToRectangle(in Win32.RECT r) => Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+
+        /// <summary>Maximized and still titled: a working window, not a fullscreen one.</summary>
+        static bool IsMaximizedWithCaption(IntPtr hwnd)
+            => Win32.IsZoomed(hwnd) &&
+               (Win32.GetWindowLong(hwnd, Win32.GWL_STYLE) & Win32.WS_CAPTION) == Win32.WS_CAPTION;
+
+        // ---- Stepping aside for fullscreen windows (see FullscreenAvoidance) ----
+        volatile bool avoidFullscreen = true;
+        /// <summary>The window her windows sit behind, as last applied on the UI thread.</summary>
+        volatile IntPtr steppedBehind;
+        /// <summary>The composition host's handle, readable from the game-loop thread.</summary>
+        IntPtr compositionHostHandle;
+        int stepAsidePending;
+
+        /// <summary>Someone else's window, filling its monitor the way a game or a video does.</summary>
+        bool IsFullscreenWindow(IntPtr hwnd)
         {
-            Rectangle monitor = Screen.FromHandle(hwnd).Bounds;
-            return r.Left <= monitor.Left && r.Top <= monitor.Top &&
-                   r.Right >= monitor.Right && r.Bottom >= monitor.Bottom;
+            Win32.GetWindowThreadProcessId(hwnd, out uint owner);
+            if (owner == OwnProcessId || !Win32.IsWindowVisible(hwnd) || Win32.IsIconic(hwnd)) return false;
+            // The desktop fills its monitor too, and is what is focused when nothing else is.
+            string cls = Win32.GetClassNameString(hwnd);
+            if (cls == "Progman" || cls == "WorkerW") return false;
+            return Win32.TryGetWindowRect(hwnd, out Win32.RECT r) &&
+                FullscreenAvoidance.IsFullscreen(ToRectangle(r), IsMaximizedWithCaption(hwnd),
+                    Screen.FromHandle(hwnd).Bounds);
+        }
+
+        /// <summary>Whether her picture is already below <paramref name="target"/> in the z-order.</summary>
+        bool IsBehind(IntPtr target)
+        {
+            IntPtr host = compositionHostHandle;
+            if (host == IntPtr.Zero) return true;
+            for (IntPtr w = Win32.GetWindow(host, Win32.GW_HWNDPREV); w != IntPtr.Zero;
+                 w = Win32.GetWindow(w, Win32.GW_HWNDPREV))
+                if (w == target) return true;
+            return false;
+        }
+
+        void RequestStepAside(IntPtr target)
+        {
+            if (!IsHandleCreated || Interlocked.Exchange(ref stepAsidePending, 1) == 1) return;
+            try
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    stepAsidePending = 0;
+                    IntPtr was = steppedBehind;
+                    steppedBehind = target;
+                    if (target == IntPtr.Zero)
+                    {
+                        Log("Fullscreen: back in front");
+                        // Out of the topmost band she has nowhere in particular to return to:
+                        // she stays where the window she was behind leaves her.
+                        if (AlwaysOnTop) RaisePetWindows();
+                    }
+                    else
+                    {
+                        if (target != was) Log("Fullscreen: behind " + Win32.GetClassNameString(target));
+                        RaisePetWindows();
+                    }
+                }));
+            }
+            catch (InvalidOperationException) { stepAsidePending = 0; }
         }
 
         /// <summary>Maximized, or covering a whole monitor the way borderless fullscreen does.</summary>
@@ -4369,6 +4441,7 @@ namespace DeskMadeline
             settings.HitboxesEnabled = hitboxesEnabled;
             settings.WindowMode = windowMode;
             settings.IgnoreMaximizedWindows = ignoreMaximizedWindows;
+            settings.AvoidFullscreen = avoidFullscreen;
             settings.RespawnReversalEnabled = player.RespawnReversalEnabled;
             settings.EdgeWrapMode = edgeWrapMode;
             settings.EdgeWrapOneMonitor = edgeWrapOneMonitor;

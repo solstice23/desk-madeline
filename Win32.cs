@@ -59,6 +59,12 @@ namespace DeskMadeline
         [DllImport("user32.dll")]
         public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
+        /// <summary>The window next to one in the z-order; GW_HWNDPREV is the one above it.</summary>
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+        public const uint GW_HWNDPREV = 3;
+        public const uint GW_OWNER = 4;
+
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
@@ -71,7 +77,10 @@ namespace DeskMadeline
         [DllImport("dwmapi.dll")]
         public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
 
+        public const int GWL_STYLE = -16;
         public const int GWL_EXSTYLE = -20;
+        public const int WS_CAPTION = 0x00C00000;
+        public const int WS_EX_TOPMOST = 0x00000008;
         public const int WS_EX_TOOLWINDOW = 0x00000080;
         public const int WS_EX_TRANSPARENT = 0x00000020;
         public const int WS_EX_LAYERED = 0x00080000;

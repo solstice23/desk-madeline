@@ -54,7 +54,7 @@ static class SoundBankChecks
         string log = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pet_debug.log");
         if (File.Exists(log)) File.Delete(log);
 
-        using var sfx = new SoundEffects(() => true, 2, 1);
+        using var sfx = new SoundEffects(() => true, () => false, 2, 1);
         if (!sfx.Available)
         {
             Console.WriteLine("  no Celeste install found -- nothing to check against");

@@ -52,12 +52,29 @@ namespace DeskMadeline
         /// <remarks>
         /// The picture of her and every entity is the one composition window, so they come
         /// above together; the input windows follow, so she can still be grabbed where she is
-        /// drawn over the flyout.
+        /// drawn over the flyout. While she is stepping aside for a fullscreen window
+        /// (FullscreenAvoidance), the top is just behind that window instead, so nothing that
+        /// raises her lifts her over it.
         /// </remarks>
         void RaisePetWindows()
         {
             IntPtr top = AlwaysOnTop ? Win32.HWND_TOPMOST : IntPtr.Zero;   // IntPtr.Zero is HWND_TOP
             const uint flags = Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE;
+            IntPtr behind = steppedBehind;
+            bool leaveBand = false;
+            if (behind != IntPtr.Zero)
+            {
+                bool behindTopmost = (Win32.GetWindowLong(behind, Win32.GWL_EXSTYLE) & Win32.WS_EX_TOPMOST) != 0;
+                // Out of the topmost band herself, she is under a topmost window already, and
+                // the top of her own band is still the right place for her. Otherwise hers go
+                // straight after it, each one after the same window, which leaves them in the
+                // order raising them would; an ordinary window means leaving the band first.
+                if (AlwaysOnTop || !behindTopmost)
+                {
+                    top = behind;
+                    leaveBand = AlwaysOnTop && !behindTopmost;
+                }
+            }
             var handles = new List<IntPtr>();
             if (compositionHost != null && compositionHost.IsHandleCreated) handles.Add(compositionHost.Handle);
             if (IsHandleCreated) handles.Add(Handle);
@@ -71,7 +88,16 @@ namespace DeskMadeline
             lock (pufferWindowLock) Collect(pufferWindows.Values);
             lock (bumperWindowLock) Collect(bumperWindows.Values);
             lock (theoWindowLock) Collect(theoWindows.Values);
-            foreach (IntPtr handle in handles) Win32.SetWindowPos(handle, top, 0, 0, 0, 0, flags);
+            foreach (IntPtr handle in handles)
+            {
+                bool outOfBand = (Win32.GetWindowLong(handle, Win32.GWL_EXSTYLE) & Win32.WS_EX_TOPMOST) == 0;
+                // Back from behind an ordinary window, a lone HWND_TOPMOST was seen to report
+                // success and leave her input window out of the band; going through
+                // HWND_NOTOPMOST first is what made it take. The same step leaves the band.
+                if (leaveBand || (top == Win32.HWND_TOPMOST && outOfBand))
+                    Win32.SetWindowPos(handle, Win32.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+                Win32.SetWindowPos(handle, top, 0, 0, 0, 0, flags);
+            }
         }
 
         void BuildFlyoutPages(PetFlyout f, bool developer)
@@ -120,6 +146,8 @@ namespace DeskMadeline
                 () => Array.IndexOf(windowModes, windowMode), i => SetWindowMode(windowModes[i])));
             page.Add(new FlyoutSwitch(p, Loc.T("Menu.IgnoreMaximizedWindows"), () => ignoreMaximizedWindows,
                 on => { ignoreMaximizedWindows = on; pollCounter = 999; Save(); }));
+            page.Add(new FlyoutSwitch(p, Loc.T("Menu.AvoidFullscreen"), () => avoidFullscreen,
+                on => { avoidFullscreen = on; pollCounter = 999; Save(); }));
             // Which screen she wraps around only means anything while she wraps, so the switch
             // is there only then, folding out under the choice the way the hair swatches do.
             Action<bool> showOneMonitor = null;
@@ -348,6 +376,8 @@ namespace DeskMadeline
                 flyout.TopMost = on;
                 RaisePetWindows();
             }
+            // Behind a fullscreen window, she stays behind it in whichever band she is in now.
+            else if (steppedBehind != IntPtr.Zero) RaisePetWindows();
         }
 
         void SetIdleDebug(bool on)
