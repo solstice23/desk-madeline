@@ -109,8 +109,11 @@ namespace DeskMadeline
         /// <summary>The face the tray icon is made from, in the Portraits atlas.</summary>
         public const string PortraitId = "madeline/normal00";
 
-        public static void LoadAll(string dir, string skinDir = null, string skinAtlasFolder = null,
-            string skinGameplayDirectory = null)
+        /// <param name="skinGameplayDirectory">
+        /// The worn skin's Graphics/Atlases/Gameplay: laid over the game's atlas by path, which is
+        /// all a skin's files are -- textures at the paths its sprites and configs name.
+        /// </param>
+        public static void LoadAll(string dir, string skinGameplayDirectory = null)
         {
             AssetsDir = dir;
             foreach (var kv in _tex) kv.Value.Dispose();
@@ -121,6 +124,7 @@ namespace DeskMadeline
             foreach (var kv in _atlasFlip) kv.Value.Dispose();
             _atlas.Clear();
             _atlasFlip.Clear();
+            SmhShader.Clear();
             // Derived from those, so they go with them; a skin brings its own frames and its
             // own answer to whether any hair is painted into them.
             foreach (var kv in _hairMask) kv.Value?.Dispose();
@@ -131,13 +135,9 @@ namespace DeskMadeline
             // Celeste's own art comes from its atlases, whether those are beside the app or
             // in an install.  assets\ is laid over the top and holds only what the game has
             // no sprite for: the elytra, the cat bangs, a particle it draws as a rectangle.
-            LoadFromCeleste(skinAtlasFolder);
+            LoadFromCeleste();
             LoadAtlasOverlay(skinGameplayDirectory);
-            if (!Directory.Exists(dir))
-            {
-                LoadSkinDirectories(skinDir);
-                return;
-            }
+            if (!Directory.Exists(dir)) return;
 
             LoadDirectory(dir, null);
             // CommunalHelper's elytra frames ship in assets\ as fly00-08; in the game they sit at
@@ -149,7 +149,6 @@ namespace DeskMadeline
                 string flyPath = "characters/player_no_backpack/CommunalHelper/fly" + i.ToString("00");
                 if (!_atlas.ContainsKey(flyPath)) StorePath(flyPath, ReadPng(flyFile));
             }
-            LoadSkinDirectories(skinDir);
             string glider = Path.Combine(Path.GetDirectoryName(dir), "glider");
             if (Directory.Exists(glider)) LoadDirectory(glider, "glider/");
             string seeker = Path.Combine(Path.GetDirectoryName(dir), "seeker");
@@ -158,32 +157,13 @@ namespace DeskMadeline
             if (Directory.Exists(theo)) LoadDirectory(theo, "theoCrystal/");
         }
 
-        /// <summary>A skin's own files, which are the user's and always live on disk.</summary>
-        static void LoadSkinDirectories(string skinDir)
-        {
-            if (string.IsNullOrEmpty(skinDir) || !Directory.Exists(skinDir)) return;
-            LoadDirectory(skinDir, null);
-            // Player wake-up is the one supported animation stored below the
-            // sprite root in the SMH examples. Sweat is a separate overlay;
-            // load it under prefixed ids so it cannot overwrite body frames.
-            string wakeUp = Directory.GetDirectories(skinDir)
-                .FirstOrDefault(d => Path.GetFileName(d).Equals("wakeup", StringComparison.OrdinalIgnoreCase));
-            if (wakeUp != null) LoadDirectory(wakeUp, "wakeUp");
-            string sweat = Directory.GetDirectories(skinDir)
-                .FirstOrDefault(d => Path.GetFileName(d).Equals("sweat", StringComparison.OrdinalIgnoreCase));
-            if (sweat != null) LoadDirectory(sweat, "sweat");
-            string communal = Directory.GetDirectories(skinDir)
-                .FirstOrDefault(d => Path.GetFileName(d).Equals("CommunalHelper", StringComparison.OrdinalIgnoreCase));
-            if (communal != null) LoadDirectory(communal, null);
-        }
-
         /// <summary>Everything the pet draws, read straight out of Celeste's Gameplay atlas.</summary>
         /// <remarks>
         /// The folders map onto the ids the rest of the code already asks for, which are the
         /// file names assets\ used to hold. A skin built into the app -- Badeline -- is a
         /// folder in the same atlas rather than one on disk, so it is named the same way.
         /// </remarks>
-        static void LoadFromCeleste(string skinAtlasFolder)
+        static void LoadFromCeleste()
         {
             string atlases = CelesteInstall.AtlasesDirectory;
             if (atlases == null)
@@ -218,8 +198,6 @@ namespace DeskMadeline
                     // textures. The empty remainder makes its id the prefix alone.
                     ("util/glove", "glove"),
                 };
-                if (!string.IsNullOrEmpty(skinAtlasFolder))
-                    folders.Add((skinAtlasFolder.TrimEnd('/') + "/", ""));
 
                 // Which entry each id comes from. A skin's folder names the same frames as
                 // characters/player/ -- player_badeline/idle00 is idle00 just as player/idle00

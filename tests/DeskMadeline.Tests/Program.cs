@@ -41,6 +41,7 @@ static class Program
         failed += AtlasChecks.Run();      // sprites read out of an installed Celeste
         failed += SpriteBankChecks.Run(); // Sprites.xml read as Monocle reads it, and Sprite playing it
         failed += AnimationChecks.Run();  // UpdateSprite and its callbacks, UpdateHair's colour
+        failed += SkinModHelperChecks.Run(); // skins as SkinModHelper dresses her
         failed += SoundBankChecks.Run();
         failed += AtlasIndexTool.Run();   // opt-in: regenerate docs/celeste-atlas-index.tsv
         failed += GraphicsDumpTool.Run(); // opt-in: unpack the atlases, see tools/dump-graphics.ps1  // opt-in: every event resolves in Celeste's banks

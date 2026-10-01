@@ -246,10 +246,10 @@ namespace DeskMadeline
         sealed class DashTrail
         {
             public float X, Y, ScaleX, ScaleY, Age;
-            public int Facing, HairCount;
-            public string FrameId, BangsId;
+            public int Facing;
+            public string FrameId;
             public Color Tint, HairColor;
-            public PointF[] HairNodes;
+            public HairPlan Hair;
             public PointF[] CatTailNodes;
             public Bitmap Mask;
         }
@@ -353,7 +353,7 @@ namespace DeskMadeline
             var initialSkin = skinManager.Find(settings.Skin);
             skinManager.Activate(initialSkin);
             Sprites.LoadAll(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "player"),
-                initialSkin?.PlayerDirectory, initialSkin?.PlayerAtlasFolder);
+                initialSkin?.GameplayDirectory);
             try
             {
                 // Shipped beside the app, or read from the same atlas the sprites came from.
@@ -605,31 +605,107 @@ namespace DeskMadeline
 
         // ================= The sprite bank =================
         /// <summary>
-        /// GFX.SpriteBank, for her: the game's Sprites.xml read the way Monocle reads it, then the
-        /// entry she wears put onto her sprite -- PlayerSprite's constructor -- and player_sweat
-        /// onto the sweat's.
+        /// GFX.SpriteBank, for her: the game's Sprites.xml with the worn skin's merged into it the way
+        /// Everest merges a mod's, its player sprites' frame metadata, and then the entry she wears
+        /// put onto her sprite -- PlayerSprite's constructor, through SkinModHelper's hook on it --
+        /// with player_sweat, or the skin's reskin of it, onto the sweat's.
         /// </summary>
         void ApplySpriteBank()
         {
+            SkinDefinition skin = skinManager.Active;
             string xml = CelesteInstall.GraphicsFile("Sprites.xml");
             spriteBank = null;
             if (xml != null)
             {
-                try { spriteBank = SpriteBank.Load(Sprites.Atlas, XDocument.Load(xml), Array.Empty<XDocument>()); }
+                var mods = new List<XDocument>();
+                string modXml = skin?.GameplayDirectory == null ? null
+                    : System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetDirectoryName(skin.GameplayDirectory)), "Sprites.xml");
+                try
+                {
+                    if (modXml != null && System.IO.File.Exists(modXml)) mods.Add(XDocument.Load(modXml));
+                    spriteBank = SpriteBank.Load(Sprites.Atlas, XDocument.Load(xml), mods);
+                }
                 catch (Exception ex) { Log("sprite bank unreadable: " + ex.Message); }
             }
             if (spriteBank != null)
                 foreach (string failure in spriteBank.Failures)
                     if (failure.StartsWith("player", StringComparison.OrdinalIgnoreCase)) Log("sprite bank: " + failure);
-            // GFX.LoadData: the player sprites' frame metadata, each passing through
-            // CommunalHelper's two hooks on the way -- its elytra animation before, its elytra
-            // metadata after.
             HairMeta.LoadPlayerSprites(spriteBank, Sprites.Atlas);
-            // PlayerSpriteMode: Badeline is the game's own Play As Badeline, player_badeline.
-            bool badeline = skinManager.IsBadeline;
-            player.ResetSprite(spriteBank, badeline ? "player_badeline" : "player",
-                badeline ? Player.ModeMadelineAsBadeline : Player.ModeMadeline, null);
-            if (spriteBank != null && spriteBank.Has("player_sweat")) spriteBank.CreateOn(sweatSprite, "player_sweat");
+
+            string spriteName = "player";
+            int mode = Player.ModeMadeline;
+            SmhSkin smh = null;
+            string sweat = "player_sweat";
+            if (spriteBank != null && skin != null)
+            {
+                switch (skin.Kind)
+                {
+                    // Play As Badeline: the game's own player_badeline.
+                    case SkinKind.Builtin when skinManager.IsBadeline:
+                        spriteName = "player_badeline";
+                        mode = Player.ModeMadelineAsBadeline;
+                        break;
+                    case SkinKind.SkinModHelper when spriteBank.Has(skin.CharacterId):
+                        // RespriteBank_Reload: the skin's sprite gets its metadata, then the
+                        // sprites its OtherSprite_Path reskins are combined in, under the player's
+                        // cipher.
+                        HairMeta.AddCommunalHelperElytra(spriteBank, skin.CharacterId, Sprites.Atlas);
+                        HairMeta.CreateFramesMetadata(spriteBank, skin.CharacterId, Sprites.Atlas);
+                        HairMeta.AddCommunalHelperMetadata(spriteBank, skin.CharacterId, Sprites.Atlas);
+                        CombineReskins(skin.OtherSpritePath, skin.SkinName + Smh.PlayerCipher);
+                        spriteName = skin.CharacterId;
+                        mode = skin.Mode;
+                        smh = new SmhSkin(spriteBank, Sprites.Atlas, spriteName, skin.SkinName, mode,
+                            skin.GameplayDirectory, null, null);
+                        if (spriteBank.Has(sweat + skin.SkinName + Smh.PlayerCipher)) sweat += skin.SkinName + Smh.PlayerCipher;
+                        break;
+                    case SkinKind.SkinModHelperOld:
+                        CombineReskins(skin.OldExPath, skin.SkinName);
+                        if (spriteBank.Has("player" + skin.SkinName)) spriteName = "player" + skin.SkinName;
+                        smh = new SmhSkin(spriteBank, Sprites.Atlas, spriteName, skin.SkinName, mode,
+                            skin.GameplayDirectory, skin.OldConfig, skin.OldExPath);
+                        if (spriteBank.Has(sweat + skin.SkinName)) sweat += skin.SkinName;
+                        break;
+                    // A mod that only replaces the game's textures: the game's player sprite over
+                    // them, with SkinModHelper's hooks reading whatever skinConfig it brings.
+                    case SkinKind.Replacement:
+                        smh = new SmhSkin(spriteBank, Sprites.Atlas, spriteName, null, mode,
+                            skin.GameplayDirectory, null, null);
+                        break;
+                }
+            }
+            player.ResetSprite(spriteBank, spriteName, mode, smh);
+            if (spriteBank != null && spriteBank.Has(sweat)) spriteBank.CreateOn(sweatSprite, sweat);
+        }
+
+        /// <summary>
+        /// RespriteBankModule.DoCombine: a skin's Graphics/&lt;directory&gt;/Sprites.xml, read as a bank
+        /// of its own; each entry the game also has is added as that id plus the suffix, given the
+        /// game's animations it lacks, and its metadata when it brings some.
+        /// </summary>
+        void CombineReskins(string directory, string suffix)
+        {
+            SkinDefinition skin = skinManager.Active;
+            if (string.IsNullOrEmpty(directory) || skin?.GameplayDirectory == null) return;
+            string graphics = System.IO.Path.GetDirectoryName(System.IO.Path.GetDirectoryName(skin.GameplayDirectory));
+            string path = System.IO.Path.Combine(graphics, directory.Replace('/', System.IO.Path.DirectorySeparatorChar), "Sprites.xml");
+            if (!System.IO.File.Exists(path)) return;
+            SpriteBank reskins;
+            try { reskins = SpriteBank.Load(Sprites.Atlas, XDocument.Load(path), Array.Empty<XDocument>()); }
+            catch (Exception ex) { Log("skin reskins unreadable " + path + ": " + ex.Message); return; }
+            foreach (var entry in reskins.SpriteData)
+            {
+                if (!spriteBank.SpriteData.TryGetValue(entry.Key, out SpriteData original)) continue;
+                string id = entry.Key + suffix;
+                spriteBank.SpriteData[id] = entry.Value;
+                SmhSkin.PatchSprite(original.Sprite, entry.Value.Sprite);
+                if (entry.Value.Sources.Count > 0 && entry.Value.Sources[0].Xml.Element("Metadata") != null)
+                {
+                    HairMeta.AddCommunalHelperElytra(spriteBank, id, Sprites.Atlas);
+                    HairMeta.CreateFramesMetadata(spriteBank, id, Sprites.Atlas);
+                    HairMeta.AddCommunalHelperMetadata(spriteBank, id, Sprites.Atlas);
+                }
+            }
         }
 
         // ================= Game loop =================
@@ -696,7 +772,7 @@ namespace DeskMadeline
                 pendingSkinId = null;
                 var skin = skinManager.Find(id);
                 Sprites.LoadAll(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "player"),
-                    skin?.PlayerDirectory, skin?.PlayerAtlasFolder);
+                    skin?.GameplayDirectory);
                 skinManager.Activate(skin);
                 ApplySpriteBank();
                 settings.Skin = skin?.Id ?? SkinManager.DefaultId;
@@ -1391,14 +1467,7 @@ namespace DeskMadeline
 
         void CaptureDashTrail()
         {
-            int count = player.Hair.ActiveCount;
-            var nodes = new PointF[count];
-            for (int i = 0; i < count; i++) nodes[i] = player.Hair.Nodes[i];
             string frameId = player.CurrentFrameId ?? (player.Ducking ? "duck" : "dash00");
-            string bangsId = "bangs00";
-            if (HairMeta.TryGet(frameId, out var hm) && hm.Bangs >= 0 && hm.Bangs < HairMeta.BangsFrames.Length)
-                bangsId = HairMeta.BangsFrames[hm.Bangs];
-            if (catBangsEnabled) bangsId = "catbangs" + bangsId.Substring(bangsId.Length - 2);
             PointF[] tailNodes = null;
             if (catTailEnabled)
             {
@@ -1413,9 +1482,8 @@ namespace DeskMadeline
                 ScaleY = player.SpriteScaleY,
                 Facing = player.Facing,
                 FrameId = frameId,
-                BangsId = bangsId,
-                HairCount = count,
-                HairNodes = nodes,
+                // TrailManager.Add snapshots the hair as PlayerHair.Render would draw it.
+                Hair = HairMeta.HasHair(frameId) ? BuildHairPlan() : null,
                 CatTailNodes = tailNodes,
                 HairColor = player.HairColor,
                 // Player.GetTrailColor(wasDashB), resolved through the active skin's
@@ -1446,7 +1514,6 @@ namespace DeskMadeline
 
             bool flip = trail.Facing < 0;
             var blob = Sprites.Get("hair00", false);
-            var bangs = Sprites.Get(trail.BangsId, flip);
             if (blob != null && trail.CatTailNodes != null)
             {
                 for (int i = 0; i < trail.CatTailNodes.Length; i++)
@@ -1468,37 +1535,9 @@ namespace DeskMadeline
                     DrawTintedSafe(g, blob, trail.HairColor, x - 1.5f, y - 1.5f, 3f, 3f);
                 }
             }
-            if (blob != null && bangs != null)
-            {
-                // Hair.Render includes its four-direction black outline. The max-blend
-                // mask pass includes that outline in the final silhouette as well.
-                float rootX = SnapPx(trail.HairNodes[0].X - trail.X + center);
-                float rootY = SnapPx(trail.HairNodes[0].Y - trail.Y + center);
-                for (int i = 0; i < trail.HairCount; i++)
-                {
-                    float scale = HairSegmentScale(i, trail.HairCount);
-                    float pieceW = 10f * scale * Math.Abs(trail.ScaleX);
-                    float pieceH = 10f * scale;
-                    var tex = i == 0 ? bangs : blob;
-                    float x = rootX + trail.HairNodes[i].X - trail.HairNodes[0].X - pieceW / 2f;
-                    float y = rootY + trail.HairNodes[i].Y - trail.HairNodes[0].Y - pieceH / 2f;
-                    DrawTintedSafe(g, tex, Color.Black, x - 1, y, pieceW, pieceH);
-                    DrawTintedSafe(g, tex, Color.Black, x + 1, y, pieceW, pieceH);
-                    DrawTintedSafe(g, tex, Color.Black, x, y - 1, pieceW, pieceH);
-                    DrawTintedSafe(g, tex, Color.Black, x, y + 1, pieceW, pieceH);
-                }
-                for (int i = trail.HairCount - 1; i >= 0; i--)
-                {
-                    float scale = HairSegmentScale(i, trail.HairCount);
-                    float pieceW = 10f * scale * Math.Abs(trail.ScaleX);
-                    float pieceH = 10f * scale;
-                    var tex = i == 0 ? bangs : blob;
-                    DrawTintedSafe(g, tex, trail.HairColor,
-                        rootX + trail.HairNodes[i].X - trail.HairNodes[0].X - pieceW / 2f,
-                        rootY + trail.HairNodes[i].Y - trail.HairNodes[0].Y - pieceH / 2f,
-                        pieceW, pieceH);
-                }
-            }
+            // Hair.Render includes its four-direction outline. The max-blend mask pass includes
+            // that outline in the final silhouette as well.
+            if (trail.Hair != null) DrawHairPlan(g, trail.Hair, trail.X - center, trail.Y - center);
 
             var body = Sprites.Get(trail.FrameId, flip);
             if (body != null)
@@ -3174,12 +3213,13 @@ namespace DeskMadeline
                     // table: the sleep sheet says hair="" outright, and the wakeUp sheet she
                     // lies asleep on is simply not in the table at all. Both are poses with
                     // the hair painted in, and DrawBody tints that to the colour of the day.
+                    Color bodyColor = BodyColor();
                     if (HairMeta.HasHair(player.CurrentFrameId))
                     {
                         DrawCatTail(g, camX, camY);
                         DrawHair(g, camX, camY);
                     }
-                    DrawBody(g, bodyAnchorX, bodyAnchorY);
+                    DrawBody(g, bodyAnchorX, bodyAnchorY, bodyColor);
                     DrawSweat(g, bodyAnchorX, bodyAnchorY);
                     // Glider.Depth is -5 in vanilla, in front of Player.Depth 0.
                     // Drawing held gliders in this layer also avoids rebuilding a
@@ -3815,19 +3855,50 @@ namespace DeskMadeline
             return bitmap;
         }
 
-        void DrawBody(Graphics g, float anchorX, float anchorY)
+        /// <summary>
+        /// Player.Render's Sprite.Color: red on the low-stamina flash, white otherwise -- through
+        /// SkinModHelper's patches, which can recolour the flash and dress a silhouette in her hair.
+        /// Decided before the hair is drawn, as the game decides it, because the flash can grade
+        /// the hair too.
+        /// </summary>
+        Color BodyColor()
         {
-            // Body (squash/stretch anchored at foot center); rect snapped to integer game pixels
+            SmhSkin skin = player.Skin;
+            if (skin != null)
+            {
+                // HairConfig.OnHairUpdate: the grading lasts only the frame it was set on.
+                skin.Hair.HairColorGrading = null;
+                skin.ChooseColorGrade(player.ColorGradeDashCount, skin.Hair.HairFlashing);
+            }
+            if (player.IsLowStamina && tiredFlash) return skin?.LowStaminaFlash(player.HairColor) ?? Color.Red;
+            return skin?.Character.SilhouetteMode == true ? player.HairColor : Color.White;
+        }
+
+        void DrawBody(Graphics g, float anchorX, float anchorY, Color bodyColor)
+        {
+            // Image.Render: the frame around the sprite's origin, Sprite.Scale.X carrying her facing,
+            // so that facing left mirrors the frame about its origin. Snapped to whole game pixels.
             bool flip = player.Facing < 0;
             var frame = Sprites.Get(player.CurrentFrameId, flip);
             if (frame != null)
             {
+                SmhSkin skin = player.Skin;
+                PointF origin = player.Sprite.OriginFor(frame.Width, frame.Height);
                 float sx = player.SpriteScaleX, sy = player.SpriteScaleY;
-                float x = SnapPx(anchorX - 16 * sx), y = SnapPx(anchorY - 32 * sy);
-                float w = SnapPx(32 * sx), h = SnapPx(32 * sy);
-                // Vanilla low-stamina look: flash body red/white every 0.05s.
-                if (player.IsLowStamina && tiredFlash)
-                    Sprites.DrawTinted(g, frame, Color.Red, x, y, w, h);
+                float left = flip ? anchorX - (frame.Width - origin.X) * sx : anchorX - origin.X * sx;
+                float x = SnapPx(left), y = SnapPx(anchorY - origin.Y * sy);
+                float w = SnapPx(frame.Width * sx), h = SnapPx(frame.Height * sy);
+                // SpriteRenderHook_ColorGrade: the frame through the grade, and MixHair's tint of
+                // the mask colour when TintMaskWithHair is on.
+                Bitmap grade = skin?.CurrentGrade == null ? null : Sprites.Get(skin.CurrentGrade, false);
+                Color? mix = skin?.Character.TintMaskWithHair == true
+                    ? (player.HairColor.ToArgb() != bodyColor.ToArgb() ? player.HairColor : Color.White)
+                    : (Color?)null;
+                bool after = skin?.Character.ColorGradingAfterColored == true && grade != null;
+                frame = SmhShader.Apply(frame, grade, after, bodyColor, mix, skin?.Character.MaskMode ?? 0);
+                Color tint = after ? Color.White : bodyColor;
+                if (tint.ToArgb() != Color.White.ToArgb())
+                    Sprites.DrawTinted(g, frame, tint, x, y, w, h);
                 else
                 {
                     g.DrawImage(frame, x, y, w, h);
@@ -3931,55 +4002,160 @@ namespace DeskMadeline
         }
 
         void DrawHair(Graphics g, float camX, float camY, Color? colorOverride = null)
+            => DrawHairPlan(g, BuildHairPlan(colorOverride), camX, camY);
+
+        /// <summary>One piece of hair as PlayerHair.Render draws it.</summary>
+        struct HairPiece
+        {
+            public string Texture;
+            public PointF Node, Scale, Origin;
+            public Color Fill;
+        }
+
+        /// <summary>Her hair as it stands this frame: every piece, and the outline around them.</summary>
+        sealed class HairPlan
+        {
+            public HairPiece[] Pieces;
+            public Color Border;
+            /// <summary>The colour grade the hair is drawn through, and in which technique.</summary>
+            public Bitmap Grade;
+            public bool GradeAfterColored;
+        }
+
+        /// <summary>
+        /// PlayerHair.Render's choices for this frame -- each segment's texture, colour, scale and
+        /// origin, and the outline's colour -- through SkinModHelper's hooks on all of them when
+        /// a skin of its is worn.
+        /// </summary>
+        HairPlan BuildHairPlan(Color? colorOverride = null)
         {
             var hair = player.Hair;
+            SmhSkin skin = player.Skin;
+            SmhHair smh = skin?.Hair;
+            int count = Math.Min(hair.ActiveCount, hair.Nodes.Count);
+            HairMeta.TryGet(player.CurrentFrameId, out var meta);
+            int hairFrame = meta.Bangs;
+
+            // PlayerHair.Color and Border, as PlayerHairRenderHook leaves them.
             Color color = colorOverride ?? player.HairColor;
-            bool flip = player.Facing < 0;
-            var blob = Sprites.Get("hair00", false);
-            // Bangs frame: pick from current anim frame facing meta (0 look-left / 1 center / 2 look-right); hair editor uses live values
-            string bangsId = "bangs00";
-            int bangsIdx = -1;
-            if (HairMeta.TryGet(player.CurrentFrameId, out var hm) &&
-                hm.Bangs >= 0 && hm.Bangs < HairMeta.BangsFrames.Length)
-                bangsIdx = hm.Bangs;
-            if (bangsIdx >= 0 && bangsIdx < HairMeta.BangsFrames.Length)
-                bangsId = HairMeta.BangsFrames[bangsIdx];
-            if (catBangsEnabled) bangsId = "catbangs" + bangsId.Substring(bangsId.Length - 2);
-            var bangs = Sprites.Get(bangsId, flip);
-            if (blob == null || bangs == null) return;
-
-            // Canvas coords (pixel-perfect: vanilla floors Nodes[0]; here each node snaps to integer game pixels,
-            // integer upscale = integer physical pixels, avoiding subpixel blur)
-            int hairCount = hair.ActiveCount;
-            Span<PointF> pt = stackalloc PointF[PlayerHairSim.MaxCount];
-            float rootScreenX = SnapPx(hair.Nodes[0].X - camX);
-            float rootScreenY = SnapPx(hair.Nodes[0].Y - camY);
-            for (int i = 0; i < hairCount; i++)
-                pt[i] = new PointF(
-                    rootScreenX + hair.Nodes[i].X - hair.Nodes[0].X,
-                    rootScreenY + hair.Nodes[i].Y - hair.Nodes[0].Y);
-
-            // Black outline (vanilla: ±1px in four directions)
-            for (int i = 0; i < hairCount; i++)
+            Color border = smh?.Border ?? Color.Black;
+            if (smh?.LastDashes is int lastDashes)
             {
-                float sc = HairSegmentScale(i, hairCount);
-                var tex = i == 0 ? bangs : blob;
-                float w = 10f * sc * Math.Abs(player.SpriteScaleX);
-                float h = 10f * sc;
-                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2 - 1, pt[i].Y - h / 2, w, h);
-                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2 + 1, pt[i].Y - h / 2, w, h);
-                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2, pt[i].Y - h / 2 - 1, w, h);
-                DrawTintedSafe(g, tex, Color.Black, pt[i].X - w / 2, pt[i].Y - h / 2 + 1, w, h);
+                if (!smh.HairFlashing && smh.SafeGetHairColor(lastDashes, out Color general)) color = general;
+                if (smh.GetHairColorWithSpecified((int)SmhHair.Special.Outline, lastDashes, out Color outline)) border = outline;
             }
-            // Body fill (back to front; bangs last)
-            for (int i = hairCount - 1; i >= 0; i--)
+            if (skin != null && skin.Character.TintMaskWithHair)
             {
-                float sc = HairSegmentScale(i, hairCount);
-                var tex = i == 0 ? bangs : blob;
-                float w = 10f * sc * Math.Abs(player.SpriteScaleX);
-                float h = 10f * sc;
-                DrawTintedSafe(g, tex, color, pt[i].X - w / 2, pt[i].Y - h / 2, w, h);
+                int sum = border.R + border.G + border.B;
+                int mode = skin.Character.MaskMode;
+                if (mode > 2)
+                {
+                    if (border.R == border.B && border.R == border.G) border = Smh.ColorBlend(border, color);
+                }
+                else if (sum == new[] { border.R, border.G, border.B }[mode])
+                    border = Smh.ColorBlend(Color.FromArgb(border.A, Math.Min(255, sum), Math.Min(255, sum), Math.Min(255, sum)), color);
+                border = Smh.ColorBlend(border, color);
             }
+            if (smh != null) border = Smh.ColorBlend(border, smh.HairColorGrading);
+            if (skin?.Character.SilhouetteMode == true && smh.LastDashes != SmhHair.FeatherIndex)
+                border = Smh.ColorBlend(border, color);
+
+            // PlayerHair.bangs is characters/player/bangs; the hair, characters/player/hair00.
+            var vanillaBangs = AtlasLookup.Subtextures(Sprites.Atlas, "characters/player/bangs");
+            string bangs = vanillaBangs.Count > hairFrame ? vanillaBangs[hairFrame] : HairMeta.BangsFrames[Math.Max(0, Math.Min(2, hairFrame))];
+            const string hairTexture = "characters/player/hair00";
+
+            var pieces = new HairPiece[count];
+            for (int i = 0; i < count; i++)
+            {
+                string texture = skin != null
+                    ? skin.GetHairTexture(i, hairFrame, count, player.CurrentFrameId, bangs, hairTexture)
+                    : i == 0 ? bangs : hairTexture;
+                // Desktop: the cat bangs stand in for the game's, never for a skin's own.
+                if (i == 0 && catBangsEnabled && texture == bangs)
+                    texture = "catbangs" + hairFrame.ToString("00");
+
+                // PlayerHair.GetHairScale, through PlayerHairGetHairScaleHook.
+                float num = 0.25f + (1f - (float)i / count) * 0.75f;
+                var scale = new PointF((i == 0 ? player.Facing : num) * Math.Abs(player.SpriteScaleX), num);
+                if (smh?.LastDashes is int dashes)
+                {
+                    if (smh.GetHairScale(i, dashes, count, player.SpriteScaleX, out PointF custom))
+                        scale = new PointF((float)Math.Round(custom.X, 2), (float)Math.Round(custom.Y, 2));
+                    scale = smh.FlipHair(scale, i, player.Facing, hair.Nodes);
+                }
+
+                // PlayerHair.GetHairColor, through PlayerHairGetHairColorHook.
+                Color fill = color;
+                if (smh != null)
+                {
+                    if (smh.ActualHairColors != null && smh.LastDashes is int d && !smh.HairFlashing &&
+                        smh.SafeGetHairColor(i, d, count, out Color segment))
+                        fill = Smh.ColorBlend(segment, smh.HairColorGrading);
+                    else fill = Smh.ColorBlend(color, smh.HairColorGrading);
+                }
+
+                pieces[i] = new HairPiece
+                {
+                    Texture = texture,
+                    Node = hair.Nodes[i],
+                    Scale = scale,
+                    Origin = smh == null ? new PointF(5f, 5f) : i == 0 ? smh.BangsOrigin : smh.HairOrigin,
+                    Fill = fill,
+                };
+            }
+            return new HairPlan
+            {
+                Pieces = pieces,
+                Border = border,
+                Grade = skin?.CurrentGrade == null ? null : Sprites.Get(skin.CurrentGrade, false),
+                GradeAfterColored = skin?.Character.ColorGradingAfterColored == true,
+            };
+        }
+
+        /// <summary>
+        /// PlayerHair.Render: the outline, every piece offset a pixel four ways, then the pieces
+        /// themselves from the end of the hair to the bangs. The root lands on a whole pixel, as
+        /// Nodes[0].Floor() puts it, and the rest keep their places relative to it.
+        /// </summary>
+        void DrawHairPlan(Graphics g, HairPlan plan, float camX, float camY)
+        {
+            if (plan.Pieces.Length == 0) return;
+            float rootX = SnapPx(plan.Pieces[0].Node.X - camX);
+            float rootY = SnapPx(plan.Pieces[0].Node.Y - camY);
+            PointF At(HairPiece p) => new PointF(rootX + p.Node.X - plan.Pieces[0].Node.X, rootY + p.Node.Y - plan.Pieces[0].Node.Y);
+            if (plan.Border.A > 0)
+                foreach (HairPiece p in plan.Pieces)
+                {
+                    PointF at = At(p);
+                    DrawHairTexture(g, plan, p, at.X - 1, at.Y, plan.Border);
+                    DrawHairTexture(g, plan, p, at.X + 1, at.Y, plan.Border);
+                    DrawHairTexture(g, plan, p, at.X, at.Y - 1, plan.Border);
+                    DrawHairTexture(g, plan, p, at.X, at.Y + 1, plan.Border);
+                }
+            for (int i = plan.Pieces.Length - 1; i >= 0; i--)
+            {
+                PointF at = At(plan.Pieces[i]);
+                DrawHairTexture(g, plan, plan.Pieces[i], at.X, at.Y, plan.Pieces[i].Fill);
+            }
+        }
+
+        /// <summary>MTexture.Draw(position, origin, color, scale), a negative X scale mirroring it.</summary>
+        static void DrawHairTexture(Graphics g, HairPlan plan, HairPiece piece, float x, float y, Color color)
+        {
+            bool flip = piece.Scale.X < 0f;
+            Bitmap texture = Sprites.Get(piece.Texture, flip);
+            if (texture == null) return;
+            // PlayerHairRenderHook_ColorGrade: the whole of the hair, outline too, through the grade.
+            if (plan.Grade != null)
+            {
+                texture = SmhShader.Apply(texture, plan.Grade, plan.GradeAfterColored, color, null, 0);
+                if (plan.GradeAfterColored) color = Color.FromArgb(color.A, 255, 255, 255);
+            }
+            float sx = Math.Abs(piece.Scale.X), sy = piece.Scale.Y;
+            float left = flip ? x - (texture.Width - piece.Origin.X) * sx : x - piece.Origin.X * sx;
+            float top = y - piece.Origin.Y * sy;
+            Sprites.DrawTinted(g, texture, color, left, top, texture.Width * sx, texture.Height * sy, color.A / 255f);
         }
 
         void DrawSpeedometer(Graphics g, float camX, float camY)

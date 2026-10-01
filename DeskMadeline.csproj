@@ -40,6 +40,7 @@
     <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DirectComposition" Version="3.8.3" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -71,15 +72,11 @@
     file, which eats a single percent, so it takes two of them.
   -->
   <Target Name="StampCommit" BeforeTargets="GetAssemblyAttributes">
-    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-parse --short=7 HEAD"
-          ConsoleToMSBuild="true" StandardOutputImportance="low"
-          ContinueOnError="true" IgnoreExitCode="true">
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-parse --short=7 HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true" IgnoreExitCode="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="CommitHash" />
       <Output TaskParameter="ExitCode" PropertyName="CommitHashExit" />
     </Exec>
-    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; log -1 --format=%25%25cI"
-          ConsoleToMSBuild="true" StandardOutputImportance="low"
-          ContinueOnError="true" IgnoreExitCode="true">
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; log -1 --format=%25%25cI" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true" IgnoreExitCode="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="CommitDate" />
     </Exec>
     <!--
@@ -87,15 +84,10 @@
       master. A shallow clone has only the last few to count and would call every build #1, so
       it gets no number at all rather than a wrong one; CI checks out the whole history for this.
     -->
-    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-parse --is-shallow-repository"
-          ConsoleToMSBuild="true" StandardOutputImportance="low"
-          ContinueOnError="true" IgnoreExitCode="true">
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-parse --is-shallow-repository" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true" IgnoreExitCode="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="CommitShallow" />
     </Exec>
-    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-list --count HEAD"
-          Condition="'$(CommitShallow.Trim())' == 'false'"
-          ConsoleToMSBuild="true" StandardOutputImportance="low"
-          ContinueOnError="true" IgnoreExitCode="true">
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-list --count HEAD" Condition="'$(CommitShallow.Trim())' == 'false'" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true" IgnoreExitCode="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="CommitNumber" />
       <Output TaskParameter="ExitCode" PropertyName="CommitNumberExit" />
     </Exec>
@@ -132,14 +124,12 @@
       <CelestePathFile>$(MSBuildProjectDirectory)\celeste-path.txt</CelestePathFile>
       <CelesteDir>$(CelestePath)</CelesteDir>
       <CelesteDir Condition="'$(CelesteDir)' == ''">$(CELESTE_PATH)</CelesteDir>
-      <CelesteDir Condition="'$(CelesteDir)' == '' And Exists('$(CelestePathFile)')"
-                  >$([System.String]::Copy('$([System.IO.File]::ReadAllText($(CelestePathFile)))').Trim())</CelesteDir>
+      <CelesteDir Condition="'$(CelesteDir)' == '' And Exists('$(CelestePathFile)')">$([System.String]::Copy('$([System.IO.File]::ReadAllText($(CelestePathFile)))').Trim())</CelesteDir>
       <!-- A path pasted with a trailing slash arrives with the closing quote stuck to it. -->
       <CelesteDir>$(CelesteDir.TrimEnd('"').TrimEnd('\'))</CelesteDir>
     </PropertyGroup>
     <ItemGroup Condition="'$(CelesteDir)' != '' And Exists('$(CelesteDir)')">
-      <CelesteAtlas Include="$(CelesteDir)\Content\Graphics\Atlases\Gameplay.meta;
-                             $(CelesteDir)\Content\Graphics\Atlases\Gameplay*.data" />
+      <CelesteAtlas Include="$(CelesteDir)\Content\Graphics\Atlases\Gameplay.meta;&#xD;&#xA;                             $(CelesteDir)\Content\Graphics\Atlases\Gameplay*.data" />
       <CelestePortrait Include="$(CelesteDir)\Content\Graphics\Atlases\Portraits\madeline\normal00.data" />
       <!-- The game's sprite bank: every animation she plays, and where her hair sits and what
            she carries on every frame. Read beside the exe or out of the install, the same two
@@ -155,25 +145,15 @@
            is a Farewell mechanic, so its sounds are under event:/new_content/. The music
            banks are 440MB of soundtrack nothing here can play, and stay out. SFXCHECK=1
            plays every event the code names, which is what says whether this list is right. -->
-      <CelesteFmodBank Include="$(CelesteDir)\Content\FMOD\Desktop\Master Bank.bank;
-                                $(CelesteDir)\Content\FMOD\Desktop\Master Bank.strings.bank;
-                                $(CelesteDir)\Content\FMOD\Desktop\sfx.bank;
-                                $(CelesteDir)\Content\FMOD\Desktop\dlc_sfx.bank" />
+      <CelesteFmodBank Include="$(CelesteDir)\Content\FMOD\Desktop\Master Bank.bank;&#xD;&#xA;                                $(CelesteDir)\Content\FMOD\Desktop\Master Bank.strings.bank;&#xD;&#xA;                                $(CelesteDir)\Content\FMOD\Desktop\sfx.bank;&#xD;&#xA;                                $(CelesteDir)\Content\FMOD\Desktop\dlc_sfx.bank" />
     </ItemGroup>
-    <Copy SourceFiles="@(CelesteAtlas)" DestinationFolder="$(OutDir)Content\Graphics\Atlases"
-          SkipUnchangedFiles="true" Condition="'@(CelesteAtlas)' != ''" />
-    <Copy SourceFiles="@(CelestePortrait)" DestinationFolder="$(OutDir)Content\Graphics\Atlases\Portraits\madeline"
-          SkipUnchangedFiles="true" Condition="'@(CelestePortrait)' != ''" />
-    <Copy SourceFiles="@(CelesteSprites)" DestinationFolder="$(OutDir)Content\Graphics"
-          SkipUnchangedFiles="true" Condition="'@(CelesteSprites)' != ''" />
-    <Copy SourceFiles="@(CelesteFmodLib)" DestinationFolder="$(OutDir)lib64-win-x64"
-          SkipUnchangedFiles="true" Condition="'@(CelesteFmodLib)' != ''" />
-    <Copy SourceFiles="@(CelesteFmodBank)" DestinationFolder="$(OutDir)Content\FMOD\Desktop"
-          SkipUnchangedFiles="true" Condition="'@(CelesteFmodBank)' != ''" />
-    <Warning Text="BundleAssets is on but '$(CelesteDir)' is not a Celeste install, so this build carries neither artwork nor audio. Name one with -p:CelestePath=..."
-             Condition="'@(CelesteAtlas)' == ''" />
-    <Warning Text="'$(CelesteDir)' has no 64-bit FMOD in lib64-win-x64, so this bundled build will be silent. That runtime comes with Everest's build of Celeste; the plain game is the 32-bit one."
-             Condition="'@(CelesteAtlas)' != '' And '@(CelesteFmodLib)' == ''" />
+    <Copy SourceFiles="@(CelesteAtlas)" DestinationFolder="$(OutDir)Content\Graphics\Atlases" SkipUnchangedFiles="true" Condition="'@(CelesteAtlas)' != ''" />
+    <Copy SourceFiles="@(CelestePortrait)" DestinationFolder="$(OutDir)Content\Graphics\Atlases\Portraits\madeline" SkipUnchangedFiles="true" Condition="'@(CelestePortrait)' != ''" />
+    <Copy SourceFiles="@(CelesteSprites)" DestinationFolder="$(OutDir)Content\Graphics" SkipUnchangedFiles="true" Condition="'@(CelesteSprites)' != ''" />
+    <Copy SourceFiles="@(CelesteFmodLib)" DestinationFolder="$(OutDir)lib64-win-x64" SkipUnchangedFiles="true" Condition="'@(CelesteFmodLib)' != ''" />
+    <Copy SourceFiles="@(CelesteFmodBank)" DestinationFolder="$(OutDir)Content\FMOD\Desktop" SkipUnchangedFiles="true" Condition="'@(CelesteFmodBank)' != ''" />
+    <Warning Text="BundleAssets is on but '$(CelesteDir)' is not a Celeste install, so this build carries neither artwork nor audio. Name one with -p:CelestePath=..." Condition="'@(CelesteAtlas)' == ''" />
+    <Warning Text="'$(CelesteDir)' has no 64-bit FMOD in lib64-win-x64, so this bundled build will be silent. That runtime comes with Everest's build of Celeste; the plain game is the 32-bit one." Condition="'@(CelesteAtlas)' != '' And '@(CelesteFmodLib)' == ''" />
   </Target>
 
 </Project>

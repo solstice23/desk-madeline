@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Globalization;
 using System.Xml.Linq;
 
@@ -159,6 +160,14 @@ namespace DeskMadeline
         public Action<string> OnLastFrame;
         public Action<string, string> OnChange;
 
+        /// <summary>Image.Origin, and Sprite.Justify, which re-derives it from each frame's size.</summary>
+        public PointF Origin;
+        public PointF? Justify;
+
+        /// <summary>The origin to draw a frame of this size around: Justify's when there is one.</summary>
+        public PointF OriginFor(int width, int height)
+            => Justify is PointF j ? new PointF(width * j.X, height * j.Y) : Origin;
+
         /// <summary>Calc.Random, which the goto choosers and randomised frames draw from.</summary>
         public Random Random = new Random();
 
@@ -262,6 +271,8 @@ namespace DeskMadeline
         public void LoadFrom(GameSprite template)
         {
             Texture = template.Texture;
+            Origin = template.Origin;
+            Justify = template.Justify;
             Animations = new Dictionary<string, SpriteAnimation>(template.Animations, StringComparer.OrdinalIgnoreCase);
             currentAnimation = template.currentAnimation;
             animationTimer = template.animationTimer;
@@ -330,6 +341,12 @@ namespace DeskMadeline
                     ? path + loopPath : overridePath + loopPath;
                 AddAnimation(id, loopPath, AttrFloat(loop, "delay", defaultDelay), new Chooser(id, 1f), frames);
             }
+            // SpriteData.Add's Center, Justify and Origin children. Center is CenterOrigin with a
+            // Justify of a half each way, which every frame change then re-derives from.
+            XElement origin = xml.Element("Origin"), justify = xml.Element("Justify");
+            if (xml.Element("Center") != null) Sprite.Justify = new PointF(0.5f, 0.5f);
+            else if (justify != null) Sprite.Justify = Position(justify);
+            else if (origin != null) Sprite.Origin = Position(origin);
             if (start != null) Sprite.Play(start);
             Sources.Add(source);
         }
@@ -372,6 +389,9 @@ namespace DeskMadeline
             string value = (string)xml.Attribute(name);
             return value == null ? fallback : Convert.ToSingle(value, CultureInfo.InvariantCulture);
         }
+
+        /// <summary>Calc.Position: an element's x and y attributes.</summary>
+        static PointF Position(XElement xml) => new PointF(AttrFloat(xml, "x", 0f), AttrFloat(xml, "y", 0f));
     }
 
     /// <summary>

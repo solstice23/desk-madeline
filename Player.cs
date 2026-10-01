@@ -241,6 +241,8 @@ namespace DeskMadeline
                    Speed.X * Speed.X + Speed.Y * Speed.Y >= 48400f;
         }
         public PointF DashDir;
+        /// <summary>Player.StartedDashing: set by DashBegin, cleared by DashUpdate's first line.</summary>
+        public bool StartedDashing { get; private set; }
         /// <summary>
         /// Solid.OnDashCollide, asked with the collision's own one-axis direction while she is
         /// dash-attacking, and answered by whoever owns the solid -- a floaty block takes a
@@ -1781,10 +1783,54 @@ namespace DeskMadeline
         }
 
         /// <summary>Hair-editor only: freeze physics/anim and run hair sim with given hx/hy (live preview).</summary>
+        /// <summary>Sprite.HairCount: four, five with two dashes, one in a red booster; a skin's length over it.</summary>
+        public int HairCount { get; private set; } = 4;
+        float hairTime;
+
+        /// <summary>
+        /// orig_Update's hair block -- how the hair is carried and how long it is -- then
+        /// PlayerHair's Update and AfterUpdate, from the root PlayerSprite.HairOffset gives.
+        /// </summary>
         public void UpdateHairOnly(float dt, float hx, float hy)
         {
+            hairTime += dt;
+            // ilPlayerOrig_Update's _pHairFloating: a skin's HairFloatingDashCount decides
+            // whether the hair floats, in place of the dash count.
+            int floatDashes = Dashes;
+            if (Skin?.Hair.File.HairFloatingDashCount is int floating)
+                floatDashes = floating < 0 || Math.Max(Dashes, 0) < floating ? 0 : 2;
+            if (floatDashes > 1)
+            {
+                Hair.StepPerSegment = new PointF((float)Math.Sin(hairTime * 2f) * 0.7f - Facing * 3, (float)Math.Sin(hairTime * 1f));
+                Hair.StepInFacingPerSegment = 0f;
+                Hair.StepApproach = 90f;
+                Hair.StepYSinePerSegment = 1f;
+            }
+            else
+            {
+                Hair.StepPerSegment = new PointF(0f, 2f);
+                Hair.StepInFacingPerSegment = 0.5f;
+                Hair.StepApproach = 64f;
+                Hair.StepYSinePerSegment = 0f;
+            }
+            if (State == StRedDash) HairCount = 1;
+            else if (State != StStarFly) HairCount = Dashes > 1 ? 5 : 4;
+            // PlayerUpdateHook: a skin's length for her dash count.
+            if (Skin != null && State != StRedDash && Skin.Hair.GetHairLength(SkinDashCount) is int length)
+                HairCount = length;
+
+            Hair.Update(dt);
             float anchorY = -9f * SpriteScaleY;
-            Hair.AfterUpdate(dt, new PointF(Pos.X + hx * Facing, Pos.Y + anchorY + hy), Facing, Dashes > 1);
+            Hair.AfterUpdate(dt, new PointF(Pos.X + hx * Facing, Pos.Y + anchorY + hy), Facing, HairCount);
+            // il_PlayerHair_AfterUpdate's hairGrowsOptimize (BetterHairMotionOnGrows, on by default):
+            // grown hair spreads out from its end rather than bunching on it.
+            if (Skin != null)
+            {
+                int count = Math.Min(HairCount, Hair.Nodes.Count);
+                for (int i = Math.Max(Skin.Hair.LastHairCount, 2); i < count; i++)
+                    Hair.Nodes[i] = new PointF(Hair.Nodes[i - 1].X - Facing * 0.5f, Hair.Nodes[i - 1].Y);
+                Skin.Hair.LastHairCount = HairCount;
+            }
         }
 
         void LaunchUpdate(float dt, PetInput input)
@@ -2139,6 +2185,7 @@ namespace DeskMadeline
             PlaySound(wasDucking
                 ? "event:/char/madeline/jump_superslide"
                 : "event:/char/madeline/jump_super");
+            Skin?.AfterSuperJump(this, wasDucking);
         }
 
         void WallJump(int dir, PetInput input)
@@ -2206,6 +2253,7 @@ namespace DeskMadeline
                 ? "event:/char/madeline/jump_wall_right"
                 : "event:/char/madeline/jump_wall_left");
             PlaySound("event:/char/madeline/jump_superwall");
+            Skin?.AfterSuperWallJump(this);
         }
 
         void ClimbJump(PetInput input)
@@ -2935,6 +2983,7 @@ namespace DeskMadeline
             SweatAnimId = "idle";
             sweatJumpTimer = 0f;
             calledDashEvents = false;   // DashBegin
+            StartedDashing = true;
             DashSequenceCount++;
             dashStartedOnGround = onGround;
             dashCooldownTimer = DashCooldown;
@@ -3023,6 +3072,7 @@ namespace DeskMadeline
 
         void DashUpdate(float dt, PetInput input)
         {
+            StartedDashing = false;
             // Super Dashing steers the dash toward the aim at 240 deg/s, until the two are
             // within about eight degrees of each other, and gives up once she has hit
             // something. On the frame before the aim lands Speed is still zero, so this
@@ -3257,8 +3307,16 @@ namespace DeskMadeline
         /// </summary>
         void UpdateHairColor(float dt)
         {
-            bool asBadeline = SpriteMode == ModeMadelineAsBadeline;
-            if (Dashes == 0 && Dashes < DashCapacity)
+            // PlayerUpdateHairHook opens by clearing the flash it is about to look for.
+            SmhHair smh = Skin?.Hair;
+            if (smh != null) smh.HairFlashing = false;
+            bool asBadeline = (Skin?.PatchModeBadeline(SpriteMode) ?? SpriteMode) == ModeMadelineAsBadeline;
+            // ilPlayerUpdateHairHook's ZaroDashesFlash: a skin with a flash colour for no dashes
+            // treats reaching none like any other change of count.
+            bool dashesNonZero = Dashes != 0;
+            if (!dashesNonZero && smh != null && smh.HasZeroDashFlash && (lastDashes != 0 || hairFlashTimer > 0f))
+                dashesNonZero = true;
+            if (!dashesNonZero && Dashes < DashCapacity)
             {
                 Color used = Resolve(0, UsedHairColor);
                 float amount = Math.Max(0f, Math.Min(1f, 6f * dt));
@@ -3274,6 +3332,7 @@ namespace DeskMadeline
                 if (lastDashes != Dashes)
                 {
                     color = FlashHairColor;
+                    if (smh != null) smh.HairFlashing = smh.File.HairFlash;
                     hairFlashTimer = 0.12f;
                 }
                 else if (!(hairFlashTimer > 0f))
@@ -3285,12 +3344,28 @@ namespace DeskMadeline
                 else
                 {
                     color = FlashHairColor;
+                    if (smh != null) smh.HairFlashing = smh.File.HairFlash;
                     hairFlashTimer -= dt;
                 }
                 HairColor = color;
             }
             lastDashes = Dashes;
+            if (smh != null)
+            {
+                // The rest of PlayerUpdateHairHook: the skin's own colour, flash or general.
+                int dashCount = SkinDashCount;
+                smh.LastDashes = dashCount;
+                if (smh.GetHairColorWithSpecified((int)(smh.HairFlashing ? SmhHair.Special.Flash : SmhHair.Special.General),
+                    dashCount, out Color skinColor))
+                    HairColor = skinColor;
+            }
         }
+
+        /// <summary>PlayerHairRenderHook_ColorGrade's dash count for the player.</summary>
+        internal int ColorGradeDashCount => DashCapacity <= 0 && lastDashes < 2 ? 1 : Math.Max(lastDashes, 0);
+
+        /// <summary>PlayerSkinSystem.GetDashCount, for the player: no feather state here.</summary>
+        internal int SkinDashCount => lastDashes == 0 && DashCapacity <= 0 ? 1 : Math.Max(lastDashes, 0);
 
         static Color Resolve(int dashes, Color vanilla)
             => PetWindow.Instance?.ResolveHairColor(dashes, vanilla) ?? vanilla;
@@ -3307,12 +3382,21 @@ namespace DeskMadeline
         public string SpriteName { get; private set; } = "";
         /// <summary>PlayerSprite.Mode; a skin's hash value when SkinModHelper dresses her.</summary>
         public int SpriteMode { get; private set; }
-        /// <summary>SkinModHelper's patches to the player, when a skin is worn; null in vanilla.</summary>
-        public IPlayerSkin Skin { get; private set; }
+        /// <summary>SkinModHelper's patches to the player, when a skin of its is worn; null in vanilla.</summary>
+        public SmhSkin Skin { get; private set; }
 
         public string AnimId => Sprite.CurrentAnimationID;
         /// <summary>The frame showing, as its atlas path.</summary>
         public string CurrentFrameId => Sprite.Texture;
+
+        // What SkinModHelper's hooks read off the player.
+        internal bool SwimCheckForSkin => SwimCheck();
+        internal bool DashStartedOnGround => dashStartedOnGround;
+        internal float WallSpeedRetentionTimer => wallSpeedRetentionTimer;
+        internal float WallSpeedRetained => wallSpeedRetained;
+        internal int MoveXForSkin => moveX;
+        internal bool OnGroundForSkin => CheckGround();
+        internal bool WasOnGround => wasOnGround;
 
         /// <summary>The shell has her lie down for a nap; see UpdateSprite.</summary>
         public bool Napping;
@@ -3325,7 +3409,7 @@ namespace DeskMadeline
         /// PlayerSprite's constructor, or ResetSprite: the bank entry onto the sprite, keeping the
         /// callbacks the Player gave it.
         /// </summary>
-        public void ResetSprite(SpriteBank bank, string spriteName, int mode, IPlayerSkin skin)
+        public void ResetSprite(SpriteBank bank, string spriteName, int mode, SmhSkin skin)
         {
             Skin = skin;
             SpriteMode = mode;
@@ -3593,27 +3677,25 @@ namespace DeskMadeline
     }
 
     /// <summary>
-    /// Hair simulation (ported from PlayerHair.AfterUpdate).
-    /// Hand-tune hair: edit the constants below and rebuild (dotnet build):
-    ///   Count          hair segment count (more = longer)
-    ///   HangDown       per-segment downward offset (px)
-    ///   BackLean       per-segment behind offset (px; walk trail strength)
-    ///   ApproachSpeed  hair follow speed (px/s): lower = floatier trail; higher = sticks to head
-    ///   MaxSegment     max spacing between adjacent segments (px): higher = longer hair
-    ///   WaveSpeed      idle sway speed
-    /// Hair root anchor height is anchorY in Player.Update (currently -9 x squash scale);
-    /// Per-frame anchor tweaks (hx/hy/bangs facing) live in HairMeta.cs.
+    /// PlayerHair's simulation: AfterUpdate's chain of nodes, each pulled towards a target that
+    /// trails the one before, and Update's wave.
     /// </summary>
     public class PlayerHairSim
     {
-        public const int MaxCount = 5;
-        public int ActiveCount { get; private set; } = 4;
         const float MaxSegment = 3f;
-        const float WaveSpeed = 4f;
-        public readonly PointF[] Nodes = new PointF[MaxCount];
-        float wave, time;
+        /// <summary>PlayerHair.Nodes: never shorter than the longest the hair has been.</summary>
+        public readonly List<PointF> Nodes = new List<PointF>();
+        float wave;
         public float Wave => wave;
+        /// <summary>Sprite.HairCount, as of the last AfterUpdate.</summary>
+        public int ActiveCount { get; private set; } = 4;
         bool started;
+
+        // Player's hair parameters: StepPerSegment and the rest, set each update.
+        public PointF StepPerSegment = new PointF(0f, 2f);
+        public float StepInFacingPerSegment = 0.5f;
+        public float StepApproach = 64f;
+        public float StepYSinePerSegment;
 
         static PointF Approach(PointF val, PointF target, float maxMove)
         {
@@ -3623,45 +3705,42 @@ namespace DeskMadeline
             return new PointF(val.X + dx / dist * maxMove, val.Y + dy / dist * maxMove);
         }
 
-        public void AfterUpdate(float dt, PointF anchor, int facing, bool twoDashes)
+        /// <summary>PlayerHair.Update's wave.</summary>
+        public void Update(float dt) => wave += dt * 4f;
+
+        /// <summary>PlayerHair.AfterUpdate, with the root given.</summary>
+        public void AfterUpdate(float dt, PointF root, int facing, int hairCount, bool simulateMotion = true)
         {
-            wave += dt * WaveSpeed;
-            time += dt;
-            int count = twoDashes ? 5 : 4;
             if (!started)
             {
-                for (int i = 0; i < MaxCount; i++) Nodes[i] = new PointF(anchor.X - facing * 3, anchor.Y + 2);
+                // Desktop: there is no PlayerHair.Start throwing the hair in from off screen;
+                // it begins hanging where it would hang.
+                Nodes.Clear();
+                for (int i = 0; i < hairCount; i++) Nodes.Add(new PointF(root.X - facing * 3, root.Y + 2));
                 started = true;
             }
-            else if (count > ActiveCount)
-            {
-                for (int i = ActiveCount; i < count; i++) Nodes[i] = Nodes[i - 1];
-            }
-            ActiveCount = count;
-
-            // Player.UpdateHair: with two dashes hair becomes 5 nodes and uses separate strong-wind sine params.
-            float stepX = twoDashes ? (float)Math.Sin(time * 2f) * 0.7f - facing * 3f : 0f;
-            float stepY = twoDashes ? (float)Math.Sin(time) : 2f;
-            float backLean = twoDashes ? 0f : 0.5f;
-            float approachSpeed = twoDashes ? 90f : 64f;
-            float stepYSine = twoDashes ? 1f : 0f;
-
-            Nodes[0] = anchor;
+            while (Nodes.Count < 1) Nodes.Add(root);
+            ActiveCount = hairCount;
+            Nodes[0] = root;
             var target = new PointF(
-                Nodes[0].X - facing * backLean * 2f + stepX,
-                Nodes[0].Y + (float)Math.Sin(wave) * stepYSine + stepY);
-            var prev = Nodes[0];
-            for (int i = 1; i < count; i++)
+                Nodes[0].X - facing * StepInFacingPerSegment * 2f + StepPerSegment.X,
+                Nodes[0].Y + (float)Math.Sin(wave) * StepYSinePerSegment + StepPerSegment.Y);
+            PointF prev = Nodes[0];
+            for (int i = 1; i < hairCount; i++)
             {
-                float approach = (1f - (float)i / count * 0.5f) * approachSpeed;
-                Nodes[i] = Approach(Nodes[i], target, approach * dt);
+                if (i >= Nodes.Count) Nodes.Add(Nodes[i - 1]);
+                if (simulateMotion)
+                {
+                    float approach = (1f - (float)i / hairCount * 0.5f) * StepApproach;
+                    Nodes[i] = Approach(Nodes[i], target, approach * dt);
+                }
                 float dx = Nodes[i].X - prev.X, dy = Nodes[i].Y - prev.Y;
                 float dist = (float)Math.Sqrt(dx * dx + dy * dy);
                 if (dist > MaxSegment)
                     Nodes[i] = new PointF(prev.X + dx / dist * MaxSegment, prev.Y + dy / dist * MaxSegment);
                 target = new PointF(
-                    Nodes[i].X - facing * backLean + stepX,
-                    Nodes[i].Y + (float)Math.Sin(wave + i * 0.8f) * stepYSine + stepY);
+                    Nodes[i].X - facing * StepInFacingPerSegment + StepPerSegment.X,
+                    Nodes[i].Y + (float)Math.Sin(wave + i * 0.8f) * StepYSinePerSegment + StepPerSegment.Y);
                 prev = Nodes[i];
             }
         }
@@ -3669,12 +3748,13 @@ namespace DeskMadeline
         public void Reset(PointF anchor, int facing)
         {
             started = false;
-            AfterUpdate(0, anchor, facing, false);
+            AfterUpdate(0, anchor, facing, ActiveCount);
         }
 
+        /// <summary>PlayerHair.MoveHairBy.</summary>
         public void MoveBy(float x, float y)
         {
-            for (int i = 0; i < ActiveCount; i++)
+            for (int i = 0; i < Nodes.Count; i++)
                 Nodes[i] = new PointF(Nodes[i].X + x, Nodes[i].Y + y);
         }
     }

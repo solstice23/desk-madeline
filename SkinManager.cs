@@ -13,7 +13,7 @@ namespace DeskMadeline
     /// rules mirror SMH: Character_ID selects an element in Graphics/Sprites.xml,
     /// while legacy SkinId values map underscores to slashes.
     /// </summary>
-    internal sealed class SkinDefinition
+    public sealed class SkinDefinition
     {
         public string Id;
         public string DisplayName;
@@ -21,12 +21,26 @@ namespace DeskMadeline
         /// <summary>Folder in Celeste's Gameplay atlas, for skins the app has built in.</summary>
         public string PlayerAtlasFolder;
         public string SpriteXml;
+        public SkinKind Kind;
+        /// <summary>The package's Graphics/Atlases/Gameplay, laid over the game's atlas while worn.</summary>
+        public string GameplayDirectory;
+        /// <summary>SkinModHelper: the Sprites.xml entry she wears, and the skin's name and mode.</summary>
+        public string CharacterId;
+        public string SkinName;
+        public int Mode;
+        /// <summary>SkinModHelperConfig's OtherSprite_Path: a Sprites.xml of reskins for other sprites.</summary>
+        public string OtherSpritePath;
+        /// <summary>The old config: SkinId with its underscores as slashes, and the config itself.</summary>
+        public string OldExPath;
+        public SmhOldConfig OldConfig;
         public readonly Dictionary<int, Color> HairColors = new Dictionary<int, Color>();
         public readonly Dictionary<string, int[]> CarryOffsets =
             new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase);
     }
 
-    internal sealed class SkinManager
+    public enum SkinKind { Builtin, SkinModHelper, SkinModHelperOld, Replacement }
+
+    public sealed class SkinManager
     {
         public const string DefaultId = "default";
         public const string BadelineId = "builtin:badeline";
@@ -99,11 +113,12 @@ namespace DeskMadeline
                 try
                 {
                     string config = Path.Combine(modDirectory, "SkinModHelperConfig.yaml");
-                    SkinDefinition skin = File.Exists(config)
+                    IEnumerable<SkinDefinition> found = File.Exists(config)
                         ? Parse(modDirectory, config, packageKey)
-                        : ParseDirectReplacement(modDirectory, packageKey);
-                    if (skin != null && Directory.Exists(skin.PlayerDirectory) && seen.Add(skin.Id))
-                        Skins.Add(skin);
+                        : new[] { ParseDirectReplacement(modDirectory, packageKey) };
+                    foreach (SkinDefinition skin in found)
+                        if (skin != null && Directory.Exists(skin.PlayerDirectory) && seen.Add(skin.Id))
+                            Skins.Add(skin);
                 }
                 catch (Exception ex)
                 {
@@ -206,56 +221,77 @@ namespace DeskMadeline
             return Active != null && Active.CarryOffsets.TryGetValue(animation, out offsets);
         }
 
-        SkinDefinition Parse(string modDirectory, string configPath, string packageKey)
+        /// <summary>
+        /// SkinsSystem's registration: an old config is one skin; a new one is a list, and every
+        /// entry with Player_List set is a skin of its own, worn as its Character_ID. A lantern
+        /// skin is never listed -- SkinModHelper keeps it for Jungle Helper -- and neither is an
+        /// entry whose Character_ID the package's Sprites.xml does not have.
+        /// </summary>
+        IEnumerable<SkinDefinition> Parse(string modDirectory, string configPath, string packageKey)
         {
-            string[] lines = File.ReadAllLines(configPath);
-            string legacyId = Value(lines.FirstOrDefault(l => Key(l) == "SkinId"));
-            if (!string.IsNullOrEmpty(legacyId))
-                return ParseLegacy(modDirectory, legacyId, lines, packageKey);
-
-            var blocks = ParseBlocks(lines);
-            Dictionary<string, string> selected = blocks.FirstOrDefault(b =>
-                b.TryGetValue("Player_List", out string value) && value.Equals("true", StringComparison.OrdinalIgnoreCase));
-            if (selected == null || !selected.TryGetValue("Character_ID", out string characterId) || string.IsNullOrWhiteSpace(characterId))
-                return null;
-
-            string xml = Path.Combine(modDirectory, "Graphics", "Sprites.xml");
-            XElement sprite = FindSprite(xml, characterId);
-            if (sprite == null) return null;
-            string atlasPath = NormalizePath((string)sprite.Attribute("path"));
-            if (string.IsNullOrEmpty(atlasPath)) return null;
-
-            string skinName = selected.TryGetValue("SkinName", out string configuredName) ? configuredName : characterId;
-            var result = new SkinDefinition
+            string text = File.ReadAllText(configPath);
+            string gameplay = Path.Combine(modDirectory, "Graphics", "Atlases", "Gameplay");
+            if (File.ReadAllLines(configPath).Any(l => Key(l) == "SkinId"))
             {
-                Id = packageKey + ":" + skinName,
-                DisplayName = FriendlyName(skinName),
-                PlayerDirectory = CombineAtlasPath(modDirectory, atlasPath),
-                SpriteXml = xml
-            };
-            LoadHairColors(Path.Combine(result.PlayerDirectory, "skinConfig", "HairConfig.yaml"), result);
-            LoadCarryOffsets(sprite, result);
-            return result;
+                SmhOldConfig old = Smh.Deserialize<SmhOldConfig>(text);
+                if (old == null || string.IsNullOrEmpty(old.SkinId)) yield break;
+                SkinDefinition legacy = ParseLegacy(modDirectory, old, packageKey);
+                if (legacy != null) yield return legacy;
+                yield break;
+            }
+
+            List<SmhSkinConfig> configs = Smh.Deserialize<List<SmhSkinConfig>>(text);
+            if (configs == null) yield break;
+            string xml = Path.Combine(modDirectory, "Graphics", "Sprites.xml");
+            foreach (SmhSkinConfig config in configs)
+            {
+                if (string.IsNullOrEmpty(config.SkinName) || config.SkinName.EndsWith("_")) continue;
+                if (string.IsNullOrEmpty(config.Character_ID) || !config.Player_List) continue;
+                if (config.SkinName.EndsWith("_lantern", StringComparison.CurrentCultureIgnoreCase) ||
+                    config.SkinName.EndsWith("_lantern_NB", StringComparison.CurrentCultureIgnoreCase)) continue;
+                XElement sprite = FindSprite(xml, config.Character_ID);
+                if (sprite == null) continue;
+                string atlasPath = NormalizePath((string)sprite.Attribute("path"));
+                if (string.IsNullOrEmpty(atlasPath)) continue;
+                yield return new SkinDefinition
+                {
+                    Id = packageKey + ":" + config.SkinName,
+                    DisplayName = FriendlyName(config.SkinName),
+                    PlayerDirectory = CombineAtlasPath(modDirectory, atlasPath),
+                    SpriteXml = xml,
+                    Kind = SkinKind.SkinModHelper,
+                    GameplayDirectory = gameplay,
+                    CharacterId = config.Character_ID,
+                    SkinName = config.SkinName,
+                    Mode = SmhSkinConfig.Hash(string.IsNullOrEmpty(config.hashSeed) ? config.SkinName : config.hashSeed) + 1,
+                    OtherSpritePath = config.OtherSprite_Path,
+                };
+            }
         }
 
-        SkinDefinition ParseLegacy(string modDirectory, string skinId, string[] lines, string packageKey)
+        /// <summary>
+        /// The old config: SkinId names a folder, underscores for slashes, whose Sprites.xml
+        /// reskins the game's sprites -- player among them -- as RespriteBank combines it.
+        /// </summary>
+        SkinDefinition ParseLegacy(string modDirectory, SmhOldConfig old, string packageKey)
         {
-            string graphicsPath = skinId.Replace('_', Path.DirectorySeparatorChar);
-            string xml = Path.Combine(modDirectory, "Graphics", graphicsPath, "Sprites.xml");
+            string exPath = old.SkinId.Replace('_', '/');
+            string xml = Path.Combine(modDirectory, "Graphics", exPath.Replace('/', Path.DirectorySeparatorChar), "Sprites.xml");
             XElement sprite = FindSprite(xml, "player");
             if (sprite == null) return null;
             string atlasPath = NormalizePath((string)sprite.Attribute("path"));
-            var result = new SkinDefinition
+            return new SkinDefinition
             {
-                Id = packageKey + ":" + skinId,
-                DisplayName = FriendlyName(skinId.Split('_').Last()),
+                Id = packageKey + ":" + old.SkinId,
+                DisplayName = FriendlyName(old.SkinId.Split('_').Last()),
                 PlayerDirectory = CombineAtlasPath(modDirectory, atlasPath),
-                SpriteXml = xml
+                SpriteXml = xml,
+                Kind = SkinKind.SkinModHelperOld,
+                GameplayDirectory = Path.Combine(modDirectory, "Graphics", "Atlases", "Gameplay"),
+                SkinName = old.SkinId,
+                OldExPath = exPath,
+                OldConfig = old,
             };
-
-            LoadHairColors(lines, result);
-            LoadCarryOffsets(sprite, result);
-            return result;
         }
 
         static void LoadCarryOffsets(XElement sprite, SkinDefinition skin)
@@ -292,7 +328,9 @@ namespace DeskMadeline
             {
                 Id = packageKey + ":direct",
                 DisplayName = FriendlyName(displayName),
-                PlayerDirectory = playerDirectory
+                PlayerDirectory = playerDirectory,
+                Kind = SkinKind.Replacement,
+                GameplayDirectory = Path.Combine(modDirectory, "Graphics", "Atlases", "Gameplay"),
             };
             LoadHairColors(Path.Combine(playerDirectory, "skinConfig", "HairConfig.yaml"), result);
             // Mikuline predates per-skin HairConfig and relies on a separately configured

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using DeskMadeline;
 
 /// <summary>
@@ -192,8 +193,7 @@ static class AtlasChecks
 
         // End to end: with no assets folder to read, the loader must fall back to the atlas
         // and produce the very ids the animations ask for.
-        Sprites.LoadAll(Path.Combine(Path.GetTempPath(), "deskmadeline-no-assets"),
-            null, "characters/player_badeline");
+        Sprites.LoadAll(Path.Combine(Path.GetTempPath(), "deskmadeline-no-assets"));
         Check($"the atlases supply the sprites ({Sprites.LoadedFromCeleste} of them)", Sprites.LoadedFromCeleste > 500);
         foreach (string id in new[]
         {
@@ -203,27 +203,35 @@ static class AtlasChecks
             "smoke0", "zappysmoke00", "slash00", "glove", Sprites.PortraitId,
         })
             Check($"id \"{id}\" resolves", Sprites.Get(id, false) != null);
-        // A skin's frames carry the same ids as Madeline's, and every one of them has to be
-        // the skin's: which one survived used to depend on which atlas page was read last,
-        // and Badeline's idle cycle came out half in Madeline's body.
-        int skinFrames = 0, skinWrong = 0;
-        string firstWrong = null;
-        foreach (var pair in entries)
+        // Badeline is the game's player_badeline, which copies player with her own path: every
+        // animation takes her frames when her folder has them all, and Madeline's otherwise. Read
+        // by path, a frame of hers can only ever be hers -- which ids sharing names once broke,
+        // when whichever entry came later in the atlas index won, and her idle came out half in
+        // Madeline's body.
+        string spritesXml = CelesteInstall.GraphicsFile("Sprites.xml");
+        if (spritesXml != null)
         {
-            const string skinFolder = "characters/player_badeline/";
-            if (!pair.Key.StartsWith(skinFolder, StringComparison.OrdinalIgnoreCase)) continue;
-            string id = pair.Key.Substring(skinFolder.Length);
-            if (id.Contains('/')) continue;
-            string png = Path.Combine(dump, pair.Key.Replace('/', Path.DirectorySeparatorChar) + ".png");
-            Bitmap loaded = Sprites.Get(id, false);
-            if (loaded == null || !File.Exists(png)) continue;
-            skinFrames++;
-            using Bitmap expected = LoadPng(png);
-            if (!Compare(loaded, expected).Same) { skinWrong++; firstWrong ??= id; }
+            var bank = SpriteBank.Load(Sprites.Atlas, System.Xml.Linq.XDocument.Load(spritesXml),
+                Array.Empty<System.Xml.Linq.XDocument>());
+            int frames = 0, wrong = 0;
+            string firstWrong = null;
+            foreach (var anim in bank.SpriteData["player_badeline"].Sprite.Animations)
+                foreach (string frame in anim.Value.Frames)
+                {
+                    if (!frame.StartsWith("characters/player_badeline/", StringComparison.OrdinalIgnoreCase)) continue;
+                    frames++;
+                    string png = Path.Combine(dump, frame.Replace('/', Path.DirectorySeparatorChar) + ".png");
+                    if (!File.Exists(png)) continue;
+                    using Bitmap expected = LoadPng(png);
+                    if (!Compare(Sprites.Get(frame, false), expected).Same) { wrong++; firstWrong ??= frame; }
+                }
+            Check($"every frame of Badeline's she plays is hers ({frames} frames" +
+                  (wrong > 0 ? $", {wrong} wrong, first {firstWrong})" : ")"),
+                frames > 400 && wrong == 0);
+            Check("her idle is all hers",
+                bank.SpriteData["player_badeline"].Sprite.Animations["idle"].Frames
+                    .All(f => f.StartsWith("characters/player_badeline/", StringComparison.OrdinalIgnoreCase)));
         }
-        Check($"every Badeline frame is Badeline's ({skinFrames} frames" +
-              (skinWrong > 0 ? $", {skinWrong} Madeline's, first {firstWrong})" : ")"),
-            skinFrames > 400 && skinWrong == 0);
         // util/glove, at the untrimmed 16x16 GrabbyIcon justifies it against.
         Bitmap glove = Sprites.Get("glove", false);
         Check("the glove is its whole 16x16 frame", glove != null && glove.Width == 16 && glove.Height == 16);
@@ -233,11 +241,10 @@ static class AtlasChecks
         // pixel of the game's hair red, and no others.
         Console.WriteLine();
         Console.WriteLine("  Painted hair, lifted out of the frames that wear no hair");
-        // Badeline is still the loaded skin here, and hers is painted in her own colours:
-        // nothing of the game's red to lift, so nothing is tinted and her art is left alone.
+        // Badeline's sleeping frame is painted in her own colours: nothing of the game's red
+        // to lift, so nothing is tinted and her art is left alone.
         Check("a skin that painted its own is untouched (badeline asleep)",
-            Sprites.BakedHairMask("sleep00", false) == null);
-        Sprites.LoadAll(Path.Combine(Path.GetTempPath(), "deskmadeline-no-assets"), null, null);
+            Sprites.BakedHairMask("characters/player_badeline/sleep00", false) == null);
         foreach (string id in new[] { "sleep00", "wakeUp00" })
         {
             Bitmap frame = Sprites.Get(id, false), mask = Sprites.BakedHairMask(id, false);

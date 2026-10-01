@@ -37,6 +37,7 @@ adding an assertion, and what these need is a fixed timestep and vanilla's const
 | `HairChecks.cs` | PlayerSprite.FrameMetadata read from the game's `Sprites.xml` by texture path: offsets, bangs frames, hairless sheets, copied entries under their own path, the carry curves, and CommunalHelper's elytra metadata and animation |
 | `SpriteBankChecks.cs` | Monocle's sprite bank: `Calc.ReadCSVIntWithTricks`, atlas numbering, `Sprite.Update`/`Play` and their callbacks in order, and the game's `Sprites.xml` read into it |
 | `AnimationChecks.cs` | `Player.UpdateSprite` and the constructor's sprite callbacks over the game's bank: idle fidgets and their sounds, the hair flash of `UpdateHair`, and the landing stumble the game asks for and takes back |
+| `SkinModHelperChecks.cs` | SkinModHelper Plus: a skin's sprite built from its own `Sprites.xml` (Tendo Alice's idle all hers), its `HairConfig` colours and lengths, the `Play` hook lending a whole vanilla animation, colour grades by dash count, and the shader's lookup arithmetic |
 | `UpdateChecks.cs` | Whether the build server's newest build is one this copy does not have, including a build made from work that was never pushed |
 | `SettingsChecks.cs` | Settings defaults on a fresh install, and an existing `settings.txt` still winning |
 | `SnapChecks.cs` | Snapping back onto the displays after a drag, including seams between mismatched monitors and each wrap axis |
