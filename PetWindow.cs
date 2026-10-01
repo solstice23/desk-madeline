@@ -863,11 +863,14 @@ namespace DeskMadeline
             if (pendingSkinId != null)
             {
                 string id = pendingSkinId;
-                pendingSkinId = null;
                 var skin = skinManager.Find(id);
                 Sprites.LoadAll(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "player"),
                     skin?.GameplayDirectory);
                 skinManager.Activate(skin);
+                // Only now: the flyout's picker shows the pending id until the skin is active, and
+                // clearing it before the load let a repaint meanwhile show the old skin's name.
+                // A pick made during the load stays pending for the next tick.
+                Interlocked.CompareExchange(ref pendingSkinId, null, id);
                 ApplySpriteBank();
                 settings.Skin = skin?.Id ?? SkinManager.DefaultId;
                 settings.Save();
