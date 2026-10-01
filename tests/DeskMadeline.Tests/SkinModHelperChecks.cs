@@ -158,6 +158,18 @@ static class SkinModHelperChecks
         }
         Check($"a minute standing shows only her frames ({seen.Count} of them)",
             seen.Count > 0 && seen.All(f => f.StartsWith("characters/TendouAlice/China/")));
+        // GetTrailColor's hook: no Trail colour of hers, so the general colour for the dashes
+        // the dash began with -- one dash spent of one, so none left: her zero-dash colour.
+        p.Dashes = 1;
+        p.BufferDash(false);
+        input.AimX = 1; input.MoveX = 1;
+        for (int i = 0; i < 3; i++) { input.DashPressed = p.HasDashBuffer; p.Sprite.Update(Dt); p.Update(Dt, input); }
+        Color trail = p.TrailColor(true);
+        Check($"her dash trail is her colour for the dashes it began with ({trail.R:X2}{trail.G:X2}{trail.B:X2})",
+            p.StartedDashingCount == 0 && trail.ToArgb() == Color.FromArgb(0x0F, 0xEE, 0x70).ToArgb());
+        Check("her death_particle stands in for the hair blob in her death and respawn",
+            smh.TextureOnSprite("death_particle", out string particle) && particle == "characters/TendouAlice/China/death_particle");
+
         bool lacked = !p.Sprite.Has("launch");
         p.PlaySprite("launch");
         Check("an animation she lacks is lent whole from the game's player",

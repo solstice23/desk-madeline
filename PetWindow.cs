@@ -676,6 +676,100 @@ namespace DeskMadeline
             }
             player.ResetSprite(spriteBank, spriteName, mode, smh);
             if (spriteBank != null && spriteBank.Has(sweat)) spriteBank.CreateOn(sweatSprite, sweat);
+            ApplyParticleModify();
+        }
+
+        // CharacterConfig.ParticleModify: the particle types she emits, as her skin modifies them.
+        readonly Dictionary<PType, PType> skinnedParticles = new Dictionary<PType, PType>();
+        readonly Dictionary<(PType, int, int), PType> recoloredParticles = new Dictionary<(PType, int, int), PType>();
+
+        /// <summary>ParticleReplace: the skin's version of a type, for a particle she emits.</summary>
+        PType SkinnedParticle(PType type) => skinnedParticles.TryGetValue(type, out PType skinned) ? skinned : type;
+
+        /// <summary>A copy of a type in other colours: _pDashParticle's new(orig) with Color and Color2.</summary>
+        PType WithColors(PType type, Color color, Color color2)
+        {
+            var key = (type, color.ToArgb(), color2.ToArgb());
+            if (recoloredParticles.TryGetValue(key, out PType done)) return done;
+            PType copy = Clone(type);
+            copy.Color = color;
+            copy.Color2 = color2;
+            return recoloredParticles[key] = copy;
+        }
+
+        static PType Clone(PType t) => new PType
+        {
+            Tex = t.Tex, Color = t.Color, Color2 = t.Color2, BlinkColor = t.BlinkColor, ChooseColor = t.ChooseColor,
+            GravY = t.GravY, Friction = t.Friction, LifeMin = t.LifeMin, LifeMax = t.LifeMax, Size = t.Size,
+            SizeRange = t.SizeRange, SpeedMin = t.SpeedMin, SpeedMax = t.SpeedMax, SpeedMultiplier = t.SpeedMultiplier,
+            ScaleOut = t.ScaleOut, FadeOut = t.FadeOut, LateFade = t.LateFade,
+        };
+
+        /// <summary>
+        /// ParticleModifierInit and NewParticleInit, for the static types the pet emits for her:
+        /// Player.P_DashA, P_DashB and P_DashBadB, and ParticleTypes.Dust. A field the pet's
+        /// particle has no counterpart for -- spin, rotation, an acceleration across, a fade or a
+        /// colour mode beyond the ones it draws -- has nothing to land on and is left alone.
+        /// </summary>
+        void ApplyParticleModify()
+        {
+            skinnedParticles.Clear();
+            recoloredParticles.Clear();
+            SmhSkin skin = player.Skin;
+            if (skin?.Character.ParticleModify == null) return;
+            foreach (SmhParticleModifier m in skin.Character.ParticleModify)
+            {
+                if (m.TargetFullName == null || !m.IsStatic) continue;
+                PType target = m.TargetFullName switch
+                {
+                    "Celeste.Player::P_DashA" => dashBlue,
+                    "Celeste.Player::P_DashB" => dashRed,
+                    "Celeste.Player::P_DashBadB" => dashBadeline,
+                    "Celeste.ParticleTypes::Dust" => dust,
+                    _ => null,
+                };
+                if (target == null) continue;
+                PType p = Clone(target);
+                if (m.Source != null && skin.TextureOnSprite(m.Source, out string source)) p.Tex = new[] { source };
+                else if (m.SourceChooser != null && m.SourceChooser.Count > 0 && m.SourceChooser[0] != "null")
+                {
+                    var chosen = new List<string>();
+                    foreach (string s in m.SourceChooser)
+                        if (skin.TextureOnSprite(s, out string tex)) chosen.Add(tex);
+                    if (chosen.Count > 0) p.Tex = chosen.ToArray();
+                }
+                if (Smh.RGBA_IsMatch(m.Color)) p.Color = Smh.HexToColorWithAlpha(m.Color);
+                if (Smh.RGBA_IsMatch(m.Color2)) p.Color2 = Smh.HexToColorWithAlpha(m.Color2);
+                // ParticleType.ColorModes: Static, Choose, Blink, Fade.
+                int colorMode = m.ColorMode == null ? -1 : ModeIndex(m.ColorMode, "Static", "Choose", "Blink", "Fade");
+                if (colorMode >= 0) { p.ChooseColor = colorMode == 1; p.BlinkColor = colorMode == 2; }
+                // ParticleType.FadeModes: None, Linear, Late, InAndOut.
+                int fadeMode = m.FadeMode == null ? -1 : ModeIndex(m.FadeMode, "None", "Linear", "Late", "InAndOut");
+                if (fadeMode >= 0) { p.FadeOut = fadeMode != 0; p.LateFade = fadeMode == 2; }
+                if (m.SpeedMin != null) p.SpeedMin = m.SpeedMin.Value;
+                if (m.SpeedMax != null) p.SpeedMax = m.SpeedMax.Value;
+                if (m.SpeedMultiplier != null) p.SpeedMultiplier = m.SpeedMultiplier.Value;
+                if (m.Acceleration != null)
+                {
+                    string[] a = m.Acceleration.Split(new[] { ',' }, 2);
+                    if (a.Length == 2 && float.TryParse(a[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float ay))
+                        p.GravY = ay;
+                }
+                if (m.Friction != null) p.Friction = m.Friction.Value;
+                if (m.LifeMin != null) p.LifeMin = m.LifeMin.Value;
+                if (m.LifeMax != null) p.LifeMax = m.LifeMax.Value;
+                if (m.Size != null) p.Size = m.Size.Value;
+                if (m.SizeRange != null) p.SizeRange = m.SizeRange.Value;
+                if (m.ScaleOut != null) p.ScaleOut = m.ScaleOut.Value;
+                skinnedParticles[target] = p;
+            }
+        }
+
+        static int ModeIndex(string value, params string[] names)
+        {
+            for (int i = 0; i < names.Length; i++)
+                if (names[i].Equals(value, StringComparison.OrdinalIgnoreCase)) return i;
+            return int.TryParse(value, out int n) ? n : -1;
         }
 
         /// <summary>
@@ -1486,12 +1580,29 @@ namespace DeskMadeline
                 Hair = HairMeta.HasHair(frameId) ? BuildHairPlan() : null,
                 CatTailNodes = tailNodes,
                 HairColor = player.HairColor,
-                // Player.GetTrailColor(wasDashB), resolved through the active skin's
-                // corresponding one-dash / no-dash palette.
-                Tint = player.LastDashWasTwo
-                    ? ResolveHairColor(1, Player.NormalHairColor)
-                    : ResolveHairColor(0, Player.UsedHairColor)
+                // Player.GetTrailColor(wasDashB), through the skin's hook on it.
+                Tint = player.TrailColor(player.LastDashWasTwo)
             };
+            // TrailRecolor's hook on TrailManager.Add: a skin's trail scale, for a dash's trail the
+            // dashes it began with, applies to the snapshot and lifts its hair to match.
+            SmhHair smhHair = player.Skin?.Hair;
+            if (smhHair?.LastDashes is int trailDashes &&
+                (smhHair.GetHairScaleWithSpecified((int)SmhHair.Special.Trail, player.StartedDashingCount, out PointF trailScale) ||
+                 smhHair.GetHairScaleWithSpecified((int)SmhHair.Special.Trail, trailDashes, out trailScale)))
+            {
+                float lift = (float)Math.Round((trailScale.Y - trail.ScaleY) * -9f);
+                trail.ScaleX *= trailScale.X;
+                trail.ScaleY *= trailScale.Y;
+                if (trail.Hair != null)
+                    for (int i = 0; i < trail.Hair.Pieces.Length; i++)
+                    {
+                        trail.Hair.Pieces[i].Node.Y += lift;
+                        if (i > 0)
+                            trail.Hair.Pieces[i].Scale = new PointF(
+                                (float)Math.Round(trail.Hair.Pieces[i].Scale.X * trailScale.X, 2),
+                                (float)Math.Round(trail.Hair.Pieces[i].Scale.Y * trailScale.X, 2));
+                    }
+            }
             trail.Mask = BakeDashTrailMask(trail);
             dashTrails.Add(trail);
         }
@@ -1713,8 +1824,11 @@ namespace DeskMadeline
                     dashParticleTimer -= 0.02f;
                     float px = player.Pos.X + (float)(effectRng.NextDouble() * 4.0 - 2.0);
                     float py = player.Pos.Y - 5.5f + (float)(effectRng.NextDouble() * 4.0 - 2.0);
-                    PType dashType = !player.LastDashWasTwo ? dashBlue :
-                        skinManager.IsBadeline ? dashBadeline : dashRed;
+                    PType dashType = SkinnedParticle(!player.LastDashWasTwo ? dashBlue :
+                        player.BadelineMode ? dashBadeline : dashRed);
+                    // PlayerDashUpdateIlHook: the skin's DashPtcl colour, lightened for Color2.
+                    if (player.DashParticleColor(out Color dashColor))
+                        dashType = WithColors(dashType, dashColor, Smh.Lerp(dashColor, Color.White, 0.4f));
                     particles.Emit(dashType,
                         px, py, dashAngle, (float)Math.PI / 3f, 1);
                 }
@@ -1744,7 +1858,7 @@ namespace DeskMadeline
             {
                 float px = x + ((float)effectRng.NextDouble() * 2f - 1f) * rangeX;
                 float py = y + ((float)effectRng.NextDouble() * 2f - 1f) * rangeY;
-                particles.Emit(dust, px, py, direction, 0.5f, 1);
+                particles.Emit(SkinnedParticle(dust), px, py, direction, 0.5f, 1);
             }
         }
 
@@ -3198,13 +3312,15 @@ namespace DeskMadeline
                 }
                 else if (player.IsDead)
                 {
+                    var death = SkinDeathEffect(player.DeathColor, false);
                     DrawDeathEffect(g, camX, camY, player.DeathPosition,
-                        player.DeathColor, player.DeathPercent);
+                        death.Color, player.DeathPercent, death.Texture);
                 }
                 else if (player.IsRespawning)
                 {
+                    var respawn = SkinDeathEffect(player.RespawnColor, true);
                     DrawDeathEffect(g, camX, camY, player.RespawnEffectPosition,
-                        player.RespawnColor, player.RespawnPercent);
+                        respawn.Color, player.RespawnPercent, respawn.Texture);
                 }
                 else
                 {
@@ -3929,10 +4045,32 @@ namespace DeskMadeline
                 SnapPx(w), SnapPx(h));
         }
 
-        void DrawDeathEffect(Graphics g, float camX, float camY,
-            PointF effectPosition, Color effectColor, float effectPercent)
+        /// <summary>
+        /// SkinModHelper's death effect: its DeathParticleColor and death_particle texture, the
+        /// one or the other, over the game's.
+        /// </summary>
+        /// <param name="respawn">
+        /// DeathEffectDrawHook, which falls back to the skin's hair colour for her dashes, where
+        /// the dead body's burst keeps the colour it was made with.
+        /// </param>
+        (string Texture, Color Color) SkinDeathEffect(Color color, bool respawn)
         {
-            Bitmap texture = Sprites.Get("hair00", false);
+            SmhSkin skin = player.Skin;
+            string texture = "characters/player/hair00";
+            if (skin == null) return (texture, color);
+            if (Smh.RGB_IsMatch(skin.Character.DeathParticleColor))
+                color = respawn ? Smh.HexToColor(skin.Character.DeathParticleColor)
+                    : Smh.Mul(Smh.HexToColor(skin.Character.DeathParticleColor), Smh.GetAlpha(color));
+            else if (respawn && skin.Hair.SafeGetHairColor(player.SkinDashCount, out Color hair))
+                color = hair;
+            if (skin.TextureOnSprite("death_particle", out string particle)) texture = particle;
+            return (texture, color);
+        }
+
+        void DrawDeathEffect(Graphics g, float camX, float camY,
+            PointF effectPosition, Color effectColor, float effectPercent, string texturePath = "characters/player/hair00")
+        {
+            Bitmap texture = Sprites.Get(texturePath, false) ?? Sprites.Get("hair00", false);
             if (texture == null) return;
             float ease = effectPercent;
             float cubeOut = 1f - (float)Math.Pow(1f - ease, 3f);
@@ -3949,7 +4087,7 @@ namespace DeskMadeline
                 float angle = ((float)i / 8f + ease * 0.25f) * (float)Math.PI * 2f;
                 float x = SnapPx(centerX + (float)Math.Cos(angle) * radius);
                 float y = SnapPx(centerY + (float)Math.Sin(angle) * radius);
-                float w = SnapEven(10f * scale), h = SnapEven(10f * scale);
+                float w = SnapEven(texture.Width * scale), h = SnapEven(texture.Height * scale);
                 Sprites.DrawTinted(g, texture, Color.Black, x - w / 2f - 1f, y - h / 2f, w, h);
                 Sprites.DrawTinted(g, texture, Color.Black, x - w / 2f + 1f, y - h / 2f, w, h);
                 Sprites.DrawTinted(g, texture, Color.Black, x - w / 2f, y - h / 2f - 1f, w, h);
@@ -3960,7 +4098,7 @@ namespace DeskMadeline
                 float angle = ((float)i / 8f + ease * 0.25f) * (float)Math.PI * 2f;
                 float x = SnapPx(centerX + (float)Math.Cos(angle) * radius);
                 float y = SnapPx(centerY + (float)Math.Sin(angle) * radius);
-                float w = SnapEven(10f * scale), h = SnapEven(10f * scale);
+                float w = SnapEven(texture.Width * scale), h = SnapEven(texture.Height * scale);
                 Sprites.DrawTinted(g, texture, color, x - w / 2f, y - h / 2f, w, h);
             }
         }

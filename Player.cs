@@ -2965,6 +2965,8 @@ namespace DeskMadeline
             bool crouchDash = crouchDashBufferTimer > 0f;
             ConsumeDash();
             LastDashWasTwo = Dashes == 2;
+            // PlayerStartDashHook: SetStartedDashingCount, before StartDash spends the dash.
+            startedDashingCount = Math.Max(Dashes - 1, 0);
             Dashes = Math.Max(0, Dashes - 1);
             return crouchDash;
         }
@@ -3359,6 +3361,33 @@ namespace DeskMadeline
                     dashCount, out Color skinColor))
                     HairColor = skinColor;
             }
+        }
+
+        // PlayerSkinSystem's TrailDashCount: how many dashes she had left when this dash began.
+        int? startedDashingCount;
+        /// <summary>GetStartedDashingCount: set at StartDash, or from her dashes now if never.</summary>
+        internal int StartedDashingCount => startedDashingCount ??= Math.Max(Dashes - 1, 0);
+
+        /// <summary>Sprite.Mode == MadelineAsBadeline, as UpdateHair, DashUpdate and GetTrailColor ask it.</summary>
+        public bool BadelineMode => (Skin?.PatchModeBadeline(SpriteMode) ?? SpriteMode) == ModeMadelineAsBadeline;
+
+        /// <summary>
+        /// Player.GetTrailColor, through PlayerGetTrailColorHook: a skin's trail colour for the
+        /// dashes she started the dash with -- its general colour when it names no trail one.
+        /// </summary>
+        public Color TrailColor(bool wasDashB)
+        {
+            if (Skin != null && Skin.Hair.SafeGetHairColor((int)SmhHair.Special.Trail, StartedDashingCount, HairCount, out Color skin))
+                return skin;
+            if (BadelineMode) return wasDashB ? Resolve(1, NormalBadelineHairColor) : Resolve(0, UsedHairColor);
+            return wasDashB ? Resolve(1, NormalHairColor) : Resolve(0, UsedHairColor);
+        }
+
+        /// <summary>PlayerDashUpdateIlHook: a skin's colour for the dash's particles.</summary>
+        public bool DashParticleColor(out Color color)
+        {
+            color = default;
+            return Skin != null && Skin.Hair.SafeGetHairColor((int)SmhHair.Special.DashPtcl, StartedDashingCount, HairCount, out color);
         }
 
         /// <summary>PlayerHairRenderHook_ColorGrade's dash count for the player.</summary>
