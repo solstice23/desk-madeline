@@ -72,6 +72,13 @@ namespace DeskMadeline
         readonly Rectangle[] drawnBefore = new Rectangle[BufferCount + 1];
         int wholeClears;
         Rectangle drawnNow;
+        // And what the compositor is told. Without it a present means the whole desktop-sized
+        // surface may have changed, and DWM composes all of it again every frame -- which
+        // cost it more GPU than everything else on the screen together. The pixels that can
+        // differ from the frame on screen are the ones drawn then and the ones drawn now;
+        // everywhere else both frames are transparent, which is the promise a dirty
+        // rectangle makes.
+        readonly Vortice.RawRect[] dirtyRectangle = new Vortice.RawRect[1];
         readonly Dictionary<Bitmap, ID2D1Bitmap1> trailBitmaps = new Dictionary<Bitmap, ID2D1Bitmap1>();
         readonly HashSet<Bitmap> liveTrailBitmaps = new HashSet<Bitmap>();
         readonly List<Bitmap> deadTrailBitmaps = new List<Bitmap>();
@@ -214,7 +221,8 @@ namespace DeskMadeline
             }
 
             d2dContext.BeginDraw();
-            if (wholeClears > 0)
+            bool wholeFrame = wholeClears > 0;
+            if (wholeFrame)
             {
                 wholeClears--;
                 d2dContext.Clear(new Color4(0, 0, 0, 0));
@@ -256,9 +264,20 @@ namespace DeskMadeline
             }
             for (int i = foreground; i < trailCount; i++) DrawStamp(trails[i]);
             d2dContext.EndDraw().CheckError();
+            Rectangle dirty = Union(drawnBefore[0], drawnNow);
+            dirty.Intersect(new Rectangle(0, 0, targetWidth, targetHeight));
             for (int i = drawnBefore.Length - 1; i > 0; i--) drawnBefore[i] = drawnBefore[i - 1];
             drawnBefore[0] = drawnNow;
-            swapChain.Present(1, PresentFlags.None).CheckError();
+            // A buffer of unknown history, or nothing drawn now or before: no rectangle to
+            // name, so the whole surface, as every present used to be.
+            if (wholeFrame || dirty.Width <= 0 || dirty.Height <= 0)
+                swapChain.Present(1, PresentFlags.None).CheckError();
+            else
+            {
+                dirtyRectangle[0] = new Vortice.RawRect(dirty.Left, dirty.Top, dirty.Right, dirty.Bottom);
+                swapChain.Present1(1, PresentFlags.None,
+                    new PresentParameters { DirtyRectangles = dirtyRectangle }).CheckError();
+            }
 
             if (!logged)
             {
