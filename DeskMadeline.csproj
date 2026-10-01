@@ -54,9 +54,6 @@
     <None Include="assets\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="hair_tweaks.txt">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
     <None Include="THIRD_PARTY_NOTICES.md">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -144,8 +141,9 @@
       <CelesteAtlas Include="$(CelesteDir)\Content\Graphics\Atlases\Gameplay.meta;
                              $(CelesteDir)\Content\Graphics\Atlases\Gameplay*.data" />
       <CelestePortrait Include="$(CelesteDir)\Content\Graphics\Atlases\Portraits\madeline\normal00.data" />
-      <!-- Where her hair sits on every frame of every animation. HairMeta reads it beside the
-           exe or out of the install, the same two places the atlas is looked for. 90KB. -->
+      <!-- The game's sprite bank: every animation she plays, and where her hair sits and what
+           she carries on every frame. Read beside the exe or out of the install, the same two
+           places the atlas is looked for. 90KB. -->
       <CelesteSprites Include="$(CelesteDir)\Content\Graphics\Sprites.xml" />
       <!-- Whichever names this install has them under: newer Everest lib sets ship the
            studio library as fmodstudio64.dll and older ones renamed it to fmodstudio.dll.

@@ -112,7 +112,7 @@ namespace DeskMadeline
             actions.Add(Loc.T("Flyout.WakeUp"), () =>
             {
                 introWakeUp = true;
-                animator.Play("wakeUp", true);
+                player.PlaySprite("wakeUp", true);
             });
             page.Add(new FlyoutSwitch(p, Loc.T("Menu.Autonomy"), () => IdleAutonomyEnabled,
                 on => { IdleAutonomyEnabled = on; Save(); }));

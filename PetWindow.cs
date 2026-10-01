@@ -1,4 +1,5 @@
 using System;
+using System.Xml.Linq;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -48,9 +49,10 @@ namespace DeskMadeline
         readonly PetSettings settings;
         readonly SoundEffects soundEffects;
         internal readonly SkinManager skinManager;
-        readonly Animator animator;
-        readonly Animator sweatAnimator;
-        readonly Dictionary<string, Anim> anims;
+        // GFX.SpriteBank: the game's Sprites.xml, with a skin's laid over it.
+        SpriteBank spriteBank;
+        // Player.sweatSprite: player_sweat, its own sprite drawn over hers.
+        readonly GameSprite sweatSprite = new GameSprite();
         readonly NotifyIcon tray;
         // No sprites to draw her from: the tray offers only what still matters then.
         bool withoutMadeline;
@@ -142,10 +144,7 @@ namespace DeskMadeline
         PType seekerAttack, seekerHitWall, seekerStomp, seekerRegen, theoImpact;
         bool ParticlesEnabled = true;    // particle effects toggle (on by default; tray menu can disable)
         float skidDustTimer;
-        string observedParticleAnimId;
-        int observedParticleAnimFrame = -1;
-        string observedSoundAnimId;
-        int observedSoundAnimFrame = -1;
+        int observedPushDustCount;
         bool soundDucking;
         int observedLaunchCount;
         int observedRingDashSequenceCount;
@@ -374,9 +373,6 @@ namespace DeskMadeline
                 }
             }
             catch { }
-            // The game's table first, then the tweaks that override it.
-            HairMeta.LoadVanilla(CelesteInstall.GraphicsFile("Sprites.xml"));
-            HairMeta.LoadOverrides(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hair_tweaks.txt"));
             dust = new PType
             {
                 Tex = new[] { "smoke0", "smoke1", "smoke2", "smoke3" },
@@ -512,11 +508,8 @@ namespace DeskMadeline
                 LifeMin = .3f, LifeMax = .8f, Size = 1f,
                 SpeedMin = 10f, SpeedMax = 20f, SpeedMultiplier = .1f, LateFade = true
             };
-            anims = BuildAnims();
-            animator = new Animator(anims);
-            sweatAnimator = new Animator(BuildSweatAnims());
-            sweatAnimator.Play("idle");
-            animator.Play("wakeUp");   // Play wake-up animation on startup
+            ApplySpriteBank();
+            player.Sprite.Play("wakeUp");   // Play wake-up animation on startup
 
             // ---- Spawn point: bottom-center of primary working area ----
             var wa = Screen.PrimaryScreen.WorkingArea;
@@ -610,90 +603,33 @@ namespace DeskMadeline
             FmodDownload.Ask(this, () => { restartAfterExit = true; ExitApp(); });
         }
 
-        // ================= Animation definitions =================
-        static Dictionary<string, Anim> BuildAnims()
+        // ================= The sprite bank =================
+        /// <summary>
+        /// GFX.SpriteBank, for her: the game's Sprites.xml read the way Monocle reads it, then the
+        /// entry she wears put onto her sprite -- PlayerSprite's constructor -- and player_sweat
+        /// onto the sweat's.
+        /// </summary>
+        void ApplySpriteBank()
         {
-            var d = new Dictionary<string, Anim>(StringComparer.OrdinalIgnoreCase);
-            void Add(string id, string[] frames, float delay, bool loop, bool manual = false)
-            { if (frames.Length > 0) d[id] = new Anim { Frames = frames, Delay = delay, Loop = loop, Manual = manual }; }
-
-            Add("idle", Sprites.Seq("idle", 0, 8), 0.1f, true);
-            var wakeUp = new List<string>(Sprites.Seq("wakeUp", 0, 4));
-            for (int i = 0; i < 10 && Sprites.Has("wakeUp05"); i++) wakeUp.Add("wakeUp05");
-            wakeUp.AddRange(Sprites.Seq("wakeUp", 6, 14));
-            Add("wakeUp", wakeUp.ToArray(), 0.1f, false); // Sprites.xml: 0-4, 5*10, 6-14
-            var sleep = new List<string>(Sprites.Seq("sleep", 0, 10));
-            for (int i = 0; i < 5 && Sprites.Has("sleep10"); i++) sleep.Add("sleep10");
-            sleep.AddRange(Sprites.Seq("sleep", 11, 23));
-            Add("sleep", sleep.ToArray(), 0.1f, false);  // Sprites.xml: 0-10, 10*5, 11-23
-            if (d.TryGetValue("sleep", out var sleepAnim)) sleepAnim.Goto = "asleep";
-            Add("asleep", new[] { "wakeUp00" }, 0.1f, true);  // Sprites.xml: wakeUp frame 0
-            Add("idleA", Sprites.Seq("idleA", 0, 30), 0.12f, false);
-            Add("idleB", Sprites.Seq("idleB", 0, 30), 0.16f, false);
-            Add("idleC", Sprites.Seq("idleC", 0, 30), 0.05f, false);
-            foreach (string fidget in new[] { "idleA", "idleB", "idleC" })
-                if (d.TryGetValue(fidget, out var fidgetAnim)) fidgetAnim.Goto = "idle";
-            Add("runSlow", Sprites.Seq("runSlow", 0, 11), 0.07f, false);
-            if (d.TryGetValue("runSlow", out var runSlowAnim)) runSlowAnim.Goto = "runFast";
-            Add("runFast", Sprites.Seq("runFast", 0, 11), 0.05f, true);
-            Add("idle_carry", Sprites.Seq("idle_carry", 0, 8), 0.1f, true);
-            Add("runSlow_carry", Sprites.Seq("run_carry", 0, 11), 0.07f, true);
-            Add("jumpSlow_carry", Sprites.Seq("jump_carry", 0, 1), 0.1f, true);
-            Add("fallSlow_carry", Sprites.Seq("jump_carry", 2, 3), 0.1f, false);
-            Add("pickUp", Sprites.Seq("pickup", 0, 4), 0.06f, false);
-            Add("throw", Sprites.Seq("throw", 0, 3), 0.06f, false);
-            Add("dreamDashIn", Sprites.Seq("dreamDash", 0, 3), 0.04f, false);
-            if (d.TryGetValue("dreamDashIn", out var dreamIn)) dreamIn.Goto = "dreamDashLoop";
-            Add("dreamDashLoop", Sprites.Seq("dreamDash", 4, 16), 0.03f, true);
-            Add("dreamDashOut", Sprites.Seq("dreamDash", 17, 20), 0.04f, false);
-            var stumble = new List<string> { "runStumble10", "runStumble11" };
-            stumble.AddRange(Sprites.Seq("runStumble", 0, 11));
-            Add("runStumble", stumble.ToArray(), 0.05f, false);
-            if (d.TryGetValue("runStumble", out var stumbleAnim)) stumbleAnim.Goto = "runFast";
-            // Vanilla Sprites.xml splits each jump sheet in half: 00/01 loop while
-            // rising, then 02/03 play once and hold while falling.  The separate
-            // fall00-07 sheet belongs to the scripted "fall" state, not fast-fall.
-            Add("jumpSlow", Sprites.Seq("jumpSlow", 0, 1), 0.10f, true);
-            Add("jumpFast", Sprites.Seq("jumpFast", 0, 1), 0.10f, true);
-            Add("fallSlow", Sprites.Seq("jumpSlow", 2, 3), 0.10f, false);
-            Add("fallFast", Sprites.Seq("jumpFast", 2, 3), 0.10f, false);
-            Add("dash", Sprites.Seq("dash", 0, 3), 0.09f, true);
-            // Sprites.xml: swimIdle 0-5, swimUp 6-11, swimDown 12-17. The last six are
-            // filed as Swim12-Swim17 in the atlas, capitalised where the rest are not.
-            Add("swimIdle", Sprites.Seq("swim", 0, 5), 0.08f, true);
-            Add("swimUp", Sprites.Seq("swim", 6, 11), 0.08f, true);
-            Add("swimDown", Sprites.Seq("swim", 12, 17), 0.08f, true);
-            Add("elytra", Sprites.Seq("fly", 0, 8), 10f, true, manual: true);
-            Add("climb", Sprites.Seq("climb", 0, 5), 0.04f, true);
-            Add("wallslide", new[] { "climb00" }, 1f, true);
-            Add("climbLookBack", new[] { "climb08" }, 1f, true);
-            Add("climbLookBackStart", new[] { "climb06", "climb07", "climb08" }, 0.08f, false);
-            if (d.TryGetValue("climbLookBackStart", out var lookBackStart)) lookBackStart.Goto = "climbLookBack";
-            Add("dangling", Sprites.Seq("dangling", 0, 9), 0.11f, true);
-            Add("duck", new[] { "duck" }, 1f, true);
-            Add("lookUp", Sprites.Seq("lookUp", 2, 7), 0.1f, false);
-            Add("tired", Sprites.Seq("tired", 0, 3), 0.18f, true);
-            Add("edge", Sprites.Seq("edge", 0, 13), 0.25f, true);
-            Add("edgeBack", Sprites.Seq("edge_back", 0, 13), 0.25f, true);
-            Add("push", Sprites.Seq("push", 0, 15), 0.1f, true);
-            Add("flip", Sprites.Seq("flip", 0, 7), 0.04f, false);
-            if (d.TryGetValue("flip", out var flipAnim)) flipAnim.Goto = "runFast";
-            Add("skid", new[] { "flip08" }, 1f, true);
-            return d;
-        }
-
-        static Dictionary<string, Anim> BuildSweatAnims()
-        {
-            var d = new Dictionary<string, Anim>(StringComparer.OrdinalIgnoreCase);
-            void Add(string id, string[] frames, float delay, bool loop)
-            { if (frames.Length > 0) d[id] = new Anim { Frames = frames, Delay = delay, Loop = loop }; }
-            Add("idle", new[] { "sweatIdle00" }, 1f, true);
-            Add("still", Sprites.Seq("sweatStill", 0, 5), 0.1f, true);
-            Add("climbLoop", Sprites.Seq("sweatClimb", 2, 7), 0.1f, true);
-            d["climb"] = new Anim { Frames = Sprites.Seq("sweatClimb", 0, 1), Delay = 0.1f, Goto = "climbLoop" };
-            Add("danger", Sprites.Seq("sweatDanger", 0, 5), 0.05f, true);
-            d["jump"] = new Anim { Frames = Sprites.Seq("sweatJump", 0, 3), Delay = 0.1f, Goto = "idle" };
-            return d;
+            string xml = CelesteInstall.GraphicsFile("Sprites.xml");
+            spriteBank = null;
+            if (xml != null)
+            {
+                try { spriteBank = SpriteBank.Load(Sprites.Atlas, XDocument.Load(xml), Array.Empty<XDocument>()); }
+                catch (Exception ex) { Log("sprite bank unreadable: " + ex.Message); }
+            }
+            if (spriteBank != null)
+                foreach (string failure in spriteBank.Failures)
+                    if (failure.StartsWith("player", StringComparison.OrdinalIgnoreCase)) Log("sprite bank: " + failure);
+            // GFX.LoadData: the player sprites' frame metadata, each passing through
+            // CommunalHelper's two hooks on the way -- its elytra animation before, its elytra
+            // metadata after.
+            HairMeta.LoadPlayerSprites(spriteBank, Sprites.Atlas);
+            // PlayerSpriteMode: Badeline is the game's own Play As Badeline, player_badeline.
+            bool badeline = skinManager.IsBadeline;
+            player.ResetSprite(spriteBank, badeline ? "player_badeline" : "player",
+                badeline ? Player.ModeMadelineAsBadeline : Player.ModeMadeline, null);
+            if (spriteBank != null && spriteBank.Has("player_sweat")) spriteBank.CreateOn(sweatSprite, "player_sweat");
         }
 
         // ================= Game loop =================
@@ -762,6 +698,7 @@ namespace DeskMadeline
                 Sprites.LoadAll(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "player"),
                     skin?.PlayerDirectory, skin?.PlayerAtlasFolder);
                 skinManager.Activate(skin);
+                ApplySpriteBank();
                 settings.Skin = skin?.Id ?? SkinManager.DefaultId;
                 settings.Save();
                 Log("skin -> " + (skin?.DisplayName ?? "default"));
@@ -938,17 +875,16 @@ namespace DeskMadeline
             {
                 // Startup wake-up: freeze physics, play only wakeUp + hair sim; switch to idle when done.
                 float hx = 0f, hy = 0f;
-                if (HairMeta.TryGet(animator.CurrentFrameId, out var wm)) { hx = wm.Offset.X; hy = wm.Offset.Y; }
+                if (HairMeta.TryGet(player.CurrentFrameId, out var wm)) { hx = wm.Offset.X; hy = wm.Offset.Y; }
                 player.UpdateHairOnly(dt, hx, hy);
-                animator.Update(dt);
-                EmitAnimationSounds();
-                player.AnimFinished = animator.Finished;
-                player.AnimLoopCount = animator.LoopCount;
-                player.CurrentFrameId = animator.CurrentFrameId;
-                if (animator.Finished)
+                player.Sprite.Update(dt);
+                // Its frame callbacks speak through her queue; nothing else drains it this frame.
+                DrainPlayerSounds();
+                // wakeUp has no goto: finishing it leaves the sprite on no animation at all.
+                if (player.Sprite.CurrentAnimationID == "" && player.Sprite.LastAnimationID == "wakeUp")
                 {
                     introWakeUp = false;
-                    animator.Play("idle", true);
+                    player.PlaySprite("idle", true);
                     Log("wake up done -> idle");
                 }
                 return;
@@ -963,7 +899,7 @@ namespace DeskMadeline
                 // and the wake would never finish.
                 wakeUpPending = false;
                 introWakeUp = true;
-                animator.Play("wakeUp", true);
+                player.PlaySprite("wakeUp", true);
                 return;
             }
 
@@ -971,13 +907,8 @@ namespace DeskMadeline
             if (!frozenAtStart)
             {
                 // Hair/Sprite/Sweat components update before StateMachine in Player.
-                animator.Update(dt);
-                sweatAnimator.Update(dt);
-                player.AnimFinished = animator.Finished ||
-                    !string.Equals(player.AnimId, animator.CurrentId, StringComparison.OrdinalIgnoreCase);
-                player.AnimLoopCount = animator.LoopCount;
-                player.CurrentFrameId = animator.CurrentFrameId;
-                EmitAnimationSounds();
+                player.Sprite.Update(dt);
+                sweatSprite.Update(dt);
                 if (ParticlesEnabled) EmitAnimationParticles();
 
                 tiredFlashTimer += dt;
@@ -991,6 +922,8 @@ namespace DeskMadeline
             // Physics
             int wasState = player.State;
             bool wasDeadOrRespawning = player.IsDead || player.IsRespawning;
+            // Napping is the shell's animation, not the player's; UpdateSprite lays her down.
+            player.Napping = idleDirector.Napping;
             player.Update(dt, input);
             UpdateSoundEffects(wasState);
             if (!wasDeadOrRespawning) ApplyEdgeWrap();
@@ -1025,34 +958,17 @@ namespace DeskMadeline
             grabbyIcon.Update(!player.IsDead && !player.IsPreDeath &&
                 grabInput.Mode == GrabModes.Toggle && grabCheck, dt);
 
-            // UpdateSprite selects animations after component advancement. A newly
-            // selected animation stays on frame zero until the next game frame.
-            // Napping is the shell's animation, not the player's: the campfire lie-down,
-            // then the held sleeping frame, while the physics stand perfectly still.
-            if (idleDirector.Napping && player.State == Player.StNormal && player.onGround &&
-                Math.Abs(player.Speed.X) < 1f && !player.Ducking)
-            {
-                if (animator.CurrentId != "sleep" && animator.CurrentId != "asleep")
-                    animator.Play("sleep", true);
-            }
-            else animator.Play(player.AnimId);
-            if (player.State == Player.StElytra) animator.Frame = player.ElytraAnimationFrame;
-            EmitAnimationSounds();
+            // UpdateSprite ran inside player.Update and chose her animation there.
             bool restartSweat = player.SweatAnimSequenceCount != observedSweatAnimSequenceCount;
             observedSweatAnimSequenceCount = player.SweatAnimSequenceCount;
-            sweatAnimator.Play(player.SweatAnimId, restartSweat);
-            player.AnimFinished = animator.Finished ||
-                !string.Equals(player.AnimId, animator.CurrentId, StringComparison.OrdinalIgnoreCase);
-            player.AnimLoopCount = animator.LoopCount;
-            player.CurrentFrameId = animator.CurrentFrameId;
-            // Player.orig_Update orders UpdateSprite before UpdateCarry. The
-            // animator is hosted here, so apply the held actor's curve only after
-            // the matching frame (and its CarryYOffset metadata) is available.
+            if (sweatSprite.Has(player.SweatAnimId)) sweatSprite.Play(player.SweatAnimId, restartSweat);
+            // Player.orig_Update orders UpdateSprite before UpdateCarry; the held actor's curve
+            // follows the frame UpdateSprite settled on, and its CarryYOffset.
             player.UpdateCarryPosition(ResolveCarryYOffset(player.CurrentFrameId));
             if (ParticlesEnabled) EmitAnimationParticles();
 
             float hairX = 0f, hairY = 0f;
-            if (HairMeta.TryGet(animator.CurrentFrameId, out var hairMeta))
+            if (HairMeta.TryGet(player.CurrentFrameId, out var hairMeta))
             {
                 hairX = hairMeta.Offset.X;
                 hairY = hairMeta.Offset.Y;
@@ -1273,13 +1189,7 @@ namespace DeskMadeline
         {
             if (wasState == Player.StDreamDash && player.State != Player.StDreamDash)
                 soundEffects.StopLoop();
-            while (player.SoundEvents.Count > 0)
-            {
-                PlayerSoundEvent sound = player.SoundEvents.Dequeue();
-                soundEffects.Play(sound.Path, sound.Parameter, sound.Value);
-                if (sound.Path == "event:/char/madeline/dreamblock_enter")
-                    soundEffects.StartLoop("event:/char/madeline/dreamblock_travel");
-            }
+            DrainPlayerSounds();
             if (player.Ducking != soundDucking)
             {
                 // orig_Update sounds the duck wherever it happens, but standing up only counts
@@ -1297,7 +1207,7 @@ namespace DeskMadeline
             else soundEffects.StopLoop("swim");
             // orig_Update tests the sprite selected on the preceding frame before
             // UpdateSprite chooses the next one later in the same player update.
-            bool wallSliding = animator.CurrentId == "wallslide" && player.Speed.Y > 0f;
+            bool wallSliding = player.AnimId == "wallslide" && player.Speed.Y > 0f;
             if (wallSliding)
             {
                 soundEffects.StartLoop("wallslide", "event:/char/madeline/wallslide");
@@ -1307,26 +1217,18 @@ namespace DeskMadeline
             else soundEffects.StopLoop("wallslide");
         }
 
-        void EmitAnimationSounds()
+        /// <summary>Everything she asked to hear this frame, in order.</summary>
+        void DrainPlayerSounds()
         {
-            if (animator.CurrentId == observedSoundAnimId && animator.Frame == observedSoundAnimFrame)
-                return;
-            observedSoundAnimId = animator.CurrentId;
-            observedSoundAnimFrame = animator.Frame;
-            string id = animator.CurrentId;
-            int frame = animator.Frame;
-            bool footstep =
-                ((id == "runSlow_carry" || id == "runFast" || id == "runSlow") && (frame == 0 || frame == 6)) ||
-                (id == "runStumble" && frame == 6) || (id == "flip" && frame == 4) ||
-                (id == "push" && (frame == 8 || frame == 15));
-            if (footstep)
-                soundEffects.Play("event:/char/madeline/footstep", "surface_index",
-                    player.GroundSurfaceSoundIndex);
-            else if (id == "climb" && frame == 5)
-                soundEffects.Play("event:/char/madeline/handhold", "surface_index",
-                    player.WallSurfaceSoundIndex(player.Facing));
-            else if (introWakeUp && id == "wakeUp" && frame == 19)
-                soundEffects.Play("event:/char/madeline/campfire_stand");
+            while (player.SoundEvents.Count > 0)
+            {
+                PlayerSoundEvent sound = player.SoundEvents.Dequeue();
+                if (sound.IsStop) { soundEffects.StopLoop(sound.Key); continue; }
+                if (sound.Key != null) { soundEffects.PlayKept(sound.Key, sound.Path); continue; }
+                soundEffects.Play(sound.Path, sound.Parameter, sound.Value);
+                if (sound.Path == "event:/char/madeline/dreamblock_enter")
+                    soundEffects.StartLoop("event:/char/madeline/dreamblock_travel");
+            }
         }
 
         internal Color ResolveHairColor(int dashes, Color fallback)
@@ -1337,22 +1239,8 @@ namespace DeskMadeline
 
         internal float ResolveCarryYOffset(string frameId)
         {
-            if (string.IsNullOrEmpty(frameId)) return 0f;
-            int frame = 0;
-            int split = frameId.Length;
-            while (split > 0 && char.IsDigit(frameId[split - 1])) split--;
-            if (split < frameId.Length) int.TryParse(frameId.Substring(split), out frame);
-            string id = frameId.Substring(0, split);
-            int[] offsets = null;
-            if (skinManager.TryGetCarryOffsets(id, out int[] skinOffsets))
-                offsets = skinOffsets;
-            else if (id.Equals("idle_carry", StringComparison.OrdinalIgnoreCase))
-                offsets = new[] { -1, -1, -1, 0, 0, 0, 0, 0, -1 };
-            else if (id.Equals("run_carry", StringComparison.OrdinalIgnoreCase))
-                offsets = new[] { -1, 0, 0, 0, -3, -2, -1, 0, 0, 0, -3, -1 };
-            else if (id.Equals("jump_carry", StringComparison.OrdinalIgnoreCase))
-                offsets = new[] { -3, -3, -1, -1 };
-            return offsets != null && frame >= 0 && frame < offsets.Length ? offsets[frame] : 0f;
+            // PlayerSprite.CarryYOffset: the frame's metadata, times the sprite's Y scale.
+            return HairMeta.CarryYOffset(frameId) * player.SpriteScaleY;
         }
 
         static PointF Approach(PointF value, PointF target, float maxMove)
@@ -1506,7 +1394,7 @@ namespace DeskMadeline
             int count = player.Hair.ActiveCount;
             var nodes = new PointF[count];
             for (int i = 0; i < count; i++) nodes[i] = player.Hair.Nodes[i];
-            string frameId = animator.CurrentFrameId ?? (player.Ducking ? "duck" : "dash00");
+            string frameId = player.CurrentFrameId ?? (player.Ducking ? "duck" : "dash00");
             string bangsId = "bangs00";
             if (HairMeta.TryGet(frameId, out var hm) && hm.Bangs >= 0 && hm.Bangs < HairMeta.BangsFrames.Length)
                 bangsId = HairMeta.BangsFrames[hm.Bangs];
@@ -1797,13 +1685,10 @@ namespace DeskMadeline
 
         void EmitAnimationParticles()
         {
-            if (animator.CurrentId == observedParticleAnimId && animator.Frame == observedParticleAnimFrame)
-                return;
-            observedParticleAnimId = animator.CurrentId;
-            observedParticleAnimFrame = animator.Frame;
-            // Player.OnFrameChange: pushing emits foreground dust on frames 8 and 15.
-            if (animator.CurrentId == "push" && (animator.Frame == 8 || animator.Frame == 15))
+            // Player.OnFrameChange: pushing raises foreground dust on frames 8 and 15.
+            while (observedPushDustCount != player.PushDustCount)
             {
+                observedPushDustCount++;
                 float dx = -player.Facing;
                 float angle = (float)Math.Atan2(-0.5f, dx);
                 EmitDustBurst(player.Pos.X - player.Facing * 5f, player.Pos.Y - 1f,
@@ -3289,7 +3174,7 @@ namespace DeskMadeline
                     // table: the sleep sheet says hair="" outright, and the wakeUp sheet she
                     // lies asleep on is simply not in the table at all. Both are poses with
                     // the hair painted in, and DrawBody tints that to the colour of the day.
-                    if (HairMeta.HasHair(animator.CurrentFrameId))
+                    if (HairMeta.HasHair(player.CurrentFrameId))
                     {
                         DrawCatTail(g, camX, camY);
                         DrawHair(g, camX, camY);
@@ -3934,7 +3819,7 @@ namespace DeskMadeline
         {
             // Body (squash/stretch anchored at foot center); rect snapped to integer game pixels
             bool flip = player.Facing < 0;
-            var frame = Sprites.Get(animator.CurrentFrameId, flip);
+            var frame = Sprites.Get(player.CurrentFrameId, flip);
             if (frame != null)
             {
                 float sx = player.SpriteScaleX, sy = player.SpriteScaleY;
@@ -3949,7 +3834,7 @@ namespace DeskMadeline
                     // A pose with its hair painted in -- sleeping, mostly -- wears whatever
                     // colour her hair is, rather than the red it was drawn in. Nothing here
                     // for an ordinary frame: the mask is null and asked for only once.
-                    Bitmap paintedHair = Sprites.BakedHairMask(animator.CurrentFrameId, flip);
+                    Bitmap paintedHair = Sprites.BakedHairMask(player.CurrentFrameId, flip);
                     if (paintedHair != null)
                         Sprites.DrawTinted(g, paintedHair, player.HairColor, x, y, w, h);
                 }
@@ -4012,7 +3897,7 @@ namespace DeskMadeline
         void DrawSweat(Graphics g, float anchorX, float anchorY)
         {
             if (introWakeUp) return;
-            var sweat = Sprites.Get(sweatAnimator.CurrentFrameId, player.Facing < 0);
+            var sweat = Sprites.Get(sweatSprite.Texture, player.Facing < 0);
             if (sweat != null)
             {
                 float sx = player.SpriteScaleX, sy = player.SpriteScaleY;
@@ -4844,7 +4729,7 @@ namespace DeskMadeline
             if (introWakeUp)
             {
                 introWakeUp = false;
-                animator.Play(player.AnimId, true);
+                player.PlaySprite("idle", true);
             }
             PetWindow.Log("reset pos to " + player.Pos.X.ToString("F1") + "," + player.Pos.Y.ToString("F1"));
         }

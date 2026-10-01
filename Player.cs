@@ -53,8 +53,15 @@ namespace DeskMadeline
     {
         public readonly string Path, Parameter;
         public readonly float Value;
-        public PlayerSoundEvent(string path, string parameter = null, float value = 0f)
-        { Path = path; Parameter = parameter; Value = value; }
+        /// <summary>For a sound that may have to be stopped: the handle the shell keeps it under.</summary>
+        public readonly string Key;
+        /// <summary>Not a sound at all: stop the one kept under Key.</summary>
+        public readonly bool IsStop;
+        public PlayerSoundEvent(string path, string parameter = null, float value = 0f, string key = null)
+        { Path = path; Parameter = parameter; Value = value; Key = key; IsStop = false; }
+        PlayerSoundEvent(string key, bool stop)
+        { Path = null; Parameter = null; Value = 0f; Key = key; IsStop = stop; }
+        public static PlayerSoundEvent Stop(string key) => new PlayerSoundEvent(key, true);
     }
 
     /// <summary>
@@ -247,8 +254,6 @@ namespace DeskMadeline
 
         // Presentation
         public float SpriteScaleX = 1f, SpriteScaleY = 1f;
-        public string AnimId = "idle";
-        public string CurrentFrameId;   // synced by the window each frame (hair anchor follows current frame)
         public string SweatAnimId { get; private set; } = "idle";
         public int SweatAnimSequenceCount { get; private set; }
         public Color HairColor = NormalHairColor;
@@ -284,7 +289,11 @@ namespace DeskMadeline
         public int DeathSequenceCount { get; private set; }
         public bool IsRespawning => State == StIntroRespawn;
         public PointF Center => new PointF(Pos.X, Pos.Y - HitH / 2f);
-        public int ElytraAnimationFrame { get; private set; } = 6;
+        // CommunalHelper keeps the glide angle on the player (DynamicData "elytraGlideAngle");
+        // its UpdateSprite hook turns it into a frame. Null until she has first glided.
+        float? elytraGlideAngle;
+        /// <summary>CommunalHelper's Elytra.ELYTRA_ANIM.</summary>
+        public const string ElytraAnimation = "anim_player_elytra_fly";
         public int ElytraDeploySequenceCount { get; private set; }
         public int ExplodeLaunchSequenceCount { get; private set; }
         public float ExplodeLaunchAngle { get; private set; }
@@ -343,7 +352,6 @@ namespace DeskMadeline
         {
             DashMode = mode < 0 ? -1 : Math.Max(0, Math.Min(2, mode));
             Dashes = DashCapacity;
-            hairFlashTimer = 0.12f;
         }
 
         public void GetHitbox(out float left, out float top, out float right, out float bottom)
@@ -585,7 +593,10 @@ namespace DeskMadeline
         float explodeLaunchBoostTimer, explodeLaunchBoostSpeed;
         float dashRefillCooldownTimer;
         float dashAttackTimer;
-        float hairFlashTimer;     // hair flash-white timer (0.12s on dash refill)
+        // Player.hairFlashTimer and Player.lastDashes: UpdateHair flashes the hair white for
+        // 0.12s whenever the dash count has changed to anything but none.
+        float hairFlashTimer;
+        int lastDashes;
         float wallSlideTimer = WallSlideTime;
         int wallSlideDir;
         float forceMoveXTimer;
@@ -622,10 +633,7 @@ namespace DeskMadeline
         int lastClimbMove;
         bool fastJump;
         float idleTimer;
-        string fidgetId;
-        int observedIdleLoopCount;
         float highestAirY;
-        float landingStumbleTimer;
         float playFootstepOnLand;
         float sweatJumpTimer;
         float minHoldTimer;
@@ -635,12 +643,10 @@ namespace DeskMadeline
         PointF pickupCurveBegin, pickupCurveControl;
         PointF carryOffset = new PointF(0f, -12f);
         float dreamDashCanEndTimer;
-        float dreamDashAnimTimer, dreamDashOutTimer;
         // Player.dreamJump. Vanilla's "dream jump" window is nothing but the ordinary
         // jumpGraceTimer that DreamDashEnd re-grants on a horizontal exit; this flag only
         // selects the dream-block jump sfx and never gates a jump.
         bool dreamJump;
-        float throwAnimTimer;
         float gliderBoostTimer;
         PointF gliderBoostDir;
         PointF dreamDashEntryPos;
@@ -687,6 +693,8 @@ namespace DeskMadeline
 
         PointF counter;  // sub-pixel movement accumulator (Actor.movementCounter)
         readonly Random rng = new Random();
+
+        public Player() { WireSprite(); }
 
         static float Approach(float val, float target, float maxMove)
             => val > target ? Math.Max(val - maxMove, target) : Math.Min(val + maxMove, target);
@@ -1060,7 +1068,6 @@ namespace DeskMadeline
             dreamDashEntryPos = Pos;
             State = StDreamDash;
             dreamDashCanEndTimer = 0.1f;
-            dreamDashAnimTimer = 0.16f;
             dreamJump = false;   // DreamDashBegin
             Speed = new PointF(DashDir.X * DashSpeed, DashDir.Y * DashSpeed);
             Stamina = ClimbMaxStamina;
@@ -1168,14 +1175,14 @@ namespace DeskMadeline
                     float amount = Math.Min(Speed.Y / FastMaxFall, 1f);
                     SpriteScaleX = 1f + 0.6f * amount;
                     SpriteScaleY = 1f - 0.6f * amount;
+                    if (highestAirY < Pos.Y - 50f && Speed.Y >= MaxFall && Math.Abs(Speed.X) >= MaxRun)
+                        PlaySprite("runStumble");
                     PlaySound(playFootstepOnLand > 0f
                         ? "event:/char/madeline/footstep"
                         : "event:/char/madeline/landing", "surface_index",
                         GroundSurfaceSoundIndex);
                     if (Speed.Y >= 80f) LandingEffectCount++;
                     playFootstepOnLand = 0f;
-                    if (highestAirY < Pos.Y - 50f && Speed.Y >= MaxFall && Math.Abs(Speed.X) >= MaxRun)
-                        landingStumbleTimer = 0.7f;
                 }
                 // Vanilla's vertical collision callback clears DashAttacking after
                 // processing the landing (unless corner correction returned early).
@@ -1286,15 +1293,13 @@ namespace DeskMadeline
             dashAimPending = false;
             lastAim = new PointF(Facing, 0);
             hairFlashTimer = 0;
+            lastDashes = Dashes;
             wallSpeedRetained = 0;
             wallSpeedRetentionTimer = 0;
             maxFall = MaxFall;
             fastJump = false;
             idleTimer = 0f;
-            fidgetId = null;
-            observedIdleLoopCount = 0;
             highestAirY = pos.Y;
-            landingStumbleTimer = 0f;
             playFootstepOnLand = 0f;
             SweatAnimId = "idle";
             sweatJumpTimer = 0f;
@@ -1305,9 +1310,7 @@ namespace DeskMadeline
             pickupCurveBegin = pickupCurveControl = PointF.Empty;
             carryOffset = new PointF(0f, -12f);
             dreamDashCanEndTimer = 0f;
-            dreamDashAnimTimer = dreamDashOutTimer = 0f;
             dreamJump = false;
-            throwAnimTimer = 0f;
             gliderBoostTimer = 0f;
             gliderBoostDir = PointF.Empty;
             dreamDashEntryPos = pos;
@@ -1367,8 +1370,6 @@ namespace DeskMadeline
         public void RefillDash()
         {
             Dashes = DashCapacity;
-            hairFlashTimer = 0.12f;  // Vanilla: flash white 0.12s then snap back to red
-            HairColor = FlashHairColor;
         }
 
         // ===== Main update =====
@@ -1473,7 +1474,6 @@ namespace DeskMadeline
                 RefillDash();
             if (dashAttackTimer > 0) dashAttackTimer -= dt;
             if (gliderBoostTimer > 0f) gliderBoostTimer -= dt;
-            if (hairFlashTimer > 0) hairFlashTimer -= dt;  // hair flash-white timer
             if (varJumpTimer > 0) varJumpTimer -= dt;
             if (sweatJumpTimer > 0f)
             {
@@ -1481,9 +1481,6 @@ namespace DeskMadeline
                 if (sweatJumpTimer <= 0f) SweatAnimId = "idle";
             }
             if (minHoldTimer > 0f) minHoldTimer -= dt;
-            if (dreamDashAnimTimer > 0f) dreamDashAnimTimer -= dt;
-            if (dreamDashOutTimer > 0f) dreamDashOutTimer -= dt;
-            if (throwAnimTimer > 0f) throwAnimTimer -= dt;
 
             // Vanilla only looks for ground while Speed.Y >= 0; rising never counts as
             // grounded, so it cannot refresh coyote time, stamina or the dash refill.
@@ -1494,7 +1491,6 @@ namespace DeskMadeline
 
             if (onGround) highestAirY = Pos.Y;
             else highestAirY = Math.Min(highestAirY, Pos.Y);
-            if (landingStumbleTimer > 0f) landingStumbleTimer -= dt;
             if (playFootstepOnLand > 0f) playFootstepOnLand -= dt;
 
             // Player.orig_Update refills in water before it refills on the ground, and asks
@@ -1755,31 +1751,8 @@ namespace DeskMadeline
             SpriteScaleX = Approach(SpriteScaleX, 1f, 1.75f * dt);
             SpriteScaleY = Approach(SpriteScaleY, 1f, 1.75f * dt);
 
-            // Hair color: vanilla flashes white 0.12s then snaps to red; when Dash=0 lerps to blue at 6/s
-            if (hairFlashTimer > 0)
-            {
-                HairColor = FlashHairColor;  // stay white while flashing
-            }
-            else if (Dashes >= 2)
-            {
-                HairColor = PetWindow.Instance?.ResolveHairColor(2, TwoDashesHairColor) ?? TwoDashesHairColor;
-            }
-            else if (Dashes > 0 || DashCapacity == 0)
-            {
-                HairColor = PetWindow.Instance?.ResolveHairColor(1, NormalHairColor) ?? NormalHairColor;
-            }
-            else
-            {
-                // With no dash, lerp toward blue (6/s)
-                Color target = PetWindow.Instance?.ResolveHairColor(0, UsedHairColor) ?? UsedHairColor;
-                float k = Math.Min(1f, 6f * dt);
-                HairColor = Color.FromArgb(
-                    (int)(HairColor.R + (target.R - HairColor.R) * k),
-                    (int)(HairColor.G + (target.G - HairColor.G) * k),
-                    (int)(HairColor.B + (target.B - HairColor.B) * k));
-            }
-
             UpdateSprite(dt, input);
+            UpdateHairColor(dt);
 
             // Actor.Update's tail: the lift speed set this frame is spent, and the kept one
             // runs down. orig_Update's own last line is wasOnGround = onGround, and the rule
@@ -2065,8 +2038,8 @@ namespace DeskMadeline
             Holding.Release(new PointF(Facing, 0f), Solids);
             Holding = null;
             Speed.X -= 80f * Facing;
-            throwAnimTimer = 0.24f;
             PlaySound("event:/char/madeline/crystaltheo_throw");
+            PlaySprite("throw");
         }
 
         void DropGlider()
@@ -2304,7 +2277,7 @@ namespace DeskMadeline
             elytraAngle = (float)Math.Atan2(relative.Y, relative.X);
             elytraSpeed = (float)Math.Sqrt(relative.X * relative.X + relative.Y * relative.Y);
             elytraStableTimer = 0f;
-            UpdateElytraAnimationFrame(elytraAngle);
+            elytraGlideAngle = elytraAngle;
             float deployAngle = ClampElytraDeployAngle(elytraAngle);
             ElytraDeployParticleAngle = elytraFacing == 1
                 ? deployAngle : (float)Math.PI - deployAngle;
@@ -2380,18 +2353,7 @@ namespace DeskMadeline
             Speed = new PointF((float)Math.Cos(newAngle) * newSpeed * elytraFacing,
                 (float)Math.Sin(newAngle) * newSpeed);
 
-            UpdateElytraAnimationFrame(newAngle);
-        }
-
-        void UpdateElytraAnimationFrame(float angle)
-        {
-            const int frameCount = 9;
-            const int stableFrame = 6;
-            float t = (angle - ElytraStableAngle) / (ElytraAngleRange / 2f);
-            int frame = stableFrame;
-            if (t < 0f) frame -= (int)(t * (frameCount - stableFrame - 1));
-            else frame -= (int)(t * stableFrame);
-            ElytraAnimationFrame = Math.Max(0, Math.Min(frameCount - 1, frame));
+            elytraGlideAngle = newAngle;
         }
 
         bool SlipCheck(float addY = 0f)
@@ -2956,8 +2918,6 @@ namespace DeskMadeline
             ConsumeDash();
             LastDashWasTwo = Dashes == 2;
             Dashes = Math.Max(0, Dashes - 1);
-            hairFlashTimer = 0.12f;
-            HairColor = FlashHairColor;
             return crouchDash;
         }
 
@@ -3254,7 +3214,6 @@ namespace DeskMadeline
             else jumpGraceTimer = 0f;
             RefillDash();
             Stamina = ClimbMaxStamina;
-            dreamDashOutTimer = 0.16f;
             freezeTimer = FreezeFramesEnabled ? 0.05f : 0f;
             if (enterClimb)
             {
@@ -3285,158 +3244,352 @@ namespace DeskMadeline
             State = StFrozen;
         }
 
-        // ===== Animation selection (ported orig_UpdateSprite) =====
-        void UpdateSprite(float dt, PetInput input)
+        // ===== Hair colour (Player.UpdateHair) =====
+
+        // Player.NormalBadelineHairColor is BadelineOldsite.HairColor; the used and two-dash
+        // colours are Madeline's.
+        public static readonly Color NormalBadelineHairColor = Color.FromArgb(0x9B, 0x3F, 0xB5);
+
+        /// <summary>
+        /// Player.UpdateHair's colour, after UpdateSprite as it runs in orig_Update. Its other
+        /// half -- the facing and the motion -- is the hair simulation's. The colours pass through
+        /// the desktop's own hair-colour setting and a skin's, which stand in for the game's.
+        /// </summary>
+        void UpdateHairColor(float dt)
         {
-            if (landingStumbleTimer > 0f && Speed.Y != 0f) landingStumbleTimer = 0f;
-            string id;
-            if (BeingDragged)
+            bool asBadeline = SpriteMode == ModeMadelineAsBadeline;
+            if (Dashes == 0 && Dashes < DashCapacity)
             {
-                id = "dangling";
-            }
-            else if (State == StPickup)
-            {
-                id = "pickUp";
-            }
-            else if (State == StDreamDash)
-            {
-                id = dreamDashAnimTimer > 0f ? "dreamDashIn" : "dreamDashLoop";
-            }
-            else if (State == StElytra)
-            {
-                id = "elytra";
-            }
-            else if (State == StSwim)
-            {
-                // Player.orig_UpdateSprite. The swim animation reads MoveY, not the feather
-                // she steers with, so a controller half-pushed up still swims level.
-                id = input.MoveY > 0 ? "swimDown" : input.MoveY < 0 ? "swimUp" : "swimIdle";
-            }
-            else if (dreamDashOutTimer > 0f)
-            {
-                id = "dreamDashOut";
-            }
-            else if (throwAnimTimer > 0f)
-            {
-                id = "throw";
-            }
-            else if (!onGround && landingStumbleTimer > 0f)
-            {
-                id = "runStumble";
-            }
-            else if (dashAttackTimer > 0)
-            {
-                if (onGround && DashDir.Y == 0f && !Ducking && Speed.X != 0f &&
-                    moveX == -Sign(Speed.X)) id = "skid";
-                else id = Ducking ? "duck" : "dash";
-            }
-            else if (State == StClimb)
-            {
-                if (lastClimbMove < 0) id = "climb";
-                else if (lastClimbMove > 0) id = "wallslide";
-                else if (!CollideAt(Pos.X + Facing, Pos.Y + 6)) id = "dangling";
-                else if (input.MoveX == -Facing)
-                    id = AnimId == "climbLookBackStart" || AnimId == "climbLookBack"
-                        ? AnimId : "climbLookBackStart";
-                else id = "wallslide";
-            }
-            else if (Ducking && State == StNormal)
-            {
-                id = "duck";
-            }
-            else if (onGround)
-            {
-                fastJump = false;
-                if (Holding == null && moveX != 0 && CollideAt(Pos.X + moveX, Pos.Y))
-                {
-                    id = "push";
-                }
-                else if (Math.Abs(Speed.X) <= 25 && moveX == 0)
-                {
-                    if (Holding != null)
-                    {
-                        id = "idle_carry";
-                    }
-                    else
-                    {
-                        bool noGroundAhead1 = !CollideAt(Pos.X + Facing, Pos.Y + 2);
-                        bool noGroundAhead4 = !CollideAt(Pos.X + Facing * 4, Pos.Y + 2);
-                        bool noGroundBehind1 = !CollideAt(Pos.X - Facing, Pos.Y + 2);
-                        bool noGroundBehind4 = !CollideAt(Pos.X - Facing * 4, Pos.Y + 2);
-                        if (noGroundAhead1 && noGroundAhead4) id = "edge";
-                        else if (noGroundBehind1 && noGroundBehind4) id = "edgeBack";
-                        else if (input.MoveY == -1) id = "lookUp";
-                        else id = "idle";
-                    }
-                }
-                else if (Holding != null)
-                {
-                    id = "runSlow_carry";
-                }
-                else if (Sign(Speed.X) == -moveX && moveX != 0)
-                {
-                    id = Math.Abs(Speed.X) > MaxRun ? "skid" : "flip";
-                }
-                else if (landingStumbleTimer > 0f)
-                {
-                    id = "runStumble";
-                }
-                else
-                {
-                    id = Math.Abs(Speed.X) < 45 ? "runSlow" : "runFast";
-                }
-            }
-            else if (wallSlideDir != 0)
-            {
-                id = "wallslide";
-            }
-            else if (Speed.Y < 0)
-            {
-                if (Holding != null) id = "jumpSlow_carry";
-                else if (fastJump || Math.Abs(Speed.X) > 90) { fastJump = true; id = "jumpFast"; }
-                else id = "jumpSlow";
+                Color used = Resolve(0, UsedHairColor);
+                float amount = Math.Max(0f, Math.Min(1f, 6f * dt));
+                // Color.Lerp: each channel lerped and truncated.
+                HairColor = Color.FromArgb(
+                    (int)(HairColor.R + (used.R - HairColor.R) * amount),
+                    (int)(HairColor.G + (used.G - HairColor.G) * amount),
+                    (int)(HairColor.B + (used.B - HairColor.B) * amount));
             }
             else
             {
-                if (Holding != null) id = "fallSlow_carry";
-                else if (fastJump || Speed.Y >= MaxFall) { fastJump = true; id = "fallFast"; }
-                else id = "fallSlow";
-            }
-
-            // Do not override until flip finishes
-            if (AnimId == "flip" && !AnimFinished && id != "flip") { UpdateIdleFidget(dt, input, false); return; }
-            // Do not override until idle fidget finishes
-            if (fidgetId != null)
-            {
-                if (AnimFinished) { fidgetId = null; observedIdleLoopCount = 0; }
-                else return;
-            }
-            if (id == "idle" && AnimId == "idle" && UpdateIdleFidget(dt, input, true)) return;
-            if (id != "idle") observedIdleLoopCount = 0;
-            AnimId = id;
-        }
-
-        public bool AnimFinished;
-
-        bool UpdateIdleFidget(float dt, PetInput input, bool allow)
-        {
-            bool completedIdleLoop = AnimLoopCount > observedIdleLoopCount;
-            observedIdleLoopCount = AnimLoopCount;
-            if (allow && idleTimer > 3f && completedIdleLoop && rng.NextDouble() < 0.2)
-            {
-                string[] pool = { "idleA", "idleB", "idleC" };
-                string pick = pool[rng.Next(pool.Length)];
-                if (Sprites.Has(pick + "00"))
+                Color color;
+                if (lastDashes != Dashes)
                 {
-                    fidgetId = pick;
-                    AnimId = pick;
-                    return true;
+                    color = FlashHairColor;
+                    hairFlashTimer = 0.12f;
                 }
+                else if (!(hairFlashTimer > 0f))
+                {
+                    color = Dashes != 2
+                        ? Resolve(1, asBadeline ? NormalBadelineHairColor : NormalHairColor)
+                        : Resolve(2, TwoDashesHairColor);
+                }
+                else
+                {
+                    color = FlashHairColor;
+                    hairFlashTimer -= dt;
+                }
+                HairColor = color;
             }
-            return false;
+            lastDashes = Dashes;
         }
 
-        public int AnimLoopCount;
+        static Color Resolve(int dashes, Color vanilla)
+            => PetWindow.Instance?.ResolveHairColor(dashes, vanilla) ?? vanilla;
+
+        // ===== The sprite (PlayerSprite on Monocle's Sprite) =====
+
+        /// <summary>PlayerSprite.Mode: which of the game's player sprites she wears.</summary>
+        public const int ModeMadeline = 0, ModeMadelineNoBackpack = 1, ModeBadeline = 2,
+            ModeMadelineAsBadeline = 3, ModePlayback = 4;
+
+        /// <summary>Her sprite: the bank entry she wears, played the way Monocle plays it.</summary>
+        public readonly GameSprite Sprite = new GameSprite();
+        /// <summary>PlayerSprite.spriteName: the bank entry the sprite was made from.</summary>
+        public string SpriteName { get; private set; } = "";
+        /// <summary>PlayerSprite.Mode; a skin's hash value when SkinModHelper dresses her.</summary>
+        public int SpriteMode { get; private set; }
+        /// <summary>SkinModHelper's patches to the player, when a skin is worn; null in vanilla.</summary>
+        public IPlayerSkin Skin { get; private set; }
+
+        public string AnimId => Sprite.CurrentAnimationID;
+        /// <summary>The frame showing, as its atlas path.</summary>
+        public string CurrentFrameId => Sprite.Texture;
+
+        /// <summary>The shell has her lie down for a nap; see UpdateSprite.</summary>
+        public bool Napping;
+
+        // Player.idle*Options. The desktop has no core mode, so the warm set is never chosen.
+        static readonly Chooser idleColdOptions = new Chooser().Add("idleA", 5f).Add("idleB", 3f).Add("idleC", 1f);
+        static readonly Chooser idleNoBackpackOptions = new Chooser().Add("idleA", 1f).Add("idleB", 3f).Add("idleC", 3f);
+
+        /// <summary>
+        /// PlayerSprite's constructor, or ResetSprite: the bank entry onto the sprite, keeping the
+        /// callbacks the Player gave it.
+        /// </summary>
+        public void ResetSprite(SpriteBank bank, string spriteName, int mode, IPlayerSkin skin)
+        {
+            Skin = skin;
+            SpriteMode = mode;
+            SpriteName = spriteName;
+            if (bank != null && bank.Has(spriteName)) bank.CreateOn(Sprite, spriteName);
+        }
+
+        /// <summary>
+        /// Sprite.Play from the Player. With a skin on, SkinModHelper's hook decides what is
+        /// actually played; in vanilla an animation the sprite lacks would throw, and since the
+        /// game's sprites lack none of the ones asked for here, the only sprite that can lack one
+        /// is a sprite with no bank behind it at all -- the checks' -- which plays nothing.
+        /// </summary>
+        public void PlaySprite(string id, bool restart = false, bool randomizeFrame = false)
+        {
+            if (Skin != null) { Skin.Play(this, id, restart, randomizeFrame); return; }
+            if (!Sprite.Has(id)) return;
+            Sprite.Play(id, restart, randomizeFrame);
+        }
+
+        /// <summary>The Player constructor's sprite callbacks.</summary>
+        void WireSprite()
+        {
+            // Sprite.OnFrameChange: the footsteps and handholds keyed to frames, and the dust
+            // pushing kicks up.
+            Sprite.OnFrameChange = anim =>
+            {
+                if (IsDead) return;
+                int frame = Sprite.CurrentAnimationFrame;
+                int soundMode = Skin?.PatchModeNoBackpack(SpriteMode) ?? SpriteMode;
+                if ((anim == "runSlow_carry" && (frame == 0 || frame == 6)) ||
+                    (anim == "runFast" && (frame == 0 || frame == 6)) ||
+                    (anim == "runSlow" && (frame == 0 || frame == 6)) ||
+                    (anim == "walk" && (frame == 0 || frame == 6)) ||
+                    (anim == "runStumble" && frame == 6) || (anim == "flip" && frame == 4) ||
+                    (anim == "runWind" && (frame == 0 || frame == 6)) ||
+                    (anim == "idleC" && soundMode == ModeMadelineNoBackpack &&
+                        (frame == 3 || frame == 6 || frame == 8 || frame == 11)) ||
+                    (anim == "carryTheoWalk" && (frame == 0 || frame == 6)) ||
+                    (anim == "push" && (frame == 8 || frame == 15)))
+                {
+                    if (CollideAt(Pos.X, Pos.Y + 1f))
+                        PlaySound("event:/char/madeline/footstep", "surface_index", GroundSurfaceSoundIndex);
+                }
+                else if ((anim == "climbUp" && frame == 5) || (anim == "climbDown" && frame == 5))
+                {
+                    if (CollideAt(Pos.X + Facing, Pos.Y - CurrentHitHeight * 0.5f))
+                        PlaySound("event:/char/madeline/handhold", "surface_index", WallSurfaceSoundIndex(Facing));
+                }
+                else if (anim == "wakeUp" && frame == 19)
+                    PlaySound("event:/char/madeline/campfire_stand");
+                else if (anim == "sitDown" && frame == 12)
+                    PlaySound("event:/char/madeline/summit_sit");
+                if (anim == "push" && (frame == 8 || frame == 15)) PushDustCount++;
+            };
+            // Sprite.OnLastFrame: an idle that has gone on long enough sometimes becomes a fidget.
+            Sprite.OnLastFrame = anim =>
+            {
+                float chance = Skin?.IdleAnimationChance ?? 0.2f;
+                if (IsDead || Sprite.CurrentAnimationID != "idle" || !(idleTimer > 3f) || !rng.Chance(chance))
+                    return;
+                int chooseMode = Skin?.PatchModeIdleOptions(SpriteMode) ?? SpriteMode;
+                Chooser options = chooseMode != ModeMadeline
+                    ? Skin?.IdleColdOptions ?? idleNoBackpackOptions
+                    : Skin?.IdleColdOptions ?? idleColdOptions;
+                string text = options.Choose(rng);
+                if (string.IsNullOrEmpty(text) || !Sprite.Has(text)) return;
+                PlaySprite(text);
+                int soundMode = Skin?.PatchModeNoBackpack(SpriteMode) ?? SpriteMode;
+                if (soundMode == ModeMadeline)
+                {
+                    if (text == "idleB") idleSfx = PlayKeyedSound("event:/char/madeline/idle_scratch", IdleSfxKey);
+                    else if (text == "idleC") idleSfx = PlayKeyedSound("event:/char/madeline/idle_sneeze", IdleSfxKey);
+                }
+                else if (text == "idleA") idleSfx = PlayKeyedSound("event:/char/madeline/idle_crackknuckles", IdleSfxKey);
+            };
+            // Sprite.OnChange: leaving a fidget for anything but another idle cuts its sound off.
+            Sprite.OnChange = (last, next) =>
+            {
+                if ((last == "idleB" || last == "idleC") && next != null && !next.StartsWith("idle") && idleSfx != null)
+                {
+                    StopKeyedSound(idleSfx);
+                }
+            };
+        }
+
+        /// <summary>Pushing's dust, for the shell to emit: Dust.BurstFG at frames 8 and 15.</summary>
+        public int PushDustCount { get; private set; }
+        // Player.idleSfx: the fidget's sound, kept so that leaving the fidget can stop it.
+        // Audio.Play hands back an instance; here the instance is the shell's, under this key.
+        string idleSfx;
+        const string IdleSfxKey = "player.idleSfx";
+
+        string PlayKeyedSound(string path, string key)
+        {
+            if (Ghost) return null;
+            SoundEvents.Enqueue(new PlayerSoundEvent(path, key: key));
+            return key;
+        }
+
+        /// <summary>Audio.Stop: allowing the event its fade-out.</summary>
+        void StopKeyedSound(string key)
+        {
+            if (Ghost || key == null) return;
+            SoundEvents.Enqueue(PlayerSoundEvent.Stop(key));
+        }
+
+        // ===== Animation selection (Player.UpdateSprite / orig_UpdateSprite) =====
+        void UpdateSprite(float dt, PetInput input)
+        {
+            OrigUpdateSprite(input);
+            ElytraUpdateSprite();
+        }
+
+        /// <summary>
+        /// CommunalHelper's Elytra.Mod_Player_UpdateSprite: after the game's choice, an elytra
+        /// glide plays the fly sheet and picks its frame from the glide angle -- seven ninths of
+        /// the way along when level, scaled to however many frames the sprite has.
+        /// </summary>
+        void ElytraUpdateSprite()
+        {
+            // Desktop: being carried by the cursor stays the pose over everything, this included.
+            if (State != StElytra || BeingDragged) return;
+            PlaySprite(ElytraAnimation);
+            if (Sprite.CurrentAnimationID != ElytraAnimation) return;
+            int frameCount = Sprite.CurrentAnimationTotalFrames;
+            int stableFrame = (int)(frameCount / 9f * 7f) - 1;
+            if (frameCount > 17) stableFrame -= (int)((frameCount - 9) / 9f);
+            int frame = stableFrame;
+            if (elytraGlideAngle is float angle)
+            {
+                float t = (angle - ElytraStableAngle) / (ElytraAngleRange / 2f);
+                if (t < 0) frame -= (int)(t * (frameCount - stableFrame - 1));
+                else frame -= (int)(t * stableFrame);
+            }
+            Sprite.SetAnimationFrame(Math.Max(0, Math.Min(frameCount - 1, frame)));
+        }
+
+        void OrigUpdateSprite(PetInput input)
+        {
+            // orig_UpdateSprite opens by easing Sprite.Scale back to one; that runs just before
+            // this, beside the hair. Player.UpdateSprite then sets the rate for space, which the
+            // desktop has none of.
+
+            // Desktop: being carried by the cursor is a pose of her own, held over everything.
+            if (BeingDragged) { PlaySprite("dangling"); return; }
+            // Desktop: the nap the shell asks for, while she stands still -- the campfire
+            // lie-down, then asleep. Sleep has no goto, so finishing it leaves no animation.
+            if (Napping && State == StNormal && onGround && Math.Abs(Speed.X) < 1f && !Ducking)
+            {
+                if (Sprite.CurrentAnimationID != "sleep" && Sprite.CurrentAnimationID != "asleep")
+                    PlaySprite(Sprite.LastAnimationID == "sleep" ? "asleep" : "sleep");
+                return;
+            }
+
+            bool inControl = !(State == StDummy || State == StIntroWalk || State == StIntroJump ||
+                State == StIntroRespawn || State == StIntroWakeUp || State == StBirdDashTutorial ||
+                State == StFrozen || State == StIntroMoonJump || State == StIntroThinkForABit);
+            if (!inControl || Sprite.CurrentAnimationID == "throw" || State == StTempleFall ||
+                State == StReflectionFall || State == StStarFly || State == StCassetteFly)
+                return;
+
+            if (State == StAttract) PlaySprite("fallFast");
+            else if (State == StSummitLaunch) PlaySprite("launch");
+            else if (State == StPickup) PlaySprite("pickup");
+            else if (State == StSwim)
+            {
+                // The swim animation reads MoveY, not the feather she steers with, so a
+                // controller half-pushed up still swims level.
+                if (input.MoveY > 0) PlaySprite("swimDown");
+                else if (input.MoveY < 0) PlaySprite("swimUp");
+                else PlaySprite("swimIdle");
+            }
+            else if (State == StDreamDash)
+            {
+                if (Sprite.CurrentAnimationID != "dreamDashIn" && Sprite.CurrentAnimationID != "dreamDashLoop")
+                    PlaySprite("dreamDashIn");
+            }
+            else if (Sprite.LastAnimationID != null && Sprite.LastAnimationID.StartsWith("dreamDash") &&
+                Sprite.LastAnimationID != "dreamDashOut")
+            {
+                PlaySprite("dreamDashOut");
+            }
+            else if (Sprite.CurrentAnimationID != "dreamDashOut")
+            {
+                if (DashAttacking)
+                {
+                    if (onGround && DashDir.Y == 0f && !Ducking && Speed.X != 0f && moveX == -Sign(Speed.X))
+                    {
+                        PlaySprite("skid");
+                    }
+                    else if (Ducking) PlaySprite("duck");
+                    else PlaySprite("dash");
+                }
+                else if (State == StClimb)
+                {
+                    if (lastClimbMove < 0) PlaySprite("climbUp");
+                    else if (lastClimbMove > 0) PlaySprite("wallslide");
+                    else if (!CollideAt(Pos.X + Facing, Pos.Y + 6)) PlaySprite("dangling");
+                    else if (input.MoveX == -Facing)
+                    {
+                        if (Sprite.CurrentAnimationID != "climbLookBack") PlaySprite("climbLookBackStart");
+                    }
+                    else PlaySprite("wallslide");
+                }
+                else if (Ducking && State == StNormal) PlaySprite("duck");
+                else if (onGround)
+                {
+                    fastJump = false;
+                    if (Holding == null && moveX != 0 && CollideAt(Pos.X + moveX, Pos.Y))
+                    {
+                        PlaySprite("push");
+                    }
+                    else if (Math.Abs(Speed.X) <= 25 && moveX == 0)
+                    {
+                        if (Holding != null) PlaySprite("idle_carry");
+                        else if (!CollideAt(Pos.X + Facing, Pos.Y + 2) && !CollideAt(Pos.X + Facing * 4, Pos.Y + 2))
+                            PlaySprite("edge");
+                        else if (!CollideAt(Pos.X - Facing, Pos.Y + 2) && !CollideAt(Pos.X - Facing * 4, Pos.Y + 2))
+                            PlaySprite("edgeBack");
+                        else if (input.MoveY == -1)
+                        {
+                            if (Sprite.LastAnimationID != "lookUp") PlaySprite("lookUp");
+                        }
+                        else if (Sprite.CurrentAnimationID != null &&
+                            (!Sprite.CurrentAnimationID.Contains("idle") ||
+                             (Sprite.CurrentAnimationID == "idle_carry" && Holding == null)))
+                        {
+                            PlaySprite("idle");
+                        }
+                    }
+                    else if (Holding != null) PlaySprite("runSlow_carry");
+                    else if (Sign(Speed.X) == -moveX && moveX != 0)
+                    {
+                        if (Math.Abs(Speed.X) > MaxRun) PlaySprite("skid");
+                        else if (Sprite.CurrentAnimationID != "skid") PlaySprite("flip");
+                    }
+                    else if (!SpriteRunning || Sprite.CurrentAnimationID == "runWind" ||
+                        (Sprite.CurrentAnimationID == "runSlow_carry" && Holding == null))
+                    {
+                        if (Math.Abs(Speed.X) < 45f) PlaySprite("runSlow");
+                        else PlaySprite("runFast");
+                    }
+                }
+                else if (wallSlideDir != 0 && Holding == null) PlaySprite("wallslide");
+                else if (Speed.Y < 0)
+                {
+                    if (Holding != null) PlaySprite("jumpSlow_carry");
+                    else if (fastJump || Math.Abs(Speed.X) > 90) { fastJump = true; PlaySprite("jumpFast"); }
+                    else PlaySprite("jumpSlow");
+                }
+                else if (Holding != null) PlaySprite("fallSlow_carry");
+                else if (fastJump || Speed.Y >= MaxFall)
+                {
+                    fastJump = true;
+                    if (Sprite.LastAnimationID != "fallFast") PlaySprite("fallFast");
+                }
+                else PlaySprite("fallSlow");
+            }
+        }
+
+        /// <summary>PlayerSprite.Running.</summary>
+        bool SpriteRunning => Sprite.LastAnimationID != null &&
+            (Sprite.LastAnimationID == "flip" || Sprite.LastAnimationID.StartsWith("run"));
     }
 
     /// <summary>

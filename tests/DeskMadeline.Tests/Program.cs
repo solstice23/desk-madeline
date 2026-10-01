@@ -39,6 +39,8 @@ static class Program
         failed += FmodChecks.Run();       // which FMOD each build of Celeste has, and where
         failed += HairChecks.Run();      // the hair table, read from the game rather than copied
         failed += AtlasChecks.Run();      // sprites read out of an installed Celeste
+        failed += SpriteBankChecks.Run(); // Sprites.xml read as Monocle reads it, and Sprite playing it
+        failed += AnimationChecks.Run();  // UpdateSprite and its callbacks, UpdateHair's colour
         failed += SoundBankChecks.Run();
         failed += AtlasIndexTool.Run();   // opt-in: regenerate docs/celeste-atlas-index.tsv
         failed += GraphicsDumpTool.Run(); // opt-in: unpack the atlases, see tools/dump-graphics.ps1  // opt-in: every event resolves in Celeste's banks

@@ -1,15 +1,13 @@
 using System;
-using System.Collections.Generic;
-using System.Reflection;
+using System.IO;
+using System.Linq;
+using System.Xml.Linq;
 using DeskMadeline;
 
-// Where her hair sits, per frame.
-//
-// The numbers come from the game's own Content\Graphics\Sprites.xml now, rather than from a
-// copy of it typed into HairMeta. This checks the reading of it, and -- more usefully --
-// holds the copy that is still in the file up against the original, so that a difference
-// between them is something that gets reported rather than something that waits to be found.
-// The elytra is not Celeste's and cannot be there; it is expected to be missing.
+// Where her hair sits, per frame: PlayerSprite.FrameMetadata, built from the game's own
+// Sprites.xml the way CreateFramesMetadata builds it, keyed by texture, with CommunalHelper's
+// elytra added the way its hooks add it. Nothing here is a copy of the game's numbers; the
+// checks hold the reading up against values read off Sprites.xml by eye.
 static class HairChecks
 {
     static int failed;
@@ -20,94 +18,71 @@ static class HairChecks
         if (!ok) failed++;
     }
 
-    static Dictionary<string, HairMeta.Meta> Table(string name)
-        => (Dictionary<string, HairMeta.Meta>)typeof(HairMeta)
-            .GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-            .GetValue(null);
+    static bool Is(string texture, float x, float y, int bangs)
+        => HairMeta.TryGet(texture, out var m) && m.HasHair && m.Offset.X == x && m.Offset.Y == y && m.Bangs == bangs;
 
     public static int Run()
     {
         Console.WriteLine();
         Console.WriteLine(new string('=', 74));
-        Console.WriteLine("HAIR: the frame table, read from Sprites.xml");
+        Console.WriteLine("HAIR: PlayerSprite.FrameMetadata, from the game's Sprites.xml");
         Console.WriteLine(new string('=', 74));
 
-        string sprites = CelesteInstall.GraphicsFile("Sprites.xml");
-        if (sprites == null)
+        string xml = CelesteInstall.GraphicsFile("Sprites.xml");
+        if (xml == null || CelesteInstall.AtlasesDirectory == null)
         {
-            Console.WriteLine("  no Sprites.xml -- nothing to read");
+            Console.WriteLine("  no Celeste install found -- nothing to read");
             return 0;
         }
-        HairMeta.LoadVanilla(sprites);
-        var vanilla = Table("Vanilla");
-        Check($"the player's frames are read ({vanilla.Count} of them)", vanilla.Count > 200);
+        Sprites.LoadAll(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "assets", "player"));
+        var bank = SpriteBank.Load(Sprites.Atlas, XDocument.Load(xml), Array.Empty<XDocument>());
+        HairMeta.LoadPlayerSprites(bank, Sprites.Atlas);
+        Check($"the player sprites' frames are read ({HairMeta.Count} of them)", HairMeta.Count > 1000);
 
-        // Three shapes of entry: a plain offset, one carrying a bangs frame after a colon,
-        // and a sheet of a single frame, which is filed under its bare name.
-        Check("a plain offset (swim06 is 0,-3)",
-            vanilla.TryGetValue("swim06", out var swim) &&
-            swim.Offset.X == 0f && swim.Offset.Y == -3f && swim.Bangs == 0);
-        Check("an offset with bangs (climb08 is 2,-2 with bangs 2)",
-            vanilla.TryGetValue("climb08", out var climb) &&
-            climb.Offset.X == 2f && climb.Offset.Y == -2f && climb.Bangs == 2);
-        Check("a one-frame sheet, under its bare name (duck)",
-            vanilla.ContainsKey("duck"));
+        // Three shapes of entry: a plain offset, one with a bangs frame after a colon, and a
+        // sheet of a single frame, filed under its bare path.
+        Check("a plain offset (swim06 is 0,-3)", Is("characters/player/swim06", 0f, -3f, 0));
+        Check("an offset with bangs (climb08 is 2,-2 with bangs 2)", Is("characters/player/climb08", 2f, -2f, 2));
+        Check("a one-frame sheet, under its bare path (duck)", HairMeta.HasHair("characters/player/duck"));
+        Check("every swim frame has hair",
+            Enumerable.Range(0, 18).All(i => HairMeta.HasHair("characters/player/swim" + i.ToString("00"))));
+        // lookUp's sheet turns her head on frame 4: from 0,-2 facing to -1,-2 with bangs 1.
+        Check("lookUp turns on frame 4 and nowhere else",
+            Is("characters/player/lookUp03", 0f, -2f, 0) && Is("characters/player/lookUp04", -1f, -2f, 1) &&
+            Is("characters/player/lookUp07", -1f, -2f, 1));
 
-        // The swim frames are the ones that were missing when swimming was ported.
-        int swimFrames = 0;
-        for (int i = 0; i < 18; i++) if (vanilla.ContainsKey("swim" + i.ToString("00"))) swimFrames++;
-        Check($"every swim frame has an entry ({swimFrames} of 18)", swimFrames == 18);
+        // A copy="player" entry's frames answer under its own path: CreateFramesMetadata walks
+        // the copied source with the override path.
+        Check("Badeline's frames have the same metadata under her own path",
+            Is("characters/player_badeline/climb08", 2f, -2f, 2));
 
-        Console.WriteLine();
-        Console.WriteLine("  Every frame resolves, from one layer or another");
-        int unanswered = 0;
-        foreach (string frame in vanilla.Keys)
-            if (!HairMeta.TryGet(frame, out _)) unanswered++;
-        Check($"nothing the game has a frame for is left without hair ({unanswered} missing)",
-            unanswered == 0);
-        Check("swimming among them, which is what went unnoticed before",
-            HairMeta.TryGet("swim00", out _) && HairMeta.TryGet("swim12", out _));
-
-        // Not a failure: the entries here are the port's own, tuned finer than the game's
-        // whole pixels. Printed so that the two can be told apart at a glance, and so that
-        // anything that ought to have been left to the game shows up as a line here.
-        Console.WriteLine();
-        Console.WriteLine("  What this repository still answers for itself");
-        var own = Table("Offsets");
-        var tuned = new List<string>();
-        var onlyOurs = new List<string>();
-        foreach (var pair in own)
-        {
-            if (!vanilla.TryGetValue(pair.Key, out var theirs)) { onlyOurs.Add(pair.Key); continue; }
-            if (Math.Abs(pair.Value.Offset.X - theirs.Offset.X) > 0.001f ||
-                Math.Abs(pair.Value.Offset.Y - theirs.Offset.Y) > 0.001f ||
-                pair.Value.Bangs != theirs.Bangs)
-                tuned.Add(pair.Key);
-        }
-        Console.WriteLine($"    {own.Count} entries: {tuned.Count} tuned away from the game's," +
-            $" {own.Count - tuned.Count - onlyOurs.Count} the same as it," +
-            $" {onlyOurs.Count} it has no answer for");
-        Console.WriteLine($"      only ours: {string.Join(", ", onlyOurs)}");
-        Check("the frames the game cannot supply are the elytra's and the longer climb sheet",
-            onlyOurs.TrueForAll(id => id.StartsWith("fly") || id.StartsWith("climb")));
-
-        // PlayerSprite.HasHair: a frame the table has no entry for wears none. Two sheets
-        // answer that way, and both are poses with her hair painted into the sprite -- the
-        // sleeping sheet, which says hair="" outright, and the wakeUp sheet, which the game's
-        // table simply never mentions. She sleeps on the second of those, so drawing hair
-        // over anything the table cannot answer for put a second head of it beside the first.
         Console.WriteLine();
         Console.WriteLine("  Which frames wear hair at all (PlayerSprite.HasHair)");
-        int hairless = 0;
-        foreach (string frame in vanilla.Keys) if (!HairMeta.HasHair(frame)) hairless++;
-        Check($"every frame the game gives an offset for wears it ({hairless} would not)",
-            hairless == 0);
         Check("the sleeping sheet does not, hair=\"\" being the game's way of saying so",
-            !HairMeta.HasHair("sleep00") && !HairMeta.HasHair("sleep11"));
-        Check("nor the wakeUp sheet, which is the frame she is held on while asleep",
-            !HairMeta.HasHair("wakeUp00") && !HairMeta.HasHair("wakeUp07"));
-        Check("while the frames beside them do", HairMeta.HasHair("idle00") &&
-            HairMeta.HasHair("duck") && HairMeta.HasHair("swim00"));
+            !HairMeta.HasHair("characters/player/sleep00") && !HairMeta.HasHair("characters/player/sleep11"));
+        Check("nor the wakeUp sheet, which the table never mentions",
+            !HairMeta.HasHair("characters/player/wakeUp/00") && !HairMeta.HasHair("characters/player/wakeUp/07"));
+        Check("while idle does", HairMeta.HasHair("characters/player/idle00"));
+
+        Console.WriteLine();
+        Console.WriteLine("  Carrying (PlayerSprite.CarryYOffset)");
+        // The curves this port used to keep by hand, now read from carry="..." instead.
+        int[] idleCarry = { -1, -1, -1, 0, 0, 0, 0, 0, -1 };
+        int[] runCarry = { -1, 0, 0, 0, -3, -2, -1, 0, 0, 0, -3, -1 };
+        int[] jumpCarry = { -3, -3, -1, -1 };
+        bool Curve(string sheet, int[] curve) => Enumerable.Range(0, curve.Length)
+            .All(i => HairMeta.CarryYOffset("characters/player/" + sheet + i.ToString("00")) == curve[i]);
+        Check("idle_carry, run_carry and jump_carry ride as they did by hand",
+            Curve("idle_carry", idleCarry) && Curve("run_carry", runCarry) && Curve("jump_carry", jumpCarry));
+
+        Console.WriteLine();
+        Console.WriteLine("  CommunalHelper's elytra");
+        Check("its metadata lands on player_no_backpack's fly sheet",
+            Is("characters/player_no_backpack/CommunalHelper/fly00", 4f, 0f, 0) &&
+            Is("characters/player_no_backpack/CommunalHelper/fly08", 2f, -1f, 0));
+        Check("and every player sprite has its nine-frame glide",
+            new[] { "player", "player_badeline" }.All(id =>
+                bank.SpriteData[id].Sprite.Animations.TryGetValue(Player.ElytraAnimation, out var a) && a.Frames.Length == 9));
 
         return failed;
     }

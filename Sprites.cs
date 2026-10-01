@@ -109,13 +109,18 @@ namespace DeskMadeline
         /// <summary>The face the tray icon is made from, in the Portraits atlas.</summary>
         public const string PortraitId = "madeline/normal00";
 
-        public static void LoadAll(string dir, string skinDir = null, string skinAtlasFolder = null)
+        public static void LoadAll(string dir, string skinDir = null, string skinAtlasFolder = null,
+            string skinGameplayDirectory = null)
         {
             AssetsDir = dir;
             foreach (var kv in _tex) kv.Value.Dispose();
             foreach (var kv in _texFlip) kv.Value.Dispose();
             _tex.Clear();
             _texFlip.Clear();
+            foreach (var kv in _atlas) kv.Value.Dispose();
+            foreach (var kv in _atlasFlip) kv.Value.Dispose();
+            _atlas.Clear();
+            _atlasFlip.Clear();
             // Derived from those, so they go with them; a skin brings its own frames and its
             // own answer to whether any hair is painted into them.
             foreach (var kv in _hairMask) kv.Value?.Dispose();
@@ -127,6 +132,7 @@ namespace DeskMadeline
             // in an install.  assets\ is laid over the top and holds only what the game has
             // no sprite for: the elytra, the cat bangs, a particle it draws as a rectangle.
             LoadFromCeleste(skinAtlasFolder);
+            LoadAtlasOverlay(skinGameplayDirectory);
             if (!Directory.Exists(dir))
             {
                 LoadSkinDirectories(skinDir);
@@ -134,6 +140,15 @@ namespace DeskMadeline
             }
 
             LoadDirectory(dir, null);
+            // CommunalHelper's elytra frames ship in assets\ as fly00-08; in the game they sit at
+            // characters/player_no_backpack/CommunalHelper/fly, which is where its hook looks.
+            for (int i = 0; ; i++)
+            {
+                string flyFile = Path.Combine(dir, "fly" + i.ToString("00") + ".png");
+                if (!File.Exists(flyFile)) break;
+                string flyPath = "characters/player_no_backpack/CommunalHelper/fly" + i.ToString("00");
+                if (!_atlas.ContainsKey(flyPath)) StorePath(flyPath, ReadPng(flyFile));
+            }
             LoadSkinDirectories(skinDir);
             string glider = Path.Combine(Path.GetDirectoryName(dir), "glider");
             if (Directory.Exists(glider)) LoadDirectory(glider, "glider/");
@@ -237,13 +252,24 @@ namespace DeskMadeline
 
                 // Group by page so each one is decoded once: they are whole-atlas images and
                 // far too big to hold on to, or to read again per sprite.
-                var wanted = new Dictionary<int, List<(string Id, CelesteAtlas.Entry Entry)>>();
-                foreach (var pick in chosen)
+                var wanted = new Dictionary<int, List<(string Id, CelesteAtlas.Entry Entry, bool ByPath)>>();
+                void Want(string id, CelesteAtlas.Entry entry, bool byPath)
                 {
-                    if (!wanted.TryGetValue(pick.Value.Entry.Page, out var list))
-                        wanted[pick.Value.Entry.Page] = list = new List<(string, CelesteAtlas.Entry)>();
-                    list.Add((pick.Key, pick.Value.Entry));
+                    if (!wanted.TryGetValue(entry.Page, out var list))
+                        wanted[entry.Page] = list = new List<(string, CelesteAtlas.Entry, bool)>();
+                    list.Add((id, entry, byPath));
                 }
+                foreach (var pick in chosen) Want(pick.Key, pick.Value.Entry, false);
+                // The player's sprite bank entries by their own atlas paths, the way the game
+                // keeps them: Sprites.xml names frames by path, and a skin or a copy="player"
+                // entry resolves its animations against exactly these.
+                foreach (var pair in entries)
+                    foreach (string folder in PlayerAtlasFolders)
+                        if (pair.Key.StartsWith(folder, StringComparison.OrdinalIgnoreCase))
+                        {
+                            Want(pair.Key, pair.Value, true);
+                            break;
+                        }
 
                 int loaded = 0;
                 foreach (var page in wanted)
@@ -251,10 +277,14 @@ namespace DeskMadeline
                     string data = Path.Combine(atlases, pages[page.Key] + ".data");
                     if (!File.Exists(data)) continue;
                     using Bitmap sheet = CelesteAtlas.DecodePage(data);
-                    foreach ((string id, CelesteAtlas.Entry entry) in page.Value)
+                    foreach ((string id, CelesteAtlas.Entry entry, bool byPath) in page.Value)
                     {
-                        Store(id, CelesteAtlas.Extract(sheet, entry));
-                        loaded++;
+                        if (byPath) StorePath(id, CelesteAtlas.Extract(sheet, entry));
+                        else
+                        {
+                            Store(id, CelesteAtlas.Extract(sheet, entry));
+                            loaded++;
+                        }
                     }
                 }
                 // Madeline's face for the tray icon is a dialogue portrait, and those are not
@@ -275,6 +305,82 @@ namespace DeskMadeline
             {
                 PetWindow.Log("sprites unavailable: " + ex.Message);
             }
+        }
+
+        /// <summary>The game's folders the player's sprite bank entries draw their frames from.</summary>
+        static readonly string[] PlayerAtlasFolders =
+        {
+            "characters/player/", "characters/player_badeline/",
+            "characters/player_no_backpack/", "characters/player_playback/",
+        };
+
+        // Textures by atlas path, as Monocle's Atlas holds them, with the mirrored copies the
+        // renderer asks for. Separate from the ids above: an id is a name the pet gave a
+        // sprite, a path is where the game -- or a mod laid over it -- keeps one.
+        private static readonly Dictionary<string, Bitmap> _atlas = new Dictionary<string, Bitmap>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, Bitmap> _atlasFlip = new Dictionary<string, Bitmap>(StringComparer.OrdinalIgnoreCase);
+
+        sealed class PathAtlas : IFrameAtlas
+        {
+            public bool Has(string path) => path != null && _atlas.ContainsKey(path);
+        }
+
+        /// <summary>The Gameplay atlas by path, for sprite banks to find their frames in.</summary>
+        public static readonly IFrameAtlas Atlas = new PathAtlas();
+
+        static void StorePath(string path, Bitmap bmp)
+        {
+            if (_atlas.TryGetValue(path, out Bitmap old)) old.Dispose();
+            if (_atlasFlip.TryGetValue(path, out Bitmap oldFlip)) oldFlip.Dispose();
+            _atlas[path] = bmp;
+            _atlasFlip[path] = Mirror(bmp);
+        }
+
+        /// <summary>
+        /// A mod's Graphics/Atlases/Gameplay, laid over the game's the way Everest lays every
+        /// mod's: each file is the texture at its own path, replacing the game's if it has one.
+        /// </summary>
+        /// <remarks>
+        /// Desktop adaptation: only the skin package in use is laid over. Everest applies every
+        /// installed mod at once; here the packages are a list to pick one from, and one the user
+        /// has not picked should not change what the pet looks like.
+        /// </remarks>
+        public static void LoadAtlasOverlay(string gameplayDirectory)
+        {
+            if (string.IsNullOrEmpty(gameplayDirectory) || !Directory.Exists(gameplayDirectory)) return;
+            foreach (string file in Directory.EnumerateFiles(gameplayDirectory, "*.png", SearchOption.AllDirectories))
+            {
+                string path = Path.GetRelativePath(gameplayDirectory, file).Replace('\\', '/');
+                path = path.Substring(0, path.Length - 4);
+                try { StorePath(path, ReadPng(file)); }
+                catch (Exception ex) { PetWindow.Log("skin texture unreadable " + file + ": " + ex.Message); }
+            }
+        }
+
+        static Bitmap ReadPng(string file)
+        {
+            using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var tmp = Image.FromStream(fs);
+            var bmp = new Bitmap(tmp.Width, tmp.Height, PixelFormat.Format32bppPArgb);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.CompositingMode = CompositingMode.SourceCopy;
+                g.DrawImage(tmp, 0, 0, tmp.Width, tmp.Height);
+            }
+            return bmp;
+        }
+
+        static Bitmap Mirror(Bitmap bmp)
+        {
+            var flip = new Bitmap(bmp.Width, bmp.Height, PixelFormat.Format32bppPArgb);
+            using (var g = Graphics.FromImage(flip))
+            {
+                g.CompositingMode = CompositingMode.SourceCopy;
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.DrawImage(bmp, new Rectangle(bmp.Width, 0, -bmp.Width, bmp.Height));
+            }
+            return flip;
         }
 
         /// <summary>Keep a sprite and the mirrored copy the renderer asks for by name.</summary>
@@ -323,8 +429,10 @@ namespace DeskMadeline
         public static Bitmap Get(string id, bool flipped)
         {
             if (id == null) return null;
+            // An atlas path is exact: a sprite bank resolved it, and it either is there or not.
+            if ((flipped ? _atlasFlip : _atlas).TryGetValue(id, out var b)) return b;
             var dict = flipped ? _texFlip : _tex;
-            if (dict.TryGetValue(id, out var b)) return b;
+            if (dict.TryGetValue(id, out b)) return b;
             // Missing-frame fallback: strip trailing digits and fall back to same-prefix 00
             string baseId = id.TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9');
             if (dict.TryGetValue(baseId + "00", out b)) return b;

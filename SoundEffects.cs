@@ -213,6 +213,28 @@ namespace DeskMadeline
             catch (Exception ex) { PetWindow.Log("SFX event failed: " + ex.Message); }
         }
 
+        /// <summary>
+        /// Audio.Play with the instance kept, for a sound that may later be stopped -- the way
+        /// Player keeps idleSfx. A newer one under the same key replaces the handle without
+        /// stopping the older, as assigning over idleSfx does.
+        /// </summary>
+        public void PlayKept(object key, string eventPath)
+        {
+            if (loops.TryGetValue(key, out IntPtr previous))
+            {
+                releaseInstance(previous);
+                loops.Remove(key);
+            }
+            if (!Available || Mode == 0 || Volume == 0 || (Mode == 1 && !focused()) || hushed()) return;
+            try
+            {
+                Check(createInstance(Description(eventPath), out IntPtr instance), "create " + eventPath);
+                Check(startInstance(instance), "start " + eventPath);
+                loops[key] = instance;
+            }
+            catch (Exception ex) { PetWindow.Log("SFX event failed: " + ex.Message); }
+        }
+
         public void StartLoop(string eventPath) => StartLoop("dream", eventPath);
 
         public void StartLoop(object key, string eventPath)
