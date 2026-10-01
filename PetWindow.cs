@@ -2779,7 +2779,8 @@ namespace DeskMadeline
             // Anything that activates her -- the flyout, a click on her on another monitor --
             // brings her back to the front of her band, over the window she was behind. So the
             // order is checked on every poll, not only when the window changes.
-            if (behind != steppedBehind || (behind != IntPtr.Zero && !IsBehind(behind)))
+            bool overtaken = IsOvertaken(AlwaysOnTop && behind == IntPtr.Zero);
+            if (behind != steppedBehind || (behind != IntPtr.Zero && !IsBehind(behind)) || overtaken)
                 RequestStepAside(behind);
             // Which windows there are, and in what order they stack, has just been decided
             // afresh. Neither shows up as a rectangle moving -- bringing a window to the front
@@ -3165,6 +3166,45 @@ namespace DeskMadeline
             return false;
         }
 
+        /// <summary>The other windows above her picture at the last poll, while on top was asked of her.</summary>
+        HashSet<IntPtr> windowsAbove;
+
+        /// <summary>
+        /// Whether, always on top and in front of everything, she has been covered since the last
+        /// poll -- read from the native z-order, since none of the ways it happens says so.
+        /// </summary>
+        /// <remarks>
+        /// Show desktop lifts the taskbar over the rest of the topmost band, her included, and
+        /// an application coming to the front has been seen to leave her out of the band
+        /// altogether. Neither changes the fullscreen window, which is all the poll otherwise
+        /// watches. Out of the band she is always repaired; a window above her only when it is
+        /// new there, so another always-on-top program that insists on the top is ceded it after
+        /// one try rather than fought every poll.
+        /// </remarks>
+        bool IsOvertaken(bool onTop)
+        {
+            IntPtr host = compositionHostHandle;
+            if (!onTop || host == IntPtr.Zero) { windowsAbove = null; return false; }
+            var above = new HashSet<IntPtr>();
+            for (IntPtr w = Win32.GetWindow(host, Win32.GW_HWNDPREV); w != IntPtr.Zero;
+                 w = Win32.GetWindow(w, Win32.GW_HWNDPREV))
+            {
+                if (!Win32.IsWindowVisible(w)) continue;
+                if (Win32.DwmGetWindowAttribute(w, Win32.DWMWA_CLOAKED, out int cloaked, 4) == 0 && cloaked != 0) continue;
+                Win32.GetWindowThreadProcessId(w, out uint owner);
+                if (owner == OwnProcessId) continue;
+                // Menus and tooltips are over everything for a moment, and lifting her over
+                // them would draw her across another program's menu.
+                string cls = Win32.GetClassNameString(w);
+                if (cls == "#32768" || cls == "tooltips_class32") continue;
+                above.Add(w);
+            }
+            bool outOfBand = (Win32.GetWindowLong(host, Win32.GWL_EXSTYLE) & Win32.WS_EX_TOPMOST) == 0;
+            bool newlyAbove = windowsAbove == null ? above.Count > 0 : !windowsAbove.IsSupersetOf(above);
+            windowsAbove = above;
+            return outOfBand || newlyAbove;
+        }
+
         void RequestStepAside(IntPtr target)
         {
             if (!IsHandleCreated || Interlocked.Exchange(ref stepAsidePending, 1) == 1) return;
@@ -3177,7 +3217,7 @@ namespace DeskMadeline
                     steppedBehind = target;
                     if (target == IntPtr.Zero)
                     {
-                        Log("Fullscreen: back in front");
+                        Log(was != IntPtr.Zero ? "Fullscreen: back in front" : "Z-order: covered, lifted back on top");
                         // Out of the topmost band she has nowhere in particular to return to:
                         // she stays where the window she was behind leaves her.
                         if (AlwaysOnTop) RaisePetWindows();
