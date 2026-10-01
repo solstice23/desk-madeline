@@ -203,6 +203,27 @@ static class AtlasChecks
             "smoke0", "zappysmoke00", "slash00", "glove", Sprites.PortraitId,
         })
             Check($"id \"{id}\" resolves", Sprites.Get(id, false) != null);
+        // A skin's frames carry the same ids as Madeline's, and every one of them has to be
+        // the skin's: which one survived used to depend on which atlas page was read last,
+        // and Badeline's idle cycle came out half in Madeline's body.
+        int skinFrames = 0, skinWrong = 0;
+        string firstWrong = null;
+        foreach (var pair in entries)
+        {
+            const string skinFolder = "characters/player_badeline/";
+            if (!pair.Key.StartsWith(skinFolder, StringComparison.OrdinalIgnoreCase)) continue;
+            string id = pair.Key.Substring(skinFolder.Length);
+            if (id.Contains('/')) continue;
+            string png = Path.Combine(dump, pair.Key.Replace('/', Path.DirectorySeparatorChar) + ".png");
+            Bitmap loaded = Sprites.Get(id, false);
+            if (loaded == null || !File.Exists(png)) continue;
+            skinFrames++;
+            using Bitmap expected = LoadPng(png);
+            if (!Compare(loaded, expected).Same) { skinWrong++; firstWrong ??= id; }
+        }
+        Check($"every Badeline frame is Badeline's ({skinFrames} frames" +
+              (skinWrong > 0 ? $", {skinWrong} Madeline's, first {firstWrong})" : ")"),
+            skinFrames > 400 && skinWrong == 0);
         // util/glove, at the untrimmed 16x16 GrabbyIcon justifies it against.
         Bitmap glove = Sprites.Get("glove", false);
         Check("the glove is its whole 16x16 frame", glove != null && glove.Width == 16 && glove.Height == 16);

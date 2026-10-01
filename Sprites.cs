@@ -206,12 +206,17 @@ namespace DeskMadeline
                 if (!string.IsNullOrEmpty(skinAtlasFolder))
                     folders.Add((skinAtlasFolder.TrimEnd('/') + "/", ""));
 
-                // Group by page so each one is decoded once: they are whole-atlas images and
-                // far too big to hold on to, or to read again per sprite.
-                var wanted = new Dictionary<int, List<(string Id, CelesteAtlas.Entry Entry)>>();
+                // Which entry each id comes from. A skin's folder names the same frames as
+                // characters/player/ -- player_badeline/idle00 is idle00 just as player/idle00
+                // is -- and the skin's has to win. Deciding that here, by the folder's place in
+                // the list, rather than by whichever was stored last: that was whichever came
+                // later in the atlas's index, which differed from frame to frame, so an idle
+                // cycle came out half Badeline and half Madeline.
+                var chosen = new Dictionary<string, (int Folder, CelesteAtlas.Entry Entry)>(StringComparer.OrdinalIgnoreCase);
                 foreach (var pair in entries)
-                    foreach ((string folder, string prefix) in folders)
+                    for (int f = 0; f < folders.Count; f++)
                     {
+                        (string folder, string prefix) = folders[f];
                         if (!pair.Key.StartsWith(folder, StringComparison.OrdinalIgnoreCase)) continue;
                         string name = pair.Key.Substring(folder.Length);
                         // Celeste keeps a few of the player's animations in their own folders,
@@ -224,11 +229,21 @@ namespace DeskMadeline
                             if (frame.Length == 0 || frame.Contains('/')) continue;
                             name = sub + char.ToUpperInvariant(frame[0]) + frame.Substring(1);
                         }
-                        if (!wanted.TryGetValue(pair.Value.Page, out var list))
-                            wanted[pair.Value.Page] = list = new List<(string, CelesteAtlas.Entry)>();
-                        list.Add((prefix + name, pair.Value));
+                        string id = prefix + name;
+                        if (!chosen.TryGetValue(id, out var already) || already.Folder < f)
+                            chosen[id] = (f, pair.Value);
                         break;
                     }
+
+                // Group by page so each one is decoded once: they are whole-atlas images and
+                // far too big to hold on to, or to read again per sprite.
+                var wanted = new Dictionary<int, List<(string Id, CelesteAtlas.Entry Entry)>>();
+                foreach (var pick in chosen)
+                {
+                    if (!wanted.TryGetValue(pick.Value.Entry.Page, out var list))
+                        wanted[pick.Value.Entry.Page] = list = new List<(string, CelesteAtlas.Entry)>();
+                    list.Add((pick.Key, pick.Value.Entry));
+                }
 
                 int loaded = 0;
                 foreach (var page in wanted)
